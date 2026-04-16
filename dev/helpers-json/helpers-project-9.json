@@ -867,7 +867,8 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "If not exists, AI should now create language-appropriate state_operations entry point using template at src/aimfp/templates/state_db/state_operations.py as reference."
+        "IMMEDIATE ACTION REQUIRED: AI must now create the state_operations helper file in the project's .state/ directory BEFORE doing anything else. Do NOT defer this step, add it as a note, or move on to other work. Call get_state_operations_template() to retrieve the Python reference template, then create a language-appropriate version at <source-dir>/.state/state_operations.<ext>. The template content is only available via that helper — do not attempt to locate it in MCP server files.",
+        "After creating the state_operations file, track with AIMFP: register both .state/runtime.db and .state/state_operations.<ext> in project.db via the standard reserve → finalize flow (files and functions). This notifies watchdog of the new .state/ files so it does not emit warnings about untracked files."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -884,22 +885,52 @@
       ],
       "implementation_notes": [
         "Creates <source-dir>/.state/ directory and runtime.db using SQL schema at database/initialization/state_db.sql",
-        "Returns Result with data={created: bool, db_path: str, state_dir: str, template_reference: str}",
-        "After creation, AI must create language-specific state_operations file using template as reference",
+        "Returns Result with data={created: bool, db_path: str, state_dir: str}",
+        "After creation, AI must IMMEDIATELY call get_state_operations_template() and create the language-specific state_operations file — do not defer",
         "Schema includes: variables table (key-value with type), update trigger, schema_version table",
         "After state DB and state_operations files are created, AI should register them in project.db files table via the standard reserve → finalize flow. The .state/ directory and its contents are project files that should be tracked."
+      ]
+    },
+    {
+      "name": "get_state_operations_template",
+      "file_path": "helpers/project/state_db.py",
+      "parameters": [],
+      "purpose": "Return the Python state_operations.py template content for AI to adapt to the project's language. Use this to retrieve the CRUD helper template for .state/runtime.db.",
+      "error_handling": "Returns Result(success=False, error=...) if template file not found.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Template returned. AI must now create a language-appropriate version of this file at <source-dir>/.state/state_operations.<ext>. Preserve all five CRUD functions (set_var, get_var, delete_var, increment_var, list_vars) and the Result type. Adapt imports, types, and SQLite library to the project's primary language.",
+        "After writing the file, track with AIMFP: register it in project.db via the standard reserve → finalize flow (file and functions)."
+      ],
+      "target_database": "no_db",
+      "used_by_directives": [
+        {
+          "directive_name": "project_discovery",
+          "execution_context": "map_infrastructure",
+          "sequence_order": 6,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Retrieve state operations template immediately after create_state_database, to create language-appropriate state helpers"
+        }
+      ],
+      "implementation_notes": [
+        "Reads src/aimfp/templates/state_db/state_operations.py and returns full content",
+        "Returns Result with data={template_content: str, functions: list, target_path: str}",
+        "No parameters — template is bundled with the AIMFP package",
+        "This helper exists so AI can retrieve the template at any point, not just from create_state_database return data"
       ]
     }
   ],
   "metadata": {
     "file": "helpers-project-9.json",
-    "count": 15,
-    "range": "helpers 103-117 of 117",
-    "description": "Item CRUD, note management operations, state database creation",
+    "count": 16,
+    "range": "helpers 103-118 of 118",
+    "description": "Item CRUD, note management operations, state database creation and template retrieval",
     "first_helper": "get_items_for_task",
-    "last_helper": "create_state_database",
+    "last_helper": "get_state_operations_template",
     "status": "return_statements complete",
-    "last_updated": "2026-03-31",
-    "notes": "Added add_item, add_items, update_item, update_items helpers for dedicated item management"
+    "last_updated": "2026-04-16",
+    "notes": "Added get_state_operations_template helper; removed dead initialize_state_database from metadata.py"
   }
 }

@@ -8,7 +8,7 @@ Files updated:
   - src/aimfp/mcp_server/server.py  (SERVER_VERSION: Final[str] = "X.Y.Z")
   - manifest.json           ("version": "X.Y.Z")
 
-After bumping, runs: rm -rf build dist src/*.egg-info && python3 -m build
+After bumping, runs: rm -rf build dist src/*.egg-info && python3 -m build --no-isolation
 """
 
 import re
@@ -85,12 +85,11 @@ def run_build() -> int:
     for egg in glob.glob(str(ROOT / "src" / "*.egg-info")):
         subprocess.run(["rm", "-rf", egg])
 
-    # Build
+    # Build (--no-isolation: pip.conf sets user=true which breaks isolated venvs)
     print("\n--- Building ---")
     result = subprocess.run(
-        [sys.executable, "-m", "build"],
+        [sys.executable, "-m", "build", "--no-isolation"],
         cwd=str(ROOT),
-        env={**__import__("os").environ, "PIP_USER": "0"},
     )
     return result.returncode
 

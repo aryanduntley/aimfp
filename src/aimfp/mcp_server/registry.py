@@ -184,8 +184,9 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "get_project_json_parameters": ("aimfp.helpers.project.schema", "get_project_json_parameters"),
     "get_project_schema": ("aimfp.helpers.project.schema", "get_project_schema"),
     "get_project_tables": ("aimfp.helpers.project.schema", "get_project_tables"),
-    # helpers/project/state_db.py (1 tool)
+    # helpers/project/state_db.py (2 tools)
     "create_state_database": ("aimfp.helpers.project.state_db", "create_state_database"),
+    "get_state_operations_template": ("aimfp.helpers.project.state_db", "get_state_operations_template"),
     # helpers/project/validation.py (1 tool)
     "project_allowed_check_constraints": ("aimfp.helpers.project.validation", "project_allowed_check_constraints"),
 

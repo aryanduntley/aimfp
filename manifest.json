@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "aimfp",
   "display_name": "AIMFP",
-  "version": "1.33.0",
+  "version": "1.34.0",
   "description": "Enforce functional procedural coding with database-driven project management for seamless context across sessions — FP enforcement, project lifecycle management, user preferences, and custom directive automation.",
   "author": {
     "name": "AIMFP Contributors",

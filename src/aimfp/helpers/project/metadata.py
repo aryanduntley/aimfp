@@ -18,13 +18,11 @@ Helpers in this file:
 - update_source_directory: Update source directory (with failsafe insert if not exists)
 - get_project_root: Get project root directory
 - update_project_root: Update project root directory (with failsafe insert if not exists)
-- initialize_state_database: Initialize state DB infrastructure
 """
 
 import sqlite3
 import json
 import os
-import shutil
 import subprocess
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Dict, Any
@@ -139,16 +137,6 @@ class SourceDirResult:
     error: Optional[str] = None
     return_statements: Tuple[str, ...] = ()
 
-
-@dataclass(frozen=True)
-class StateInitResult:
-    """Result of state database initialization."""
-    success: bool
-    state_db_path: Optional[str] = None
-    state_helpers_path: Optional[str] = None
-    needs_language_rewrite: bool = False
-    error: Optional[str] = None
-    return_statements: Tuple[str, ...] = ()
 
 
 # ============================================================================
@@ -916,60 +904,4 @@ def update_project_root(new_project_root: str) -> SourceDirResult:
         return SourceDirResult(
             success=False,
             error=f"Database error: {str(e)}"
-        )
-
-
-def initialize_state_database(
-    project_root: str,
-    source_dir: str,
-    language: str
-) -> StateInitResult:
-    """
-    Initialize state database infrastructure by copying template files to project source directory.
-
-    Args:
-        project_root: Path to project root directory
-        source_dir: Source directory path (e.g., 'src', 'lib', 'app')
-        language: Project primary language (e.g., 'python', 'javascript', 'rust')
-
-    Returns:
-        StateInitResult with paths and status
-    """
-    try:
-        # Build paths
-        state_dir = os.path.join(project_root, source_dir, '.state')
-        state_db_path = os.path.join(state_dir, 'runtime.db')
-        state_helpers_path = os.path.join(state_dir, 'state_operations.py')
-
-        # Template files location
-        # Assuming this helper is in src/aimfp/helpers/project/metadata.py
-        aimfp_root = Path(__file__).parent.parent.parent
-        templates_dir = aimfp_root / 'templates' / 'state_db'
-
-        # Create .state directory
-        os.makedirs(state_dir, exist_ok=True)
-
-        # Copy template files
-        shutil.copy2(templates_dir / 'runtime.db', state_db_path)
-        shutil.copy2(templates_dir / 'README.md', os.path.join(state_dir, 'README.md'))
-        shutil.copy2(templates_dir / 'state_operations.py', state_helpers_path)
-
-        # Determine if language rewrite needed
-        needs_language_rewrite = language.lower() != 'python'
-
-        # Fetch return statements
-        return_stmts = get_return_statements("initialize_state_database")
-
-        return StateInitResult(
-            success=True,
-            state_db_path=state_db_path,
-            state_helpers_path=state_helpers_path,
-            needs_language_rewrite=needs_language_rewrite,
-            return_statements=return_stmts
-        )
-
-    except Exception as e:
-        return StateInitResult(
-            success=False,
-            error=f"Failed to initialize state database: {str(e)}"
         )

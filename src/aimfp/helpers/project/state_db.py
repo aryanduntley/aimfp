@@ -10,6 +10,7 @@ during project_discovery when source_directory is confirmed.
 
 Helpers in this file:
 - create_state_database: Create .state/ directory and runtime.db using SQL schema
+- get_state_operations_template: Return the Python state_operations template content
 """
 
 import os
@@ -41,11 +42,9 @@ def _get_state_db_path(source_directory: str) -> str:
     return str(Path(source_directory) / ".state" / "runtime.db")
 
 
-def _get_template_path() -> str:
-    """Pure: Get path to state_operations.py template."""
-    return str(
-        Path(__file__).parent.parent.parent / "templates" / "state_db" / "state_operations.py"
-    )
+def _get_templates_dir() -> Path:
+    """Pure: Get path to state_db templates directory."""
+    return Path(__file__).parent.parent.parent / "templates" / "state_db"
 
 
 # ============================================================================
@@ -68,13 +67,11 @@ def create_state_database(source_directory: str) -> Result:
         Result with data={
             created: bool (True if newly created, False if already existed),
             db_path: str,
-            state_dir: str,
-            template_reference: str (path to state_operations template)
+            state_dir: str
         }
     """
     state_dir = _get_state_dir(source_directory)
     db_path = _get_state_db_path(source_directory)
-    template_path = _get_template_path()
 
     # Already exists — idempotent success
     if os.path.exists(db_path):
@@ -84,7 +81,6 @@ def create_state_database(source_directory: str) -> Result:
                 'created': False,
                 'db_path': db_path,
                 'state_dir': state_dir,
-                'template_reference': template_path,
             },
             return_statements=get_return_statements("create_state_database"),
         )
@@ -122,7 +118,6 @@ def create_state_database(source_directory: str) -> Result:
                 'created': True,
                 'db_path': db_path,
                 'state_dir': state_dir,
-                'template_reference': template_path,
             },
             return_statements=get_return_statements("create_state_database"),
         )
@@ -131,4 +126,50 @@ def create_state_database(source_directory: str) -> Result:
         return Result(
             success=False,
             error=f"Failed to create state database: {str(e)}",
+        )
+
+
+def get_state_operations_template() -> Result:
+    """
+    Return the Python state_operations.py template content.
+
+    The template is a Python reference implementation of CRUD helpers for
+    the state database (runtime.db). AI should use this as a reference to
+    create a language-appropriate state_operations file in the project's
+    <source-dir>/.state/ directory.
+
+    No parameters — reads from the bundled template file.
+
+    Returns:
+        Result with data={
+            template_content: str (full file content),
+            functions: list[str] (exported function names),
+            target_path: str (where AI should write the adapted file)
+        }
+    """
+    template_path = _get_templates_dir() / "state_operations.py"
+
+    if not template_path.is_file():
+        return Result(
+            success=False,
+            error=f"State operations template not found: {template_path}",
+        )
+
+    try:
+        content = template_path.read_text()
+
+        return Result(
+            success=True,
+            data={
+                'template_content': content,
+                'functions': ['set_var', 'get_var', 'delete_var', 'increment_var', 'list_vars'],
+                'target_path': '<source-dir>/.state/state_operations.<ext>',
+            },
+            return_statements=get_return_statements("get_state_operations_template"),
+        )
+
+    except OSError as e:
+        return Result(
+            success=False,
+            error=f"Failed to read template: {str(e)}",
         )

@@ -1,7 +1,7 @@
 {
   "name": "aimfp",
   "description": "AI Modular Functional Procedural — database-driven FP enforcement and project management for AI-assisted development. 220 MCP tools, 4 SQLite databases, directive-driven workflows.",
-  "version": "1.33.0",
+  "version": "1.34.0",
   "author": {
     "name": "Aryan Duntley"
   },
