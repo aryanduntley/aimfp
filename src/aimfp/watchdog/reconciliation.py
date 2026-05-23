@@ -10,11 +10,14 @@ import json
 import os
 
 from ..database.connection import _effect_query_one
+from ..wrappers.file_ops import _effect_read_file
 from .config import (
     get_project_db_path,
     get_preferences_db_path,
     get_reminders_path,
+    get_watchdogignore_path,
     build_exclusion_sets,
+    parse_watchdogignore,
 )
 from .analyzers import (
     _effect_get_all_finalized_file_paths,
@@ -80,6 +83,21 @@ def _read_user_exclusions(prefs_db_path: str) -> tuple[tuple[str, ...], tuple[st
     return (user_dirs, user_exts)
 
 
+def _read_watchdogignore(project_root: str) -> tuple[str, ...]:
+    """
+    Effect: Read and parse the project's .watchdogignore file.
+
+    Returns an empty tuple if the file is absent or unreadable.
+    """
+    path = get_watchdogignore_path(project_root)
+    if not os.path.isfile(path):
+        return ()
+    content = _effect_read_file(path)
+    if content is None:
+        return ()
+    return parse_watchdogignore(content)
+
+
 # ============================================================================
 # Startup Reconciliation
 # ============================================================================
@@ -110,6 +128,7 @@ def run_startup_reconciliation(project_root: str) -> int:
     prefs_db_path = get_preferences_db_path(project_root)
     user_dirs, user_exts = _read_user_exclusions(prefs_db_path)
     excluded_dirs, excluded_extensions = build_exclusion_sets(user_dirs, user_exts)
+    ignore_patterns = _read_watchdogignore(project_root)
 
     reminders_path = get_reminders_path(project_root)
     count = 0
@@ -126,7 +145,7 @@ def run_startup_reconciliation(project_root: str) -> int:
     all_db_paths = _effect_get_all_known_file_paths(project_db_path)
     unregistered_reminders = reconcile_unregistered_files(
         source_directory, project_root, all_db_paths,
-        excluded_dirs, excluded_extensions,
+        excluded_dirs, excluded_extensions, ignore_patterns,
     )
     if unregistered_reminders:
         _effect_append_reminders(reminders_path, unregistered_reminders)

@@ -233,6 +233,17 @@ def aimfp_init(project_root: str) -> Result:
             with open(gitkeep_path, 'w') as f:
                 pass
 
+        # Step 6.5: Create .watchdogignore template at project root (user-editable,
+        # gitignore-style patterns for files/dirs the watchdog should skip).
+        from ...watchdog.config import (
+            get_watchdogignore_path,
+            DEFAULT_WATCHDOGIGNORE_CONTENT,
+        )
+        watchdogignore_path = get_watchdogignore_path(project_root)
+        if not os.path.exists(watchdogignore_path):
+            with open(watchdogignore_path, 'w') as f:
+                f.write(DEFAULT_WATCHDOGIGNORE_CONTENT)
+
         # Step 7: Verify created files exist
         step = 7
         for expected_path in (project_db_path, prefs_db_path, blueprint_dest, backups_dir):
@@ -253,6 +264,7 @@ def aimfp_init(project_root: str) -> Result:
             f'{AIMFP_PROJECT_DIR}/{PROJECT_DB_NAME}',
             f'{AIMFP_PROJECT_DIR}/{USER_PREFERENCES_DB_NAME}',
             f'{AIMFP_PROJECT_DIR}/{BLUEPRINT_FILENAME}',
+            '.watchdogignore',
         )
 
         # Auto-bundle init supportive context for discovery phase

@@ -3467,9 +3467,10 @@
               "Also include other recognized source file types (config, data, script files)",
               "Exclude: build artifacts, dependencies, generated files, .aimfp-project/, node_modules, __pycache__, etc.",
               "Use same exclusion patterns as watchdog config.py for consistency",
+              "Also honor the project-root .watchdogignore file if present: skip any file matching its gitignore-style patterns so the catalog never registers files the watchdog ignores. Patterns containing '/' are anchored to the project root and match that subtree; patterns without '/' match a filename or any directory component anywhere (e.g. 'tests', '*_test.py', 'packages/host/extension/').",
               "Build file inventory: path, size, last_modified, extension, language"
             ],
-            "note": "Exclusion patterns match watchdog EXCLUDED_DIRS and EXCLUDED_EXTENSIONS for consistency across the system."
+            "note": "Exclusion patterns match watchdog EXCLUDED_DIRS and EXCLUDED_EXTENSIONS for consistency across the system, plus any user patterns in the project-root .watchdogignore file (same source the watchdog reads)."
           }
         },
         {

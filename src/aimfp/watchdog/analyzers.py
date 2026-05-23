@@ -278,6 +278,7 @@ def reconcile_unregistered_files(
     db_file_paths: frozenset[str],
     excluded_dirs: frozenset[str],
     excluded_extensions: frozenset[str],
+    ignore_patterns: Tuple[str, ...] = (),
 ) -> Tuple[Dict[str, str], ...]:
     """
     Check source directory for files not registered in DB.
@@ -293,23 +294,36 @@ def reconcile_unregistered_files(
         db_file_paths: All known file paths from the database (reserved + finalized)
         excluded_dirs: Directory names to skip during walk
         excluded_extensions: File extensions to skip
+        ignore_patterns: .watchdogignore glob patterns (project-relative)
 
     Returns:
         Tuple of reminder dicts for unregistered files
     """
     import os
-    from .config import should_exclude
+    from .config import should_exclude, matches_ignore_patterns
 
     reminders = []
     for dirpath, dirnames, filenames in os.walk(source_directory):
-        # Prune excluded directories in-place to prevent descent
-        dirnames[:] = [d for d in dirnames if d not in excluded_dirs]
+        # Prune excluded directories in-place to prevent descent. Drop both
+        # built-in excluded names and any dir matching a .watchdogignore pattern
+        # (the latter keyed on the project-relative dir path so anchored
+        # patterns like 'packages/host/extension' prune the whole subtree).
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in excluded_dirs
+            and not matches_ignore_patterns(
+                os.path.relpath(os.path.join(dirpath, d), project_root),
+                ignore_patterns,
+            )
+        ]
 
         for filename in filenames:
             absolute_path = os.path.join(dirpath, filename)
             relative_path = os.path.relpath(absolute_path, project_root)
 
-            if should_exclude(relative_path, excluded_dirs, excluded_extensions):
+            if should_exclude(
+                relative_path, excluded_dirs, excluded_extensions, ignore_patterns
+            ):
                 continue
 
             if relative_path not in db_file_paths:

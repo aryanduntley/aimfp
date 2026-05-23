@@ -27,6 +27,7 @@ from .watcher import _effect_start_watching
 from .reconciliation import (
     _read_infrastructure_value,
     _read_user_exclusions,
+    _read_watchdogignore,
     run_startup_reconciliation,
 )
 from ..wrappers.filesystem_observer import _effect_stop_observer
@@ -66,6 +67,9 @@ def main() -> None:
     user_dirs, user_exts = _read_user_exclusions(prefs_db_path)
     excluded_dirs, excluded_extensions = build_exclusion_sets(user_dirs, user_exts)
 
+    # Read project-root .watchdogignore (gitignore-style path/glob patterns)
+    ignore_patterns = _read_watchdogignore(project_root)
+
     # Function pattern for language
     function_pattern = get_function_pattern(primary_language) if primary_language else None
 
@@ -94,6 +98,7 @@ def main() -> None:
         function_pattern=function_pattern,
         excluded_dirs=excluded_dirs,
         excluded_extensions=excluded_extensions,
+        ignore_patterns=ignore_patterns,
     )
 
     # Signal handler for graceful shutdown

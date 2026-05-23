@@ -160,6 +160,7 @@ def _effect_create_event_callback(
     function_pattern: Optional[Pattern[str]],
     excluded_dirs: frozenset[str],
     excluded_extensions: frozenset[str],
+    ignore_patterns: tuple[str, ...] = (),
 ) -> tuple:
     """
     Effect: Create the event callback and debounce state for the observer.
@@ -171,8 +172,12 @@ def _effect_create_event_callback(
     debounce_dict: Dict[str, float] = {}
 
     def on_event(event: FileEvent) -> None:
-        # Exclusion check
-        if should_exclude(event.src_path, excluded_dirs, excluded_extensions):
+        # Exclusion check — pass the project-relative path so .watchdogignore
+        # patterns anchor to the project root.
+        relative_path = get_relative_path(event.src_path, project_root)
+        if should_exclude(
+            relative_path, excluded_dirs, excluded_extensions, ignore_patterns
+        ):
             return
 
         # Debounce check
@@ -227,6 +232,7 @@ def _effect_start_watching(
     function_pattern: Optional[Pattern[str]],
     excluded_dirs: frozenset[str],
     excluded_extensions: frozenset[str],
+    ignore_patterns: tuple[str, ...] = (),
 ):
     """
     Effect: Start the file system observer.
@@ -236,6 +242,6 @@ def _effect_start_watching(
     """
     on_event, _ = _effect_create_event_callback(
         source_dir, project_root, project_db_path, reminders_path,
-        function_pattern, excluded_dirs, excluded_extensions,
+        function_pattern, excluded_dirs, excluded_extensions, ignore_patterns,
     )
     return _effect_create_observer(source_dir, on_event, recursive=True)

@@ -66,9 +66,10 @@ Verify prerequisites:
    - Use same exclusion patterns as watchdog `config.py` for consistency
    - Excluded dirs: `node_modules`, `venv`, `__pycache__`, `.git`, `build`, `dist`, `.aimfp-project`, etc.
    - Excluded extensions: `.pyc`, `.so`, `.dll`, `.lock`, `.log`, images, fonts, archives
+   - Also honor the project-root `.watchdogignore` if present (same file the watchdog reads): skip any file matching its gitignore-style patterns, so the catalog never registers files the watchdog will ignore. Patterns containing `/` are anchored to the project root and match that subtree (`packages/host/extension/`); patterns without `/` match a filename or any directory component anywhere (`tests`, `*_test.py`, `*.test.ts`). `#` comments and blank lines are ignored; negation (`!`) is not supported.
 6. Build file inventory: path, size, last_modified, extension, language
 
-**Consistency note**: Exclusion patterns are shared with the watchdog module. When watchdog is implemented, both use the same base set from `config.py`.
+**Consistency note**: Exclusion patterns are shared with the watchdog module — both use the same built-in base set from `config.py` plus any user patterns in the project-root `.watchdogignore`. Keeping the catalog and the watchdog aligned prevents the watchdog from re-flagging files the catalog deliberately skipped (and vice versa).
 
 ---
 

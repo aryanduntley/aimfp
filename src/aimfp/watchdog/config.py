@@ -5,6 +5,7 @@ Exclusion patterns, function detection patterns, paths, and timing constants.
 All values are immutable (Final + frozenset).
 """
 
+import fnmatch
 import os
 import re
 from typing import Final, Optional, Pattern
@@ -30,6 +31,10 @@ DEBOUNCE_SECONDS: Final[float] = 2.0
 WATCHDOG_DIR_NAME: Final[str] = "watchdog"
 REMINDERS_FILE: Final[str] = "reminders.json"
 PID_FILE: Final[str] = "watchdog.pid"
+
+# Gitignore-style exclusion file. Lives at the PROJECT ROOT (not inside
+# .aimfp-project/) so it is discoverable and editable like .gitignore.
+WATCHDOGIGNORE_FILE: Final[str] = ".watchdogignore"
 
 
 # ============================================================================
@@ -70,6 +75,35 @@ EXCLUDED_EXTENSIONS: Final[frozenset[str]] = frozenset([
     '.zip', '.tar', '.gz', '.bz2',
     '.tmp', '.swp', '.swo', '.bak',
 ])
+
+
+# Default contents written to a project's .watchdogignore at init time.
+# Gitignore-style: one pattern per line, '#' comments, blank lines ignored.
+DEFAULT_WATCHDOGIGNORE_CONTENT: Final[str] = """\
+# .watchdogignore — paths the AIMFP watchdog should NOT track.
+#
+# Gitignore-style syntax (note: negation '!' is NOT supported):
+#   tests/                 a directory named 'tests' at any depth
+#   packages/host/extension/  an exact nested subtree (relative to project root)
+#   *_test.py              glob matched against the file name
+#   test_*.py
+#   *.test.ts
+#
+# Patterns containing '/' are matched against the project-relative path
+# (and everything beneath them). Patterns without '/' match a file name
+# or any single directory component anywhere in the tree.
+#
+# These supplement the built-in exclusions (node_modules, __pycache__,
+# .git, build/dist, .aimfp-project, etc.) — you don't need to list those.
+# Uncomment or add the lines that fit your project:
+
+# tests/
+# *_test.py
+# test_*.py
+# *.test.js
+# *.test.ts
+# *.spec.ts
+"""
 
 
 # ============================================================================
@@ -119,6 +153,11 @@ def get_pid_path(project_root: str) -> str:
     return os.path.join(get_watchdog_dir(project_root), PID_FILE)
 
 
+def get_watchdogignore_path(project_root: str) -> str:
+    """Pure: Get path to the project's .watchdogignore (at project root)."""
+    return os.path.join(project_root, WATCHDOGIGNORE_FILE)
+
+
 def get_project_db_path(project_root: str) -> str:
     """Pure: Get path to project.db (delegates to foundation layer)."""
     return _foundation_get_project_db_path(project_root)
@@ -144,6 +183,69 @@ def build_exclusion_sets(
     return (merged_dirs, merged_exts)
 
 
+def parse_watchdogignore(content: str) -> tuple[str, ...]:
+    """
+    Pure: Parse .watchdogignore file contents into a tuple of glob patterns.
+
+    Gitignore-lite: blank lines and '#' comments are dropped, backslashes are
+    normalized to forward slashes, and a single trailing '/' (directory marker)
+    is stripped. Negation ('!') is not supported — such lines are kept verbatim
+    and simply won't match anything meaningful.
+    """
+    patterns: list[str] = []
+    for raw in content.splitlines():
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        line = line.replace('\\', '/')
+        if line.endswith('/'):
+            line = line[:-1]
+        if line:
+            patterns.append(line)
+    return tuple(patterns)
+
+
+def matches_ignore_patterns(
+    relative_path: str,
+    ignore_patterns: tuple[str, ...],
+) -> bool:
+    """
+    Pure: Check a project-relative path against .watchdogignore glob patterns.
+
+    Matching rules (case-sensitive, deterministic across platforms):
+    - A pattern containing '/' is anchored to the project root: it matches the
+      path itself, anything beneath it (subtree), or via glob (e.g. 'src/*.gen.py').
+    - A pattern without '/' floats: it matches the file's basename OR any single
+      directory component anywhere in the path (e.g. 'tests' or '*_test.py').
+    """
+    if not ignore_patterns:
+        return False
+
+    norm = relative_path.replace('\\', '/').strip('/')
+    if not norm:
+        return False
+
+    parts = norm.split('/')
+    basename = parts[-1]
+
+    for pattern in ignore_patterns:
+        if '/' in pattern:
+            if (
+                norm == pattern
+                or norm.startswith(pattern + '/')
+                or fnmatch.fnmatchcase(norm, pattern)
+                or fnmatch.fnmatchcase(norm, pattern + '/*')
+            ):
+                return True
+        else:
+            if fnmatch.fnmatchcase(basename, pattern):
+                return True
+            if any(fnmatch.fnmatchcase(part, pattern) for part in parts):
+                return True
+
+    return False
+
+
 def get_function_pattern(language: str) -> Optional[Pattern[str]]:
     """
     Pure: Get compiled regex pattern for detecting functions in given language.
@@ -160,12 +262,15 @@ def should_exclude(
     file_path: str,
     excluded_dirs: frozenset[str],
     excluded_extensions: frozenset[str],
+    ignore_patterns: tuple[str, ...] = (),
 ) -> bool:
     """
     Pure: Determine if a file path should be excluded from watching.
 
-    Checks directory components, file extension, and ephemeral file patterns
-    (tilde-suffix backups, dot-prefixed editor temps).
+    Checks directory components, file extension, ephemeral file patterns
+    (tilde-suffix backups, dot-prefixed editor temps), and user-defined
+    .watchdogignore glob patterns. For ignore_patterns to anchor correctly,
+    callers should pass a project-relative path.
     """
     parts = file_path.replace('\\', '/').split('/')
     for part in parts:
@@ -184,6 +289,9 @@ def should_exclude(
 
     _, ext = os.path.splitext(file_path)
     if ext.lower() in excluded_extensions:
+        return True
+
+    if matches_ignore_patterns(file_path, ignore_patterns):
         return True
 
     return False

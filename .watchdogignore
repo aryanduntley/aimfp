@@ -1,0 +1,26 @@
+# .watchdogignore — paths the AIMFP watchdog should NOT track.
+#
+# Gitignore-style syntax (note: negation '!' is NOT supported):
+#   tests/                 a directory named 'tests' at any depth
+#   packages/host/extension/  an exact nested subtree (relative to project root)
+#   *_test.py              glob matched against the file name
+#   test_*.py
+#   *.test.ts
+#
+# Patterns containing '/' are matched against the project-relative path
+# (and everything beneath them). Patterns without '/' match a file name
+# or any single directory component anywhere in the tree.
+#
+# These supplement the built-in exclusions (node_modules, __pycache__,
+# .git, build/dist, .aimfp-project, etc.) — you don't need to list those.
+
+# Test files and directories
+tests/
+*_test.py
+test_*.py
+*.test.js
+*.test.ts
+*.spec.ts
+
+# Generated rollup bundle output (not source — re-flagged every session)
+packages/host/extension/
