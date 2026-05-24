@@ -78,7 +78,8 @@
         "ProjectBlueprint.md is a template with placeholders. AI must populate with real project data after user interaction.",
         "Git Repository Status: check data.git_status — 'created' means .git was initialized during Phase 1, 'pre_existing' means repository already existed, 'git_unavailable' means git command not found or failed. If 'created' or 'pre_existing', the git_init directive must be executed during project_discovery to complete intelligent Git setup (gitignore, initial commit, hash storage, branch detection). If 'git_unavailable', inform user that version control is unavailable and suggest installing git.",
         "After Phase 2 population complete: route to project_discovery directive. Discovery handles: git_init directive (intelligent Git setup if git available), collaborative blueprint refinement, infrastructure confirmation, state database creation (via create_state_database helper once source_directory is confirmed), theme/flow definition, completion path with milestones.",
-        "Do NOT create state database during init — source_directory is not yet confirmed. State DB creation happens during project_discovery Branch 3 (map_infrastructure) after source_directory is confirmed with user."
+        "Do NOT create state database during init — source_directory is not yet confirmed. State DB creation happens during project_discovery Branch 3 (map_infrastructure) after source_directory is confirmed with user.",
+        ".watchdogignore created at project root."
       ],
       "implementation_notes": [
         "PHASE 1 ONLY - Mechanical setup with no intelligence",
@@ -89,9 +90,10 @@
         "Step 4: Initialize project.db: load schemas/project.sql, execute, then execute initialization/standard_infrastructure.sql (8 empty entries), then call update_project_root() to populate project_root value",
         "Step 5: Initialize user_preferences.db: load schemas/user_preferences.sql, execute, INSERT default tracking_settings (all disabled), load initialization/standard_user_settings.sql (backup defaults)",
         "Step 6: Create .gitkeep files for empty directories",
+        "Step 6.5: Write .watchdogignore to project root from DEFAULT_WATCHDOGIGNORE_CONTENT (watchdog/config.py). Idempotent — skip if it already exists.",
         "Step 7: Verify all created files exist (inline check, no helper call)",
         "Step 8: Return success object",
-        "RETURN STRUCTURE: {success: bool, project_root: str, aimfp_dir: str, files_created: ['.aimfp-project/', 'project.db', 'user_preferences.db', 'ProjectBlueprint.md'], tables_created: {project_db: [...], user_prefs_db: [...]}, infrastructure_entries: 8, git_status: 'created'|'pre_existing'|'git_unavailable', next_phase: 'AI populates infrastructure and blueprint'}",
+        "RETURN STRUCTURE: {success: bool, project_root: str, aimfp_dir: str, files_created: ['.aimfp-project/', 'project.db', 'user_preferences.db', 'ProjectBlueprint.md', '.watchdogignore'], tables_created: {project_db: [...], user_prefs_db: [...]}, infrastructure_entries: 8, git_status: 'created'|'pre_existing'|'git_unavailable', next_phase: 'AI populates infrastructure and blueprint'}",
         "State database is NOT created during init. It is created during project_discovery (Branch 3: map_infrastructure) via create_state_database() helper after source_directory is confirmed with user.",
         "State DB reference: SQL schema at src/aimfp/database/initialization/state_db.sql, template at src/aimfp/templates/state_db/state_operations.py, helper at helpers/project/state_db.py",
         "ERROR CLEANUP: If any step fails after Step 2, delete .aimfp-project/ directory entirely (shutil.rmtree). Partial initialization is worse than no initialization.",

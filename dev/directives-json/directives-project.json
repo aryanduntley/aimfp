@@ -76,7 +76,8 @@
       "start",
       "continue",
       "status",
-      "resume"
+      "resume",
+      "watchdog"
     ],
     "confidence_threshold": 1.0
   },
@@ -324,7 +325,9 @@
       "initialize",
       "start project",
       "init project",
-      "new project"
+      "new project",
+      "watchdog",
+      ".watchdogignore"
     ],
     "confidence_threshold": 0.8
   },
@@ -3594,7 +3597,9 @@
       "register existing code",
       "index project",
       "scan files",
-      "import existing"
+      "import existing",
+      "watchdog",
+      ".watchdogignore"
     ],
     "confidence_threshold": 0.8
   },
@@ -3892,7 +3897,8 @@
       "finish session",
       "close",
       "goodbye",
-      "signing off"
+      "signing off",
+      "watchdog"
     ],
     "confidence_threshold": 0.8
   }

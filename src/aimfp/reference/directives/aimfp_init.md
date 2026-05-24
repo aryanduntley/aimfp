@@ -62,6 +62,7 @@ Keywords that trigger `project_init`:
 │   └── logs/                        # Use Case 2 only: user directive execution logs
 │       ├── execution/               # 30-day execution logs
 │       └── errors/                  # 90-day error logs
+├── .watchdogignore                  # Project root: gitignore-style patterns the watchdog (and project_catalog) skip. Created with a self-documenting, all-commented template; tailored during discovery.
 ├── .git/                            # Created in Phase 1 if not present
 │   └── .aimfp/                       # Optional: archived project state (legacy path)
 │       ├── ProjectBlueprint.md      # Snapshot for recovery
@@ -212,6 +213,7 @@ AIMFP cannot manage OOP projects - it enforces pure functions, immutability, and
 
 3. **Copy template**:
    - Copy `ProjectBlueprint_template.md` to `.aimfp-project/ProjectBlueprint.md`
+   - Write `.watchdogignore` to the project root from the built-in template (idempotent — skipped if one already exists). The template is all-commented and self-documenting; discovery activates the patterns that fit (see `project_discovery` Branch 2.8). Syntax lives in the file header and in `project_catalog`.
 
 3. **Create project.db**:
    - Load and execute `schemas/project.sql`

@@ -162,6 +162,22 @@ This is a **deep conversation**, not a form fill. AI should ask open-ended quest
 
 ---
 
+### Branch 2.8: Tailor `.watchdogignore`
+
+**Condition**: `.watchdogignore` exists at project root (created by `aimfp_init` Phase 1 with an all-commented template).
+
+**Action**: Activate ignore patterns that fit this project, the same way `git_init` populates `.gitignore`. This is the intelligent counterpart to the mechanical file creation — init ships the template empty (every line commented); discovery turns on the patterns that actually apply.
+
+**Steps**:
+1. From init Phase 2 detection, identify directories/globs the watchdog should not track: test directories, generated/build output not already covered by the built-in exclusions, fixtures, vendored code.
+2. Uncomment or add matching patterns in `.watchdogignore` (gitignore-style — see the file's own header for syntax; negation `!` is not supported).
+3. Keep it minimal: the built-ins (`node_modules`, `__pycache__`, `.git`, `build`, `dist`, `.aimfp-project`, etc.) are already excluded and must not be re-listed.
+4. Briefly confirm the activated patterns with the user — these decide what the watchdog and `project_catalog` both skip, so the two stay aligned.
+
+**Note**: `.gitignore` and `.watchdogignore` are siblings — patterns often overlap, but they are not identical (the watchdog tracks source the user may still want in git, and vice versa). Tailor each to its own purpose.
+
+---
+
 ### Branch 3: Map Infrastructure
 
 **Action**: Confirm and refine infrastructure entries from init Phase 2 detection.
@@ -416,6 +432,7 @@ If discovery is interrupted mid-conversation, the partially completed state pers
 
 ## Version History
 
+- **v1.2** (2026-05-23): Added Branch 2.8 — tailor `.watchdogignore` (activate fitting ignore patterns), the intelligent counterpart to the all-commented template `aimfp_init` writes mechanically, mirroring how `git_init` populates `.gitignore`
 - **v1.1** (2026-03-09): Added Branch 6.5 — post-completion paths ("Added Features" and "Updates") created during discovery as completed-by-default containers for future development cycles
 - **v1.0** (2026-01-30): Initial creation — bridges gap between init and active development
 
