@@ -54,6 +54,48 @@ def _query_all(
 
 
 # ============================================================================
+# Summary trimming helpers (keep current state lean — full detail on demand)
+# ============================================================================
+
+# Max length for description fields in summary mode. Full descriptions are
+# always retrievable via get_task_context(task_id).
+SUMMARY_DESC_LIMIT: int = 150
+
+
+def _truncate(text: Any, limit: int = SUMMARY_DESC_LIMIT) -> Any:
+    """Pure: Truncate a string to `limit` chars with an ellipsis; pass non-strings through."""
+    if not isinstance(text, str) or len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + '…'
+
+
+def _truncate_descriptions(obj: Any, limit: int = SUMMARY_DESC_LIMIT) -> Any:
+    """Pure: Recursively truncate any 'description' string field in nested dicts/tuples/lists."""
+    if isinstance(obj, dict):
+        return {
+            k: (_truncate(v, limit) if k == 'description' else _truncate_descriptions(v, limit))
+            for k, v in obj.items()
+        }
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(_truncate_descriptions(v, limit) for v in obj)
+    return obj
+
+
+def _compact_items(
+    items: Tuple[Dict[str, Any], ...],
+) -> Tuple[Dict[str, Any], ...]:
+    """Pure: Reduce historical item rows to id/name/status only.
+
+    Historical items are positional breadcrumbs ("what just happened"), not
+    active work — names are enough. Full bodies via get_task_context(task_id).
+    """
+    return tuple(
+        {'id': i.get('id'), 'name': i.get('name'), 'status': i.get('status')}
+        for i in items
+    )
+
+
+# ============================================================================
 # get_project_status
 # ============================================================================
 
@@ -129,9 +171,11 @@ def get_project_status(
                     return_statements=get_return_statements("get_project_status"),
                 )
 
-            # Summary (default): hierarchy-aware context
-            hierarchy = _get_hierarchy_context(conn)
-            blocked = _get_blocked_items(conn)
+            # Summary (default): hierarchy-aware context.
+            # Descriptions are truncated for lean session state — full text is
+            # always available via get_task_context(task_id).
+            hierarchy = _truncate_descriptions(_get_hierarchy_context(conn))
+            blocked = _truncate_descriptions(_get_blocked_items(conn))
 
             data = {
                 'counts': counts,
@@ -318,13 +362,13 @@ def _get_historical_context(
 
     if last_task:
         result['last_completed_task'] = last_task
-        result['last_completed_task_items'] = _query_all(
+        result['last_completed_task_items'] = _compact_items(_query_all(
             conn,
-            "SELECT * FROM items "
+            "SELECT id, name, status FROM items "
             "WHERE reference_table = 'tasks' AND reference_id = ? "
             "ORDER BY id DESC LIMIT 3",
             (last_task['id'],),
-        )
+        ))
 
     # If no completed tasks in milestone (first task) or no active tasks yet:
     # provide previous milestone context
@@ -348,13 +392,13 @@ def _get_historical_context(
             )
             if prev_task:
                 result['last_task_in_prev_milestone'] = prev_task
-                result['last_task_in_prev_milestone_items'] = _query_all(
+                result['last_task_in_prev_milestone_items'] = _compact_items(_query_all(
                     conn,
-                    "SELECT * FROM items "
+                    "SELECT id, name, status FROM items "
                     "WHERE reference_table = 'tasks' AND reference_id = ? "
                     "ORDER BY id DESC LIMIT 3",
                     (prev_task['id'],),
-                )
+                ))
 
     return result
 

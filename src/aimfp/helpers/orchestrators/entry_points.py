@@ -360,7 +360,9 @@ def aimfp_status(
             user_directives_status: str or None,
             recent_notes: tuple,
             git_state: tuple,
-            modules_summary: tuple (name, path, purpose, file_count per module)
+            modules_summary: tuple (id, name, path, file_count per module;
+                purpose omitted — fetch via get_module_by_name/path)
+            modules_guidance: str (one-time note on retrieving module detail)
         }
 
     If not initialized:
@@ -445,9 +447,11 @@ def aimfp_status(
                 )
                 git_state = rows_to_tuple(cursor.fetchall())
 
-                # Modules summary (name, path, purpose, file count)
+                # Modules summary (map only: id, name, path, file count).
+                # Purpose is intentionally omitted to keep session state lean —
+                # see modules_guidance below for on-demand retrieval.
                 cursor = conn.execute(
-                    "SELECT m.id, m.name, m.path, m.purpose, "
+                    "SELECT m.id, m.name, m.path, "
                     "COUNT(mf.file_id) AS file_count "
                     "FROM modules m "
                     "LEFT JOIN module_files mf ON mf.module_id = m.id "
@@ -508,6 +512,13 @@ def aimfp_status(
             ),
             'git_state': git_state,
             'modules_summary': modules_summary,
+            'modules_guidance': (
+                'modules_summary is a map only (id, name, path, file_count). '
+                'A module\'s full purpose, files, functions, types, and '
+                'dependencies are available on demand — query the db with '
+                'get_module_by_name(name) / get_module_by_path(path) when you '
+                'need detail for a specific module.'
+            ),
             'supportive_context': supportive_context,
         }
 

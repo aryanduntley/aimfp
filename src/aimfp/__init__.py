@@ -9,4 +9,4 @@ Usage:
     python -m aimfp
 """
 
-__version__ = "1.36.1"
+__version__ = "1.37.0"

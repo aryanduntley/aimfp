@@ -1,11 +1,8 @@
 {
   "mcpServers": {
     "aimfp": {
-      "command": "python3",
-      "args": ["-m", "aimfp"],
-      "env": {
-        "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/src"
-      }
+      "command": "uvx",
+      "args": ["aimfp@latest"]
     }
   }
 }

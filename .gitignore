@@ -36,6 +36,10 @@ env/
 .DS_Store
 Thumbs.db
 
+# SQLite transient WAL sidecars (rewritten whenever a .db is opened)
+*.db-shm
+*.db-wal
+
 # Project-specific
 docs/
 CLAUDE.md

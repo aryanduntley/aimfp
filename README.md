@@ -418,18 +418,20 @@ Directives follow a **trunk → branches → fallback** pattern:
 
 ### Installation
 
-AIMFP installs three ways. **On Claude Code, use the plugin (Method 1)** — it bundles everything in two commands. pip/manual are for other MCP clients or advanced setups.
+AIMFP installs three ways. **On Claude Code, use the plugin (Method 1)** — two commands, no manual setup. pip/manual are for other MCP clients or advanced setups.
 
 #### Method 1: Claude Code Plugin (Recommended for Claude Code)
+
+**Prerequisite:** [`uv`](https://docs.astral.sh/uv/) on your PATH (a single self-contained binary). The plugin launches the MCP server with `uvx`, which fetches the published `aimfp` package from PyPI, resolves its `watchdog` dependency, and provisions a compatible Python (3.11+) automatically — so you don't need a matching system Python or a separate `pip install`.
 
 ```
 /plugin marketplace add aryanduntley/aimfp
 /plugin install aimfp@aimfp
 ```
 
-That's it — no `pip install`, no `claude mcp add`, no config files. The plugin bundles:
+That's it — no `pip install`, no `claude mcp add`, no config files. The plugin provides:
 
-- the **MCP server**, run from the plugin's own bundled source (`${CLAUDE_PLUGIN_ROOT}/src`)
+- the **MCP server**, launched via `uvx aimfp@latest` (always the latest published release, fully self-contained)
 - **slash commands**: `/aimfp:run`, `/aimfp:status`, `/aimfp:init`, `/aimfp:end`
 - a tiny **`aimfp-mode` setup skill** + a **SessionStart hook** — these are setup-only: they prompt the AI to install the system prompt (via the `get_system_prompt` tool) and start a session. They are deliberately *not* a copy of the behavioral rules (that would duplicate the system prompt into every session). Your **first move** after install is still to ask the AI to add the AIMFP system prompt — see [Add the System Prompt](#add-the-system-prompt-your-first-move) below; for the plugin the AI does it for you, nothing to download or paste.
 - **session hooks** for write-tracking nudges and an end-of-session audit guard
