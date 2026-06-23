@@ -208,7 +208,7 @@ CREATE TABLE IF NOT EXISTS expected_schema_versions (
 );
 
 INSERT OR REPLACE INTO expected_schema_versions (db_name, expected_version, minimum_version) VALUES
-    ('project', '1.9', '1.0'),
+    ('project', '1.11', '1.0'),
     ('user_preferences', '1.2', '1.0'),
     ('user_directives', '1.2', '1.0');
 

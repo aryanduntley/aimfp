@@ -329,7 +329,7 @@
       "name": "conflict_resolution",
       "description": "FP-powered conflict detection before merging branches."
     },
-    "description": "Performs dry-run analysis of branch merge conflicts using FP intelligence. Compares source and target branches at both file and function level. Queries project.db to get function metadata (purity, dependencies, tests) from both branches. Classifies conflicts by type (file, function, database) and assigns confidence scores for auto-resolution based on FP purity. Returns detailed conflict analysis with AI recommendations.",
+    "description": "Performs dry-run analysis of branch merge conflicts using FP intelligence. Compares source and target branches at both file and function level. Queries project.db to get function metadata (purity, dependencies, tests) from both branches. Classifies conflicts by type (file, function, database) and assigns confidence scores for auto-resolution based on FP purity. Returns detailed conflict analysis with AI recommendations. NOTE (with use of InterCommAIMFP): this analyzes SOURCE/code conflicts; for project.db state overlap across parallel-worker branches use detect_state_conflicts (and export_state_changeset / apply_state_changeset) instead.",
     "md_file_path": "directives/git_detect_conflicts.md",
     "workflow": {
       "trunk": "git_diff_branches",
@@ -461,7 +461,7 @@
       "name": "collaboration",
       "description": "Merge work branch with FP-powered conflict resolution."
     },
-    "description": "Merges user/AI work branch into main using FP intelligence for conflict resolution. Calls git_detect_conflicts first to analyze potential conflicts. Auto-resolves high-confidence conflicts (>0.8) using FP purity rules. Presents low-confidence conflicts to user with AI recommendations. Logs merge history to merge_history table with detailed resolution strategy. Updates work_branches status to 'merged'.",
+    "description": "Merges user/AI work branch into main using FP intelligence for conflict resolution. Calls git_detect_conflicts first to analyze potential conflicts. Auto-resolves high-confidence conflicts (>0.8) using FP purity rules. Presents low-confidence conflicts to user with AI recommendations. Logs merge history to merge_history table with detailed resolution strategy. Updates work_branches status to 'merged'. NOTE (with use of InterCommAIMFP): this merges SOURCE CODE only — when integrating parallel-worker branches, reconcile the AIMFP project.db separately via export_state_changeset then apply_state_changeset. Never git-merge the binary project.db.",
     "md_file_path": "directives/git_merge_branch.md",
     "workflow": {
       "trunk": "validate_merge_request",

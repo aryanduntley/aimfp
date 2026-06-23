@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 
 from ..utils import get_return_statements
+from ..shared.slugs import mint_slug
 
 # Import common project utilities (DRY principle)
 from ._common import (
@@ -61,6 +62,7 @@ class MilestoneRecord:
     description: Optional[str]
     created_at: str
     updated_at: str
+    slug: Optional[str] = None  # stable cross-clone identity (see helpers/shared/slugs.py)
 
 
 @dataclass(frozen=True)
@@ -75,6 +77,7 @@ class TaskRecord:
     flow_ids: Optional[str]  # JSON array
     created_at: str
     updated_at: str
+    slug: Optional[str] = None  # stable cross-clone identity (see helpers/shared/slugs.py)
 
 
 @dataclass(frozen=True)
@@ -167,12 +170,13 @@ def _insert_milestone(
     Returns:
         New milestone ID
     """
+    slug = mint_slug("milestone", name)
     cursor = conn.execute(
         """
-        INSERT INTO milestones (completion_path_id, name, status, description)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO milestones (slug, completion_path_id, name, status, description)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (completion_path_id, name, status, description)
+        (slug, completion_path_id, name, status, description)
     )
     conn.commit()
     return cursor.lastrowid
@@ -200,6 +204,7 @@ def _query_milestones_by_path(
     return tuple(
         MilestoneRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             completion_path_id=row['completion_path_id'],
             name=row['name'],
             status=row['status'],
@@ -233,6 +238,7 @@ def _query_milestones_by_status(
     return tuple(
         MilestoneRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             completion_path_id=row['completion_path_id'],
             name=row['name'],
             status=row['status'],
@@ -263,6 +269,7 @@ def _query_incomplete_milestones(
     return tuple(
         MilestoneRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             completion_path_id=row['completion_path_id'],
             name=row['name'],
             status=row['status'],
@@ -364,12 +371,13 @@ def _insert_task(
     # Convert flow_ids to JSON string
     flow_ids_json = json.dumps(flow_ids) if flow_ids is not None else None
 
+    slug = mint_slug("task", name)
     cursor = conn.execute(
         """
-        INSERT INTO tasks (milestone_id, name, status, priority, description, flow_ids)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO tasks (slug, milestone_id, name, status, priority, description, flow_ids)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (milestone_id, name, status, priority, description, flow_ids_json)
+        (slug, milestone_id, name, status, priority, description, flow_ids_json)
     )
     conn.commit()
     return cursor.lastrowid
@@ -397,6 +405,7 @@ def _query_tasks_by_milestone(
     return tuple(
         TaskRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             milestone_id=row['milestone_id'],
             name=row['name'],
             status=row['status'],
@@ -441,6 +450,7 @@ def _query_incomplete_tasks_by_milestone(
     return tuple(
         TaskRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             milestone_id=row['milestone_id'],
             name=row['name'],
             status=row['status'],
@@ -473,6 +483,7 @@ def _query_incomplete_tasks(
     return tuple(
         TaskRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             milestone_id=row['milestone_id'],
             name=row['name'],
             status=row['status'],
@@ -547,6 +558,7 @@ def _query_tasks_comprehensive(
     return tuple(
         TaskRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             milestone_id=row['milestone_id'],
             name=row['name'],
             status=row['status'],

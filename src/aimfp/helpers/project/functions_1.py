@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 
 from ..utils import get_return_statements
+from ..shared.slugs import mint_slug
 
 # Import common project utilities (DRY principle)
 from ._common import _open_connection, _check_file_exists, get_cached_project_root, _open_project_connection
@@ -239,10 +240,10 @@ def _reserve_function_effect(
     """
     cursor = conn.execute(
         """
-        INSERT INTO functions (name, file_id, purpose, parameters, returns, is_reserved, id_in_name)
-        VALUES (?, ?, ?, ?, ?, 1, ?)
+        INSERT INTO functions (entity_key, name, file_id, purpose, parameters, returns, is_reserved, id_in_name)
+        VALUES (?, ?, ?, ?, ?, ?, 1, ?)
         """,
-        (name, file_id, purpose, params_json, returns_json, 1 if id_in_name else 0)
+        (mint_slug("fn", name), name, file_id, purpose, params_json, returns_json, 1 if id_in_name else 0)
     )
     conn.commit()
     return cursor.lastrowid
@@ -269,10 +270,10 @@ def _reserve_functions_batch_effect(
         for name, file_id, purpose, params_json, returns_json, id_in_name in functions:
             cursor.execute(
                 """
-                INSERT INTO functions (name, file_id, purpose, parameters, returns, is_reserved, id_in_name)
-                VALUES (?, ?, ?, ?, ?, 1, ?)
+                INSERT INTO functions (entity_key, name, file_id, purpose, parameters, returns, is_reserved, id_in_name)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?)
                 """,
-                (name, file_id, purpose, params_json, returns_json, 1 if id_in_name else 0)
+                (mint_slug("fn", name), name, file_id, purpose, params_json, returns_json, 1 if id_in_name else 0)
             )
             ids.append(cursor.lastrowid)
 

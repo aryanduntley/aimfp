@@ -23,6 +23,7 @@ from typing import Optional, List, Tuple, Dict, Any
 
 # Import global utilities
 from ..utils import get_return_statements
+from ..shared.slugs import mint_slug
 
 # Import update_file_timestamp from files_2
 from ._common import _check_file_exists, _check_type_exists, _create_deletion_note, get_cached_project_root, _open_project_connection
@@ -359,10 +360,10 @@ def _reserve_type_effect(
     """
     cursor = conn.execute(
         """
-        INSERT INTO types (name, definition_json, description, links, file_id, is_reserved, id_in_name)
-        VALUES (?, ?, ?, ?, ?, 1, ?)
+        INSERT INTO types (entity_key, name, definition_json, description, links, file_id, is_reserved, id_in_name)
+        VALUES (?, ?, ?, ?, ?, ?, 1, ?)
         """,
-        (name, definition_json, description, links_json, file_id, 1 if id_in_name else 0)
+        (mint_slug("ty", name), name, definition_json, description, links_json, file_id, 1 if id_in_name else 0)
     )
     conn.commit()
     return cursor.lastrowid
@@ -389,10 +390,10 @@ def _reserve_types_batch_effect(
         for name, definition_json, description, links_json, file_id, id_in_name in types:
             cursor.execute(
                 """
-                INSERT INTO types (name, definition_json, description, links, file_id, is_reserved, id_in_name)
-                VALUES (?, ?, ?, ?, ?, 1, ?)
+                INSERT INTO types (entity_key, name, definition_json, description, links, file_id, is_reserved, id_in_name)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?)
                 """,
-                (name, definition_json, description, links_json, file_id, 1 if id_in_name else 0)
+                (mint_slug("ty", name), name, definition_json, description, links_json, file_id, 1 if id_in_name else 0)
             )
             ids.append(cursor.lastrowid)
 

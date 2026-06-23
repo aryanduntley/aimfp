@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 
 from ..utils import get_return_statements
+from ..shared.slugs import mint_slug
 
 # Import common project utilities (DRY principle)
 from ._common import (
@@ -61,6 +62,7 @@ class SubtaskRecord:
     description: Optional[str]
     created_at: str
     updated_at: str
+    slug: Optional[str] = None  # stable cross-clone identity (see helpers/shared/slugs.py)
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,7 @@ class SidequestRecord:
     flow_ids: Optional[str]  # JSON array
     created_at: str
     updated_at: str
+    slug: Optional[str] = None  # stable cross-clone identity (see helpers/shared/slugs.py)
 
 
 @dataclass(frozen=True)
@@ -170,12 +173,13 @@ def _insert_subtask(
     Returns:
         New subtask ID
     """
+    slug = mint_slug("subtask", name)
     cursor = conn.execute(
         """
-        INSERT INTO subtasks (parent_task_id, name, status, priority, description)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO subtasks (slug, parent_task_id, name, status, priority, description)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (parent_task_id, name, status, priority, description)
+        (slug, parent_task_id, name, status, priority, description)
     )
     conn.commit()
     return cursor.lastrowid
@@ -200,6 +204,7 @@ def _query_incomplete_subtasks(
     return tuple(
         SubtaskRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             parent_task_id=row['parent_task_id'],
             name=row['name'],
             status=row['status'],
@@ -234,6 +239,7 @@ def _query_incomplete_subtasks_by_task(
     return tuple(
         SubtaskRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             parent_task_id=row['parent_task_id'],
             name=row['name'],
             status=row['status'],
@@ -277,6 +283,7 @@ def _query_subtasks_by_task(
     return tuple(
         SubtaskRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             parent_task_id=row['parent_task_id'],
             name=row['name'],
             status=row['status'],
@@ -350,6 +357,7 @@ def _query_subtasks_comprehensive(
     return tuple(
         SubtaskRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             parent_task_id=row['parent_task_id'],
             name=row['name'],
             status=row['status'],
@@ -464,12 +472,13 @@ def _insert_sidequest(
     # Convert flow_ids to JSON string
     flow_ids_json = json.dumps(flow_ids) if flow_ids is not None else None
 
+    slug = mint_slug("sidequest", name)
     cursor = conn.execute(
         """
-        INSERT INTO sidequests (paused_task_id, paused_subtask_id, name, status, priority, description, flow_ids)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sidequests (slug, paused_task_id, paused_subtask_id, name, status, priority, description, flow_ids)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (paused_task_id, paused_subtask_id, name, status, priority, description, flow_ids_json)
+        (slug, paused_task_id, paused_subtask_id, name, status, priority, description, flow_ids_json)
     )
     conn.commit()
     return cursor.lastrowid
@@ -494,6 +503,7 @@ def _query_incomplete_sidequests(
     return tuple(
         SidequestRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             paused_task_id=row['paused_task_id'],
             paused_subtask_id=row['paused_subtask_id'],
             name=row['name'],
@@ -575,6 +585,7 @@ def _query_sidequests_comprehensive(
     return tuple(
         SidequestRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             paused_task_id=row['paused_task_id'],
             paused_subtask_id=row['paused_subtask_id'],
             name=row['name'],

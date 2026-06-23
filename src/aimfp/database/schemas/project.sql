@@ -1,6 +1,23 @@
 -- project.db Schema
--- Version: 1.7
+-- Version: 1.11
 -- Purpose: Track project-specific data, including files, functions, themes, flows, and completion paths
+-- Changelog v1.11:
+--   - Added stable `entity_key` column to functions and types (Stage 2 of semantic changeset merge)
+--   - entity_key is a nullable UNIQUE identity minted at reservation (format: <fn|ty>-<name>-<uuid8>)
+--   - Purpose: makes the merge identity of code entities immutable, so rename (name change) and move
+--     (file change) become 'modify' ops instead of delete+add — enabling clean cross-clone rename
+--     reconciliation for InterCommAIMFP. file+name become mutable attributes.
+--   - Nullable + natural-key fallback: when entity_key is NULL the tools fall back to (file path,name),
+--     preserving v1.10 behavior. Backfill on main before multi-agent work to populate them.
+-- Changelog v1.10:
+--   - Added stable `slug` column to work-hierarchy tables: milestones, tasks, subtasks, sidequests, items
+--   - slug is a nullable UNIQUE identity minted at creation (format: <kind>-<name-slug>-<uuid8>)
+--   - Purpose: stable cross-clone identity for semantic changeset merge (multi-agent parallel work
+--     via InterCommAIMFP). Names are not unique and integer PKs collide across independently-minting
+--     clones, so the slug is the merge identity for these rows.
+--   - Nullable so the recreate-and-copy migration succeeds with empty values on existing rows; old
+--     rows are slugged lazily on first changeset export (or via the optional backfill tool). Projects
+--     not using InterCommAIMFP can leave slugs NULL with zero impact.
 -- Changelog v1.9:
 --   - Added modules table for reusable code boundary tracking
 --   - Added module_files junction table for explicit file-to-module assignment
@@ -79,6 +96,7 @@ CREATE TABLE IF NOT EXISTS files (
 -- Functions Table: Per-file details with reservation system
 CREATE TABLE IF NOT EXISTS functions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_key TEXT UNIQUE,                 -- Stable cross-clone identity for semantic merge (minted at creation)
     name TEXT NOT NULL,                     -- Function name (not unique — language enforces per-file uniqueness)
     file_id INTEGER NOT NULL,
     purpose TEXT,
@@ -94,6 +112,7 @@ CREATE TABLE IF NOT EXISTS functions (
 -- Types Table: For algebraic data types (directive_fp_adt) with reservation system
 CREATE TABLE IF NOT EXISTS types (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_key TEXT UNIQUE,                     -- Stable cross-clone identity for semantic merge (minted at creation)
     name TEXT NOT NULL,
     file_id INTEGER,                            -- File where type is defined
     definition_json TEXT NOT NULL,              -- JSON schema for ADT (e.g., {"type": "enum", "variants": ["A", "B"]})
@@ -184,6 +203,7 @@ CREATE TABLE IF NOT EXISTS completion_path (
 -- Milestones Table: Standalone overviews under completion_path
 CREATE TABLE IF NOT EXISTS milestones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT UNIQUE,                       -- Stable cross-clone identity for semantic merge (minted at creation)
     completion_path_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'blocked')),
@@ -196,6 +216,7 @@ CREATE TABLE IF NOT EXISTS milestones (
 -- Tasks Table: Detailed breakdowns under milestones
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT UNIQUE,                       -- Stable cross-clone identity for semantic merge (minted at creation)
     milestone_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'blocked')),
@@ -210,6 +231,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 -- Subtasks Table: Potential breakdown of tasks
 CREATE TABLE IF NOT EXISTS subtasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT UNIQUE,                       -- Stable cross-clone identity for semantic merge (minted at creation)
     parent_task_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'blocked')),
@@ -223,6 +245,7 @@ CREATE TABLE IF NOT EXISTS subtasks (
 -- Sidequests Table: Priority deviations that pause tasks
 CREATE TABLE IF NOT EXISTS sidequests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT UNIQUE,                          -- Stable cross-clone identity for semantic merge (minted at creation)
     paused_task_id INTEGER NOT NULL,
     paused_subtask_id INTEGER,                 -- Optional: for finer-grained interruption tracking
     name TEXT NOT NULL,
@@ -239,6 +262,7 @@ CREATE TABLE IF NOT EXISTS sidequests (
 -- Items Table: Lowest-level actions for tasks/sidequests
 CREATE TABLE IF NOT EXISTS items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT UNIQUE,                       -- Stable cross-clone identity for semantic merge (minted at creation)
     reference_table TEXT NOT NULL CHECK (reference_table IN ('tasks', 'subtasks', 'sidequests')),
     reference_id INTEGER NOT NULL,
     name TEXT NOT NULL,
@@ -495,6 +519,14 @@ CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 CREATE INDEX IF NOT EXISTS idx_functions_file_id ON functions(file_id);
 CREATE INDEX IF NOT EXISTS idx_completion_path_order ON completion_path(order_index);
 CREATE INDEX IF NOT EXISTS idx_items_reference ON items(reference_table, reference_id);
+-- Stable-slug lookups for semantic changeset merge (resolve entity by slug across clones)
+CREATE INDEX IF NOT EXISTS idx_milestones_slug ON milestones(slug);
+CREATE INDEX IF NOT EXISTS idx_tasks_slug ON tasks(slug);
+CREATE INDEX IF NOT EXISTS idx_subtasks_slug ON subtasks(slug);
+CREATE INDEX IF NOT EXISTS idx_sidequests_slug ON sidequests(slug);
+CREATE INDEX IF NOT EXISTS idx_items_slug ON items(slug);
+CREATE INDEX IF NOT EXISTS idx_functions_entity_key ON functions(entity_key);
+CREATE INDEX IF NOT EXISTS idx_types_entity_key ON types(entity_key);
 CREATE INDEX IF NOT EXISTS idx_notes_directive ON notes(directive_name);
 CREATE INDEX IF NOT EXISTS idx_notes_severity ON notes(severity);
 CREATE INDEX IF NOT EXISTS idx_notes_source ON notes(source);
@@ -600,4 +632,4 @@ CREATE TABLE IF NOT EXISTS schema_version (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.9');
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.11');

@@ -11,6 +11,8 @@
 
 The `git_merge_branch` directive merges user/AI work branches into the main branch using **FP-powered intelligent conflict resolution**. This directive is the culmination of AIMFP's Git collaboration workflow, combining Git's version control with AIMFP's functional programming intelligence to make merging **dramatically simpler and safer** than traditional OOP codebases.
 
+> **With use of InterCommAIMFP (multi-agent parallel merge):** `git_merge_branch` reconciles **source code only**. The committed `project.db` must **not** be git-merged as a binary blob — instead reconcile DB state per worker branch with `export_state_changeset` → `apply_state_changeset` (and `detect_state_conflicts` to plan). See `docs/intercommaimfptools/`.
+
 This directive is **essential for multi-user collaboration** because:
 - **FP-guided resolution**: Uses function purity levels to automatically resolve conflicts
 - **High-confidence auto-merge**: Resolves conflicts with >80% confidence automatically

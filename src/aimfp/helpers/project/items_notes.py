@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
 from ..utils import get_return_statements
+from ..shared.slugs import mint_slug
 
 # Import common project utilities (DRY principle)
 from ._common import (
@@ -72,6 +73,7 @@ class ItemRecord:
     description: Optional[str]
     created_at: str
     updated_at: str
+    slug: Optional[str] = None  # stable cross-clone identity (see helpers/shared/slugs.py)
 
 
 @dataclass(frozen=True)
@@ -232,6 +234,7 @@ def _query_items_by_reference(
     return tuple(
         ItemRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             reference_table=row['reference_table'],
             reference_id=row['reference_id'],
             name=row['name'],
@@ -268,6 +271,7 @@ def _query_incomplete_items_by_reference(
     return tuple(
         ItemRecord(
             id=row['id'],
+            slug=row['slug'] if 'slug' in row.keys() else None,
             reference_table=row['reference_table'],
             reference_id=row['reference_id'],
             name=row['name'],
@@ -314,10 +318,11 @@ def _insert_item(
     Returns:
         New item ID
     """
+    slug = mint_slug("item", name)
     cursor = conn.execute(
-        "INSERT INTO items (reference_table, reference_id, name, description, status) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (reference_table, reference_id, name, description, status)
+        "INSERT INTO items (slug, reference_table, reference_id, name, description, status) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (slug, reference_table, reference_id, name, description, status)
     )
     conn.commit()
     return cursor.lastrowid
@@ -343,10 +348,11 @@ def _insert_items_batch(
     """
     ids = []
     for item in items:
+        slug = mint_slug("item", item["name"])
         cursor = conn.execute(
-            "INSERT INTO items (reference_table, reference_id, name, description, status) "
-            "VALUES (?, ?, ?, ?, 'pending')",
-            (reference_table, reference_id, item["name"], item.get("description"))
+            "INSERT INTO items (slug, reference_table, reference_id, name, description, status) "
+            "VALUES (?, ?, ?, ?, ?, 'pending')",
+            (slug, reference_table, reference_id, item["name"], item.get("description"))
         )
         ids.append(cursor.lastrowid)
     conn.commit()

@@ -11,6 +11,8 @@
 
 The `git_detect_conflicts` directive performs **FP-powered dry-run analysis** of branch merge conflicts before attempting an actual merge. This directive goes far beyond Git's basic conflict detection by leveraging AIMFP's database-tracked function metadata (purity levels, dependencies, tests) to intelligently classify conflicts and assign confidence scores for auto-resolution.
 
+> **With use of InterCommAIMFP (multi-agent parallel merge):** this analyzes **source/code** conflicts. To find where parallel-worker branches overlap in **`project.db` state**, use `detect_state_conflicts` (and reconcile with `export_state_changeset` / `apply_state_changeset`). See `docs/intercommaimfptools/`.
+
 This directive is **essential for safe collaborative merging** because:
 - **Prevents merge disasters**: Detect conflicts before they corrupt code
 - **FP intelligence**: Uses function purity to guide resolution strategies

@@ -300,6 +300,16 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "get_claude_permissions": ("aimfp.helpers.shared.claude_setup", "get_claude_permissions"),
     "get_system_prompt": ("aimfp.helpers.shared.claude_setup", "get_system_prompt"),
 
+    # ── Changeset (semantic project.db merge for InterCommAIMFP) ─────────
+    # helpers/changeset/backfill.py (1 tool)
+    "backfill_semantic_keys": ("aimfp.helpers.changeset.backfill", "backfill_semantic_keys"),
+    # helpers/changeset/export.py (1 tool)
+    "export_state_changeset": ("aimfp.helpers.changeset.export", "export_state_changeset"),
+    # helpers/changeset/apply.py (1 tool)
+    "apply_state_changeset": ("aimfp.helpers.changeset.apply", "apply_state_changeset"),
+    # helpers/changeset/conflicts.py (1 tool)
+    "detect_state_conflicts": ("aimfp.helpers.changeset.conflicts", "detect_state_conflicts"),
+
     # ── User Directives ──────────────────────────────────────────────────
     # helpers/user_directives/crud.py (8 tools)
     "add_user_custom_entry": ("aimfp.helpers.user_directives.crud", "add_user_custom_entry"),
