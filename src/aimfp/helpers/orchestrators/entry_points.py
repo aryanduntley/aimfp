@@ -51,6 +51,41 @@ from .migration import _check_pending_migrations
 from .status import get_project_status
 
 
+def _reconcile_stored_project_root(project_root: str) -> None:
+    """
+    Effect: Heal infrastructure.project_root to the LIVE resolved root.
+
+    When the MCP server runs inside a linked git worktree, the committed
+    project.db carries the main checkout's absolute path in
+    infrastructure.project_root. After resolution binds the server to the
+    worktree (see _discover_project_root), this rewrites the stored value so
+    get_project_root()/aimfp_status report the worktree and the worktree's
+    project.db is self-consistent. No-op when the values already match (the
+    normal single-tree case). Non-fatal on any error — tracking still works off
+    the cached live root regardless of the stored value.
+    """
+    try:
+        db_path = get_project_db_path(project_root)
+        if not database_exists(db_path):
+            return
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                "SELECT value FROM infrastructure WHERE type = 'project_root'"
+            ).fetchone()
+            stored = row[0] if row else None
+            if stored != project_root:
+                conn.execute(
+                    "UPDATE infrastructure SET value = ? WHERE type = 'project_root'",
+                    (project_root,)
+                )
+                conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
 # ============================================================================
 # aimfp_init
 # ============================================================================
@@ -625,6 +660,13 @@ def aimfp_run(is_new_session: bool = False) -> Result:
 
         # Cache project root for helper functions
         set_project_root(project_root)
+
+        # Worktree self-heal: when running inside a linked git worktree, the
+        # committed project.db still carries the MAIN checkout's path in
+        # infrastructure.project_root. Reconcile it to the live resolved root so
+        # get_project_root()/aimfp_status report the worktree and the worktree's
+        # project.db is self-consistent. No-op for normal single-tree projects.
+        _reconcile_stored_project_root(project_root)
 
         # Watchdog: start subprocess first (skip reconciliation — we run it here),
         # then run reconciliation synchronously to eliminate race condition,

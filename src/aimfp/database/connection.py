@@ -32,6 +32,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Tuple, Optional, List, Dict, Any, Final
@@ -106,33 +107,74 @@ def clear_project_root_cache() -> None:
     _cached_project_root = None
 
 
+def _git_toplevel(start_dir: str) -> Optional[str]:
+    """
+    Effect: Return the git working-tree top-level for ``start_dir``, or None.
+
+    Runs ``git rev-parse --show-toplevel``. For a linked git worktree this
+    returns the WORKTREE's path (not the shared main checkout) — which is exactly
+    what binds project.db to the worktree's own .aimfp-project copy. Returns None
+    for non-git directories or when git is unavailable.
+
+    Deliberately NOT ``--git-common-dir``: that maps every linked worktree back
+    to the main repo (correct for a shared coordination DB, wrong for per-worker
+    project.db). See docs/intercommaimfptools/WORKTREE-ISOLATION-BUG.md.
+    """
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--show-toplevel'],
+            cwd=start_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    top = result.stdout.strip()
+    return top or None
+
+
+def _has_project_db(root: str) -> bool:
+    """Effect: True if ``root`` holds an initialized .aimfp-project/project.db."""
+    aimfp_dir = Path(root) / AIMFP_PROJECT_DIR
+    return aimfp_dir.is_dir() and os.path.exists(str(aimfp_dir / PROJECT_DB_NAME))
+
+
 def _discover_project_root() -> Optional[str]:
     """
-    Effect: Discover project root from CWD's .aimfp-project/ database.
+    Effect: Discover the LIVE project root from the server's CWD.
 
-    Checks if .aimfp-project/project.db exists in current working directory.
-    If found, reads project_root from the infrastructure table.
-    If not found, returns None (project not initialized).
+    Worktree-aware: when CWD lies inside a git working tree, the root resolves to
+    that tree's top-level (``git rev-parse --show-toplevel``). For a linked git
+    worktree this is the WORKTREE path, so a server launched inside a worktree
+    binds to the WORKTREE's own .aimfp-project/project.db — not the shared main
+    checkout's. This is the fix for the worktree-isolation bug: parallel workers
+    must each read/write their own worktree's project.db, never race main's.
 
-    Does NOT walk up parent directories — the MCP server process
-    is started in the project directory by the AI client.
+    Resolution order:
+        1. git top-level of CWD, if it holds .aimfp-project/project.db
+        2. CWD itself, if it holds .aimfp-project/project.db (non-git / single tree)
+        3. None (project not initialized)
+
+    Returns the LIVE on-disk root, NOT the stored infrastructure.project_root
+    (which may be an absolute path to a different checkout — that staleness is
+    the bug). Callers that surface the stored value reconcile it to this live
+    root (see aimfp_run -> _reconcile_stored_project_root).
+
+    Does NOT walk up parent directories beyond the git top-level — the MCP server
+    is started in the project (or worktree) directory by the AI client.
     """
-    aimfp_dir = Path.cwd() / AIMFP_PROJECT_DIR
-    if not aimfp_dir.is_dir():
-        return None
+    toplevel = _git_toplevel(str(Path.cwd()))
+    if toplevel is not None and _has_project_db(toplevel):
+        return toplevel
 
-    db_path = str(aimfp_dir / PROJECT_DB_NAME)
-    if not os.path.exists(db_path):
-        return None
+    cwd = str(Path.cwd())
+    if _has_project_db(cwd):
+        return cwd
 
-    conn = _open_connection(db_path)
-    try:
-        row = conn.execute(
-            "SELECT value FROM infrastructure WHERE type = 'project_root'"
-        ).fetchone()
-        return row['value'] if row else None
-    finally:
-        conn.close()
+    return None
 
 
 # ============================================================================
