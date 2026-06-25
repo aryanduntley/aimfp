@@ -327,6 +327,53 @@ def test_apply_safe_delete_and_blocked_delete(repo):
     assert "foo" in fns  # not deleted (had inbound dependent)
 
 
+def test_apply_unique_collision_is_structured_not_raw(repo):
+    """A UNIQUE collision on a non-semantic-key column (modules.path) is surfaced as a
+    structured conflict; the non-colliding subset still applies; main is intact.
+
+    RUN-3-AIMFP-FOLLOWUPS.md Issue 2."""
+    root, db = repo
+    _seed_base(db)
+    base = _commit(root, "base")
+
+    # branch adds two modules (distinct names) + a clean unrelated function
+    _git(root, "checkout", "-qb", "work")
+    c = _conn(db)
+    c.execute("INSERT INTO modules (name, path, purpose) VALUES ('alpha','src/shared/','a')")
+    c.execute("INSERT INTO modules (name, path, purpose) VALUES ('beta','src/beta/','b')")
+    c.execute("INSERT INTO functions (file_id,name,purpose) VALUES (1,'bar','bar')")
+    c.commit(); c.close()
+    _commit(root, "work")
+    cs = export_state_changeset(base, "work", worker_id="w1").data
+
+    # main independently created a DIFFERENT module that already owns src/shared/
+    _git(root, "checkout", "-q", _main_branch(root))
+    c = _conn(db)
+    c.execute("INSERT INTO modules (name, path, purpose) VALUES ('gamma','src/shared/','g')")
+    c.commit(); c.close()
+
+    res = apply_state_changeset(cs)
+    assert res.success, res.error  # NOT a raw IntegrityError abort
+
+    # 'alpha' collides with main's 'gamma' on modules.path -> structured conflict
+    uniq = [x for x in res.data["conflicts"] if x.get("conflict_type") == "unique_constraint"]
+    assert uniq, res.data["conflicts"]
+    coll = uniq[0]
+    assert coll["kind"] == "modules" and coll["op"] == "add"
+    assert any(cc["column"] == "modules.path" and cc["value"] == "src/shared/"
+               for cc in coll["colliding_columns"])
+    assert coll["existing_row"] is not None and coll["existing_row"]["name"] == "gamma"
+
+    c = _conn(db)
+    mods = {r[0]: r[1] for r in c.execute("SELECT name, path FROM modules")}
+    # non-colliding subset applied: beta added, bar added; main's gamma intact; alpha rejected
+    assert mods.get("beta") == "src/beta/"
+    assert mods.get("gamma") == "src/shared/"        # main untouched
+    assert "alpha" not in mods                        # rolled back to savepoint
+    assert c.execute("SELECT COUNT(*) FROM functions WHERE name='bar'").fetchone()[0] == 1
+    c.close()
+
+
 def test_detect_conflicts_clean_and_overlap(repo):
     """detect_state_conflicts flags entities touched by >1 branch; clean when disjoint."""
     root, db = repo

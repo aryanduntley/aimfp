@@ -32,6 +32,7 @@ from ..utils import get_return_statements
 
 # Import common project utilities (DRY principle)
 from ._common import get_cached_project_root, _open_project_connection
+from ..utils import resolve_project_root, get_project_db_path, database_exists
 
 
 # ============================================================================
@@ -171,6 +172,51 @@ def _make_relative_source_dir(source_dir: str, project_root: str) -> str:
         if normalized_dir.startswith(normalized_root + '/'):
             return normalized_dir[len(normalized_root) + 1:]
     return source_dir
+
+
+def _resolve_source_dir_abs(
+    source_dir: str,
+    resolved_root: str,
+    stored_root: Optional[str],
+) -> str:
+    """
+    Pure: Resolve a stored source_directory to an absolute path under the LIVE
+    (worktree-resolved) project root.
+
+    This is the source_directory analogue of the worktree project_root fix
+    (WORKTREE-ISOLATION-BUG.md / RUN-3-AIMFP-FOLLOWUPS.md Issue 1): a value frozen
+    at aimfp_init must never override the live worktree root.
+
+    - Relative value           -> joined onto resolved_root.
+    - Absolute, under resolved_root  -> returned unchanged (already correct).
+    - Absolute, anchored elsewhere (e.g. the main checkout captured at init while
+      we now run in a linked worktree) -> re-anchored: its path relative to the
+      checkout it was captured under (stored_root, else its basename) is re-joined
+      onto resolved_root.
+
+    Args:
+        source_dir: Stored infrastructure.source_directory value (relative or absolute)
+        resolved_root: Live worktree-resolved project root (absolute)
+        stored_root: Stored infrastructure.project_root value, if any (may be stale)
+
+    Returns:
+        Absolute source directory path under resolved_root.
+    """
+    if not source_dir.startswith('/'):
+        return str(Path(resolved_root) / source_dir)
+
+    # Absolute and already under the live root → keep as-is.
+    rel = _make_relative_source_dir(source_dir, resolved_root)
+    if not rel.startswith('/'):
+        return str(Path(resolved_root) / rel)
+
+    # Absolute but anchored to a different checkout → relativize against the
+    # checkout it was captured under, then re-anchor onto the live root.
+    if stored_root:
+        rel = _make_relative_source_dir(source_dir, stored_root)
+    if rel.startswith('/'):
+        rel = os.path.basename(source_dir.rstrip('/'))
+    return str(Path(resolved_root) / rel)
 
 
 def _validate_source_dir(source_dir: str) -> Optional[str]:
@@ -730,30 +776,40 @@ def get_all_infrastructure() -> InfrastructureResult:
 
 def get_source_directory() -> SourceDirResult:
     """
-    Get project source directory from infrastructure table.
+    Get the project source directory as an ABSOLUTE path under the live
+    (worktree-resolved) project root.
+
+    The stored value is anchored to the live root at read time, so a server
+    running inside a linked git worktree returns <worktree>/src — not the main
+    checkout's src captured at aimfp_init (RUN-3-AIMFP-FOLLOWUPS.md Issue 1).
+    Relative stored values are joined onto the resolved root; a stale absolute
+    value is re-anchored. See _resolve_source_dir_abs.
 
     Returns:
-        SourceDirResult with source directory path or error
+        SourceDirResult with absolute source directory path or error
     """
-    project_root = get_cached_project_root()
-    conn = _open_project_connection(project_root)
+    resolved_root = resolve_project_root()
+    conn = _open_project_connection(resolved_root)
 
     try:
         source_dir = _get_source_dir_value(conn)
+        stored_root = _get_project_root_value(conn)
         conn.close()
 
-        if source_dir is None:
+        if not source_dir:
             return SourceDirResult(
                 success=False,
-                error="Source directory not configured. Must call add_source_directory() first."
+                error="Source directory not configured. Must call update_source_directory() first."
             )
+
+        abs_source_dir = _resolve_source_dir_abs(source_dir, resolved_root, stored_root)
 
         # Fetch return statements
         return_stmts = get_return_statements("get_source_directory")
 
         return SourceDirResult(
             success=True,
-            data=source_dir,
+            data=abs_source_dir,
             return_statements=return_stmts
         )
 
@@ -763,6 +819,56 @@ def get_source_directory() -> SourceDirResult:
             success=False,
             error=f"Database error: {str(e)}"
         )
+
+
+def reconcile_stored_source_directory(project_root: str) -> None:
+    """
+    Effect: Heal an absolute infrastructure.source_directory to a path relative
+    to the project root.
+
+    Companion to _reconcile_stored_project_root (entry_points). When the server
+    runs inside a linked git worktree, the committed project.db carries the MAIN
+    checkout's absolute source_directory. Rewriting it to a relative path ('src')
+    makes every consumer worktree-correct — including the watchdog, which reads
+    the raw infrastructure value and joins a *relative* source_directory onto the
+    live root (an absolute one it would walk verbatim, i.e. the wrong tree).
+
+    Call this BEFORE _reconcile_stored_project_root: the still-stored (possibly
+    main-anchored) project_root is the best signal for relativizing a nested
+    source dir. No-op when source_directory is unset or already relative.
+    Non-fatal on any error — read-time resolution (get_source_directory) is a
+    second line of defence regardless of the stored form.
+
+    Args:
+        project_root: Live worktree-resolved project root (absolute)
+    """
+    try:
+        db_path = get_project_db_path(project_root)
+        if not database_exists(db_path):
+            return
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row  # _get_*_value access rows by column name
+        try:
+            stored = _get_source_dir_value(conn)
+            if not stored or not stored.startswith('/'):
+                return  # unset or already relative — nothing to heal
+            stored_root = _get_project_root_value(conn)
+            rel = _make_relative_source_dir(stored, stored_root) if stored_root else stored
+            if rel.startswith('/'):
+                rel = _make_relative_source_dir(stored, project_root)
+            if rel.startswith('/'):
+                rel = os.path.basename(stored.rstrip('/'))
+            if rel and rel != stored:
+                conn.execute(
+                    "UPDATE infrastructure SET value = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE type = ?",
+                    (rel, INFRASTRUCTURE_TYPE_SOURCE_DIR)
+                )
+                conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
 
 
 def update_source_directory(new_source_dir: str) -> SourceDirResult:

@@ -49,6 +49,7 @@ from ._common import (
 from .backup import check_and_run_backup
 from .migration import _check_pending_migrations
 from .status import get_project_status
+from ..project.metadata import reconcile_stored_source_directory
 
 
 def _reconcile_stored_project_root(project_root: str) -> None:
@@ -662,10 +663,13 @@ def aimfp_run(is_new_session: bool = False) -> Result:
         set_project_root(project_root)
 
         # Worktree self-heal: when running inside a linked git worktree, the
-        # committed project.db still carries the MAIN checkout's path in
-        # infrastructure.project_root. Reconcile it to the live resolved root so
-        # get_project_root()/aimfp_status report the worktree and the worktree's
+        # committed project.db still carries the MAIN checkout's paths in
+        # infrastructure. Reconcile source_directory FIRST (it uses the still-
+        # stored, possibly main-anchored project_root to relativize correctly),
+        # then project_root, so get_project_root()/get_source_directory()/
+        # aimfp_status and the watchdog all track the worktree and the worktree's
         # project.db is self-consistent. No-op for normal single-tree projects.
+        reconcile_stored_source_directory(project_root)
         _reconcile_stored_project_root(project_root)
 
         # Watchdog: start subprocess first (skip reconciliation — we run it here),

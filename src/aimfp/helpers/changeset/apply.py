@@ -20,10 +20,11 @@ Model (decisions recorded in IMPLEMENTATION-PLAN.md §4):
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Callable
 
 from ..utils import (
     Result,
@@ -404,6 +405,85 @@ def _apply_reference(conn, resolver, ref):
 
 
 # ============================================================================
+# UNIQUE-constraint collisions → structured conflicts (not raw SQL errors)
+# ============================================================================
+
+def _exec_guarded(conn, sp_name: str, action: Callable[[], Any]) -> Tuple[Any, Optional[sqlite3.IntegrityError]]:
+    """
+    Run `action` (performs one entity/edge mutation) inside a SQLite SAVEPOINT.
+
+    On a UNIQUE/integrity violation, undo ONLY this op (rollback to savepoint) and
+    return (None, error) — the rest of the changeset is unaffected, so the
+    non-colliding subset still applies. Otherwise release the savepoint and return
+    (action_result, None). Non-Integrity exceptions propagate (genuine failure →
+    the caller's outer handler restores from backup).
+    """
+    conn.execute(f"SAVEPOINT {sp_name}")
+    try:
+        result = action()
+    except sqlite3.IntegrityError as ie:
+        conn.execute(f"ROLLBACK TO {sp_name}")
+        conn.execute(f"RELEASE {sp_name}")
+        return None, ie
+    conn.execute(f"RELEASE {sp_name}")
+    return result, None
+
+
+def _parse_unique_columns(message: str) -> List[Tuple[str, str]]:
+    """Pure: extract (table, column) pairs from a sqlite UNIQUE error message.
+
+    Handles single ("UNIQUE constraint failed: modules.path") and composite
+    ("...failed: a.x, a.y") forms. Returns [] for non-UNIQUE messages.
+    """
+    m = re.search(r"UNIQUE constraint failed:\s*(.+)", message)
+    if not m:
+        return []
+    out: List[Tuple[str, str]] = []
+    for part in m.group(1).split(','):
+        part = part.strip()
+        if '.' in part:
+            table, _, col = part.partition('.')
+            out.append((table.strip(), col.strip()))
+    return out
+
+
+def _unique_conflict_entry(conn, kind: str, op: str, key: Optional[Dict[str, Any]],
+                           attrs: Optional[Dict[str, Any]], ie: sqlite3.IntegrityError) -> dict:
+    """
+    Build a structured conflict for a UNIQUE collision, with the colliding
+    column(s), the existing row that owns the value, and the incoming attributes —
+    enough for the master/AI to resolve (e.g. rename the path) and re-apply.
+    """
+    a = attrs or {}
+    colliding: List[dict] = []
+    existing_row: Optional[dict] = None
+    for table, col in _parse_unique_columns(str(ie)):
+        val = a.get(col)
+        if val is None and isinstance(key, dict):
+            val = key.get(col)
+        colliding.append({"column": f"{table}.{col}", "value": val})
+        if existing_row is None and val is not None:
+            try:
+                row = conn.execute(
+                    f"SELECT * FROM {table} WHERE {col} = ? LIMIT 1", (val,)
+                ).fetchone()
+                if row is not None:
+                    existing_row = dict(row)
+            except sqlite3.Error:
+                pass
+    return {
+        "kind": kind,
+        "op": op,
+        "semantic_key": key,
+        "conflict_type": "unique_constraint",
+        "reason": f"unique constraint collision ({str(ie)})",
+        "colliding_columns": colliding,
+        "existing_row": existing_row,
+        "incoming": a,
+    }
+
+
+# ============================================================================
 # Public tool
 # ============================================================================
 
@@ -418,7 +498,12 @@ def apply_state_changeset(changeset: Dict[str, Any]) -> Result:
     Returns:
         Result with data={applied[], conflicts[], minted_ids[], backup_path, base_main_commit}.
         Non-overlapping changes auto-apply; conflicts are returned for review (never guessed).
-        A genuine failure rolls back and restores the backup.
+        A DB UNIQUE-constraint collision (e.g. two branches mint the same modules.path)
+        is surfaced as a structured conflict (conflict_type='unique_constraint', with the
+        colliding column(s), the existing row, and the incoming attributes) — that single
+        op is rolled back to its savepoint and the rest of the changeset still applies; it
+        does NOT abort the whole apply. Only a genuine (non-integrity) failure rolls back
+        and restores the backup.
     """
     if not isinstance(changeset, dict):
         return Result(success=False, error="changeset must be an object")
@@ -482,25 +567,46 @@ def apply_state_changeset(changeset: Dict[str, Any]) -> Result:
                             conflicts.append({"kind": kind, "op": "add", "semantic_key": key,
                                               "reason": "entity added in both with different attributes"})
                         continue
-                    new_id, reason = _insert_entity(conn, resolver, kind, key, e.get("attributes") or {})
+                    attributes = e.get("attributes") or {}
+                    res_insert, ie = _exec_guarded(
+                        conn, "sp_add",
+                        lambda: _insert_entity(conn, resolver, kind, key, attributes))
+                    if ie is not None:
+                        # UNIQUE collision on a non-semantic-key column (e.g.
+                        # modules.path) — surface structured, keep applying the rest.
+                        conflicts.append(_unique_conflict_entry(conn, kind, "add", key, attributes, ie))
+                        continue
+                    new_id, reason = res_insert
                     if reason:
                         conflicts.append({"kind": kind, "op": "add", "semantic_key": key, "reason": reason})
                     else:
                         applied.append({"kind": kind, "op": "add", "semantic_key": key, "id": new_id})
                         minted.append({"kind": kind, "semantic_key": key, "id": new_id})
                 elif op == "modify":
-                    status, reason = _apply_modify(
-                        conn, resolver, kind, key, e.get("attributes") or {},
-                        base_entities.get(kind, {}).get(kser, {}).get("attrs"),
-                        main_entities.get(kind, {}).get(kser, {}).get("attrs"))
+                    attributes = e.get("attributes") or {}
+                    res_mod, ie = _exec_guarded(
+                        conn, "sp_mod",
+                        lambda: _apply_modify(
+                            conn, resolver, kind, key, attributes,
+                            base_entities.get(kind, {}).get(kser, {}).get("attrs"),
+                            main_entities.get(kind, {}).get(kser, {}).get("attrs")))
+                    if ie is not None:
+                        conflicts.append(_unique_conflict_entry(conn, kind, "modify", key, attributes, ie))
+                        continue
+                    status, reason = res_mod
                     if status == "applied":
                         applied.append({"kind": kind, "op": "modify", "semantic_key": key})
                     elif status == "conflict":
                         conflicts.append({"kind": kind, "op": "modify", "semantic_key": key, "reason": reason})
 
         def _run_ref(ref):
-            status, reason = _apply_reference(conn, resolver, ref)
+            res_ref, ie = _exec_guarded(conn, "sp_ref", lambda: _apply_reference(conn, resolver, ref))
             entry = {"kind": ref.get("kind"), "op": ref.get("op"), "reference": True}
+            if ie is not None:
+                conflicts.append({**entry, "conflict_type": "unique_constraint",
+                                  "reason": f"unique constraint collision ({str(ie)})"})
+                return
+            status, reason = res_ref
             if status == "applied":
                 applied.append(entry)
             elif status == "conflict":
@@ -521,10 +627,16 @@ def apply_state_changeset(changeset: Dict[str, Any]) -> Result:
                     continue
                 key = e.get("semantic_key")
                 kser = serialize_key(key)
-                status, reason = _apply_delete(
-                    conn, resolver, kind, key,
-                    base_entities.get(kind, {}).get(kser, {}).get("attrs"),
-                    main_entities.get(kind, {}).get(kser, {}).get("attrs"))
+                res_del, ie = _exec_guarded(
+                    conn, "sp_del",
+                    lambda: _apply_delete(
+                        conn, resolver, kind, key,
+                        base_entities.get(kind, {}).get(kser, {}).get("attrs"),
+                        main_entities.get(kind, {}).get(kser, {}).get("attrs")))
+                if ie is not None:
+                    conflicts.append(_unique_conflict_entry(conn, kind, "delete", key, None, ie))
+                    continue
+                status, reason = res_del
                 if status == "applied":
                     applied.append({"kind": kind, "op": "delete", "semantic_key": key})
                 elif status == "conflict":

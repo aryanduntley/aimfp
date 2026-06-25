@@ -26,7 +26,12 @@ from aimfp.database.connection import (
     get_project_db_path,
 )
 from aimfp.helpers.orchestrators.entry_points import _reconcile_stored_project_root
-from aimfp.helpers.project.metadata import get_project_root
+from aimfp.helpers.project.metadata import (
+    get_project_root,
+    get_source_directory,
+    reconcile_stored_source_directory,
+    _resolve_source_dir_abs,
+)
 
 SCHEMA_PATH = os.path.join(
     os.path.dirname(__file__), "..", "src", "aimfp", "database", "schemas", "project.sql"
@@ -65,6 +70,30 @@ def _stored_root(db):
     try:
         row = conn.execute(
             "SELECT value FROM infrastructure WHERE type='project_root'"
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def _set_infra(db, infra_type, value):
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("DELETE FROM infrastructure WHERE type = ?", (infra_type,))
+        conn.execute(
+            "INSERT INTO infrastructure (type, value, description) VALUES (?, ?, 'x')",
+            (infra_type, value),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _stored_source_dir(db):
+    conn = sqlite3.connect(db)
+    try:
+        row = conn.execute(
+            "SELECT value FROM infrastructure WHERE type='source_directory'"
         ).fetchone()
         return row[0] if row else None
     finally:
@@ -197,3 +226,86 @@ def test_uninitialized_dir_returns_none(monkeypatch):
     finally:
         clear_project_root_cache()
         shutil.rmtree(root, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# source_directory worktree-awareness (RUN-3-AIMFP-FOLLOWUPS.md Issue 1)
+# ---------------------------------------------------------------------------
+
+def test_resolve_source_dir_abs_cases():
+    """Pure resolver: relative joins; absolute-under-root kept; absolute-elsewhere re-anchored."""
+    W = "/home/u/.worktrees/w1"
+    R = "/home/u/main"
+    # relative -> joined onto the live root
+    assert _resolve_source_dir_abs("src", W, R) == "/home/u/.worktrees/w1/src"
+    assert _resolve_source_dir_abs("src/app", W, R) == "/home/u/.worktrees/w1/src/app"
+    # absolute already under the live root -> unchanged
+    assert _resolve_source_dir_abs(W + "/src", W, R) == W + "/src"
+    # absolute anchored to the MAIN checkout -> re-anchored onto the worktree
+    assert _resolve_source_dir_abs(R + "/src", W, R) == W + "/src"
+    # nested source dir under main, stored_root known -> structure preserved
+    assert _resolve_source_dir_abs(R + "/pkg/src", W, R) == W + "/pkg/src"
+    # absolute elsewhere with no usable stored_root -> basename fallback
+    assert _resolve_source_dir_abs("/somewhere/else/src", W, None) == W + "/src"
+
+
+def test_get_source_directory_in_worktree_returns_worktree(main_repo, monkeypatch):
+    """get_source_directory() returns <worktree>/src, not the main checkout's src."""
+    base, R, R_db = main_repo
+    # main stored an ABSOLUTE source_directory at init (the bug's starting state)
+    _set_infra(R_db, "source_directory", os.path.join(R, "src"))
+    _git(R, "add", "-A"); _git(R, "commit", "-qm", "set src")
+
+    W = os.path.join(base, "wt1")
+    _git(R, "worktree", "add", "--detach", W, "HEAD")
+
+    monkeypatch.chdir(W)
+    clear_project_root_cache()
+    resolved = _discover_project_root()
+    set_project_root(resolved)
+
+    res = get_source_directory()
+    assert res.success, res.error
+    assert res.data == os.path.join(W, "src")        # worktree, NOT main
+    assert res.data != os.path.join(R, "src")
+
+
+def test_reconcile_heals_absolute_source_dir_to_relative(main_repo, monkeypatch):
+    """The aimfp_run heal rewrites an absolute (main-anchored) source_directory to relative."""
+    base, R, R_db = main_repo
+    _set_infra(R_db, "source_directory", os.path.join(R, "src"))
+    _git(R, "add", "-A"); _git(R, "commit", "-qm", "set src")
+
+    W = os.path.join(base, "wt1")
+    _git(R, "worktree", "add", "--detach", W, "HEAD")
+    W_db = get_project_db_path(W)
+    assert _stored_source_dir(W_db) == os.path.join(R, "src")  # carries main's path
+
+    monkeypatch.chdir(W)
+    clear_project_root_cache()
+    resolved = _discover_project_root()
+    set_project_root(resolved)
+    # source_directory heal runs BEFORE the project_root heal (uses still-stored main root)
+    reconcile_stored_source_directory(resolved)
+    _reconcile_stored_project_root(resolved)
+
+    assert _stored_source_dir(W_db) == "src"          # now relative
+    res = get_source_directory()
+    assert res.data == os.path.join(W, "src")
+
+
+def test_reconcile_source_dir_noop_when_relative(main_repo, monkeypatch):
+    """Already-relative source_directory is not rewritten (normal single-tree case)."""
+    base, R, R_db = main_repo
+    _set_infra(R_db, "source_directory", "src")
+    before = _stored_source_dir(R_db)
+
+    monkeypatch.chdir(R)
+    clear_project_root_cache()
+    resolved = _discover_project_root()
+    set_project_root(resolved)
+    reconcile_stored_source_directory(resolved)
+
+    assert _stored_source_dir(R_db) == before == "src"  # untouched
+    res = get_source_directory()
+    assert res.data == os.path.join(R, "src")

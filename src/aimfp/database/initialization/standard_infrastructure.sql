@@ -4,7 +4,7 @@
 
 INSERT INTO infrastructure (type, value, description) VALUES
   ('project_root', '', 'Full path to project root directory (e.g., /home/user/my-project)'),
-  ('source_directory', '', 'Full path to primary source code directory (e.g., /home/user/my-project/src)'),
+  ('source_directory', '', 'Primary source code directory, RELATIVE to project_root (e.g., src). Stored relative so it resolves against the live worktree root; absolute values are auto-relativized.'),
   ('primary_language', '', 'Main programming language (e.g., Python 3.11, Rust 1.75, Node 18)'),
   ('build_tool', '', 'Primary build tool (e.g., cargo, npm, make, maven, gradle)'),
   ('package_manager', '', 'Package/dependency manager (e.g., pip, npm, cargo, maven)'),
