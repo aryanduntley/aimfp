@@ -147,6 +147,7 @@
       "mcp__aimfp__get_items_for_sidequest",
       "mcp__aimfp__get_items_for_subtask",
       "mcp__aimfp__get_items_for_task",
+      "mcp__aimfp__get_merge_history",
       "mcp__aimfp__get_milestones_by_path",
       "mcp__aimfp__get_milestones_by_status",
       "mcp__aimfp__get_module_by_name",
@@ -200,7 +201,10 @@
       "mcp__aimfp__init_user_directives_db",
       "mcp__aimfp__list_active_branches",
       "mcp__aimfp__load_directive_preferences",
+      "mcp__aimfp__merge_worker_branch",
+      "mcp__aimfp__merge_worker_branches",
       "mcp__aimfp__migrate_databases",
+      "mcp__aimfp__plan_disjoint_partitions",
       "mcp__aimfp__project_allowed_check_constraints",
       "mcp__aimfp__query_core",
       "mcp__aimfp__query_project",
@@ -226,6 +230,7 @@
       "mcp__aimfp__search_user_directive_notes",
       "mcp__aimfp__search_user_directives",
       "mcp__aimfp__set_custom_return_statement",
+      "mcp__aimfp__summarize_state_changeset",
       "mcp__aimfp__swap_completion_paths_order",
       "mcp__aimfp__sync_git_state",
       "mcp__aimfp__toggle_tracking_feature",
@@ -257,7 +262,8 @@
       "mcp__aimfp__update_user_custom_entry",
       "mcp__aimfp__update_user_setting",
       "mcp__aimfp__user_directives_allowed_check_constraints",
-      "mcp__aimfp__user_preferences_allowed_check_constraints"
+      "mcp__aimfp__user_preferences_allowed_check_constraints",
+      "mcp__aimfp__verify_fanout_ready"
     ]
   },
   "enableAllProjectMcpServers": true,

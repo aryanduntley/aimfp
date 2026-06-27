@@ -4,7 +4,7 @@ AIMFP MCP Server - Tool Registry
 Static dict mapping tool names to (module_path, function_name) tuples.
 Uses importlib for lazy loading — modules are only imported on first call.
 
-253 is_tool=true helpers registered. Generated from aimfp_core.db.
+263 is_tool=true helpers registered. Generated from aimfp_core.db.
 
 Why static, not DB-driven:
 - Predictable tool list, no runtime DB dependency for tool listing
@@ -309,6 +309,17 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "apply_state_changeset": ("aimfp.helpers.changeset.apply", "apply_state_changeset"),
     # helpers/changeset/conflicts.py (1 tool)
     "detect_state_conflicts": ("aimfp.helpers.changeset.conflicts", "detect_state_conflicts"),
+    # helpers/changeset/merge.py (2 tools — branch-ref orchestrators)
+    "merge_worker_branch": ("aimfp.helpers.changeset.merge", "merge_worker_branch"),
+    "merge_worker_branches": ("aimfp.helpers.changeset.merge", "merge_worker_branches"),
+    # helpers/changeset/summarize.py (1 tool)
+    "summarize_state_changeset": ("aimfp.helpers.changeset.summarize", "summarize_state_changeset"),
+    # helpers/changeset/preflight.py (1 tool)
+    "verify_fanout_ready": ("aimfp.helpers.changeset.preflight", "verify_fanout_ready"),
+    # helpers/changeset/partition.py (1 tool)
+    "plan_disjoint_partitions": ("aimfp.helpers.changeset.partition", "plan_disjoint_partitions"),
+    # helpers/changeset/history.py (1 tool)
+    "get_merge_history": ("aimfp.helpers.changeset.history", "get_merge_history"),
 
     # ── User Directives ──────────────────────────────────────────────────
     # helpers/user_directives/crud.py (8 tools)

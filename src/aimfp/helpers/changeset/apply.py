@@ -39,6 +39,7 @@ from ._common import (
     _open_readonly,
     build_key_indexes,
     serialize_key,
+    _effect_load_changeset,
 )
 from .export import _collect_entities, _ENTITY_KINDS
 
@@ -487,13 +488,20 @@ def _unique_conflict_entry(conn, kind: str, op: str, key: Optional[Dict[str, Any
 # Public tool
 # ============================================================================
 
-def apply_state_changeset(changeset: Dict[str, Any]) -> Result:
+def apply_state_changeset(
+    changeset: Optional[Dict[str, Any]] = None,
+    changeset_id: Optional[str] = None,
+) -> Result:
     """
     Apply a semantic changeset (from export_state_changeset) onto current-main project.db
     as a 3-way merge. Mutates the working DB in place after a backup.
 
     Args:
-        changeset: dict with keys provenance{base_main_commit,...}, entities[], references[]
+        changeset: dict with keys provenance{base_main_commit,...}, entities[], references[].
+            Optional if `changeset_id` is given.
+        changeset_id: handle returned by export_state_changeset; loads the persisted
+            changeset from .aimfp-project/changesets/ server-side so the master never has
+            to re-transcribe the full object. Takes effect only when `changeset` is None.
 
     Returns:
         Result with data={applied[], conflicts[], minted_ids[], backup_path, base_main_commit}.
@@ -505,13 +513,25 @@ def apply_state_changeset(changeset: Dict[str, Any]) -> Result:
         does NOT abort the whole apply. Only a genuine (non-integrity) failure rolls back
         and restores the backup.
     """
-    if not isinstance(changeset, dict):
-        return Result(success=False, error="changeset must be an object")
-
     try:
         project_root = resolve_project_root()
     except RuntimeError as e:
         return Result(success=False, error=str(e))
+
+    # §2.1 — handle path: load the persisted changeset by id when no inline object given.
+    if changeset is None:
+        if not changeset_id:
+            return Result(success=False, error="provide either changeset or changeset_id")
+        changeset = _effect_load_changeset(project_root, changeset_id)
+        if changeset is None:
+            return Result(
+                success=False,
+                error=f"changeset_id '{changeset_id}' not found under .aimfp-project/changesets/. "
+                      f"Re-run export_state_changeset to regenerate it.",
+            )
+
+    if not isinstance(changeset, dict):
+        return Result(success=False, error="changeset must be an object")
 
     db_path = get_project_db_path(project_root)
     if not database_exists(db_path):

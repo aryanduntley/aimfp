@@ -31,19 +31,21 @@
         {"name": "branch", "type": "string", "required": true, "default": null, "description": "Git ref (branch name or commit) whose committed project.db is the branch intent"},
         {"name": "worker_id", "type": "string", "required": false, "default": null, "description": "Optional InterCommAIMFP worker identity; the master supplies it"}
       ],
-      "purpose": "(For use with InterCommAIMFP) Export a semantic changeset of project.db between two committed git states (branch point -> branch tip), expressed entirely in stable semantic keys (file path, file+function/type name, module/theme/flow/path name, and work-hierarchy slugs) with branch-local integer PKs stripped. Each entity is classified add/modify/delete and each edge add/remove. This is the integer-free artifact the master applies to merge a worker's project-state into main without binary-blob conflicts or PK collisions. Pure read — reads committed blobs via git show, never mutates anything.",
-      "error_handling": "Returns success=false if project root unresolved or the branch's project.db is not committed at that ref. A missing base DB is non-fatal (base treated as empty, warning added). Rows lacking a slug surface as warnings, not failures.",
+      "purpose": "(For use with InterCommAIMFP) Export a semantic changeset of project.db between two committed git states (branch point -> branch tip), expressed entirely in stable semantic keys (file path, file+function/type name, module/theme/flow/path name, and work-hierarchy slugs) with branch-local integer PKs stripped. Each entity is classified add/modify/delete and each edge add/remove. This is the integer-free artifact the master applies to merge a worker's project-state into main without binary-blob conflicts or PK collisions. The changeset is ALSO persisted server-side under .aimfp-project/changesets/ and a small changeset_id handle + counts summary are returned, so the master can drive apply by handle instead of re-transcribing the full object. Pure read of git blobs (the export itself never mutates project.db); persistence writes only a JSON file under .aimfp-project/.",
+      "error_handling": "Returns success=false if project root unresolved or the branch's project.db is not committed at that ref. A missing base DB is non-fatal (base treated as empty, warning added). Rows lacking a slug surface as warnings, not failures. If the changeset cannot be persisted, changeset_id is null and a warning is added (fall back to passing the inline object).",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "InterCommAIMFP merge sequence (per worker branch): (1) text-merge the worker's SOURCE into current main and resolve normal code conflicts; (2) call this export; (3) feed the returned changeset to apply_state_changeset. NEVER git-merge the binary project.db — that is what these tools replace.",
+        "InterCommAIMFP merge sequence (per worker branch): (1) text-merge the worker's SOURCE into current main and resolve normal code conflicts; (2) call this export; (3) feed the changeset to apply_state_changeset. PREFER the one-call merge_worker_branch(branch) which does all three internally. NEVER git-merge the binary project.db — that is what these tools replace.",
         "Review data.warnings BEFORE applying. Warnings about unresolved/null semantic keys mean some work-hierarchy rows lack slugs — run backfill_semantic_keys on main, commit, and re-export so the changeset is fully keyed.",
-        "Pass the returned changeset object verbatim to apply_state_changeset(changeset).",
-        "Pure read (reads committed blobs via git show) — safe to call repeatedly; it never mutates the repo or any DB.",
-        "Fewer conflicts downstream come from disjoint partitioning: give each worker a non-overlapping file/module region, and for any rename/move/delete also delegate the dependency closure (the referrers). Then most changesets are pure additions."
+        "Pass data.changeset_id to apply_state_changeset(changeset_id=...) so you never have to re-transcribe the full object. The inline object is still returned for back-compat; data.summary is the cheap counts block for deciding apply order.",
+        "Pure read of committed blobs (git show) — safe to call repeatedly. The id is a pure function of (base_commit, branch), so re-exporting overwrites the same persisted changeset (idempotent).",
+        "Fewer conflicts downstream come from disjoint partitioning: use plan_disjoint_partitions to give each worker a non-overlapping file/module region, and for any rename/move/delete also delegate the dependency closure (the referrers). Then most changesets are pure additions."
       ],
       "implementation_notes": [
-        "Returns Result with data={provenance:{worker_id,branch,base_main_commit}, entities[], references[], warnings[]}",
+        "Returns Result with data={provenance:{worker_id,branch,base_main_commit}, entities[], references[], warnings[], changeset_id, summary}",
+        "changeset_id: stable handle cs-<branch>-<sha8(base+branch)>; the object is persisted at .aimfp-project/changesets/<changeset_id>.json",
+        "summary: {entities:{kind:{add,modify,delete}}, references:{kind:{add,remove}}, touched_files[], touched_modules[], totals}",
         "entities[]: {kind, semantic_key, op:add|modify|delete, attributes?} — PKs stripped, FK parents re-expressed as semantic-key refs",
         "references[]: {kind:interaction|type_usage|file_flow|module_file|flow_theme, op:add|remove, endpoints by semantic key}",
         "Identity keys make rename/reparent/move show up cleanly as 'modify': hierarchy rows keyed by slug, functions/types keyed by entity_key (Stage 2). Falls back to natural (file,name) key only when entity_key is absent (un-backfilled rows), where rename/move still shows as delete+add",
@@ -57,13 +59,15 @@
       "name": "apply_state_changeset",
       "file_path": "helpers/changeset/apply.py",
       "parameters": [
-        {"name": "changeset", "type": "object", "required": true, "default": null, "description": "The changeset object produced by export_state_changeset (provenance, entities[], references[])"}
+        {"name": "changeset", "type": "object", "required": false, "default": null, "description": "The changeset object produced by export_state_changeset (provenance, entities[], references[]). Optional when changeset_id is given."},
+        {"name": "changeset_id", "type": "string", "required": false, "default": null, "description": "Handle returned by export_state_changeset; loads the persisted changeset from .aimfp-project/changesets/ so you never re-transcribe the full object. Used only when changeset is omitted."}
       ],
-      "purpose": "(For use with InterCommAIMFP) Apply a semantic changeset onto the current-main project.db as a 3-way merge (base@base_main_commit vs branch intent vs current main). Auto-applies non-overlapping changes, mints canonical IDs for genuinely new entities, rewrites all references to canonical IDs, and returns EVERY conflict as structured data for the master/AI to review — it never guesses on a conflict. Mutates the working .aimfp-project/project.db in place after taking a backup; a genuine failure rolls back and restores the backup.",
-      "error_handling": "success=false (with backup_path) only on a genuine failure (exception) — the DB is restored from backup. Conflicts are NOT failures: they are returned in data.conflicts for review. Missing base DB is treated as empty base.",
+      "purpose": "(For use with InterCommAIMFP) Apply a semantic changeset onto the current-main project.db as a 3-way merge (base@base_main_commit vs branch intent vs current main). Accepts EITHER the inline changeset object OR a changeset_id handle (loaded server-side). Auto-applies non-overlapping changes, mints canonical IDs for genuinely new entities, rewrites all references to canonical IDs, and returns EVERY conflict as structured data for the master/AI to review — it never guesses on a conflict. Mutates the working .aimfp-project/project.db in place after taking a backup; a genuine failure rolls back and restores the backup.",
+      "error_handling": "success=false if neither changeset nor a resolvable changeset_id is given, or (with backup_path) on a genuine failure (exception) — the DB is restored from backup. Conflicts are NOT failures: they are returned in data.conflicts for review. Missing base DB is treated as empty base.",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
+        "Drive this by handle: apply_state_changeset(changeset_id=<id from export>) — no need to paste the full object. Or use merge_worker_branch(branch) to export+apply in one call.",
         "REVIEW data.conflicts — each is returned for YOU to resolve (kind/op/semantic_key + reason); apply NEVER guesses on a conflict. Non-overlapping changes were already auto-applied. Resolve a conflict by editing main directly, adjusting the worker's branch, or escalating to the user.",
         "Apply is IDEMPOTENT — re-running is safe. If a delete conflict says 'has inbound dependents' AND the same changeset removes those edges, call apply_state_changeset(changeset) again: the first pass's reference-removes clear the dependents so the delete succeeds on the second pass (apply-to-fixpoint).",
         "data.backup_path is a pre-apply snapshot of main's project.db. If the merge is bad, restore it. On success, COMMIT the merged source + updated project.db to main, then move to the next branch.",
@@ -106,13 +110,169 @@
       ],
       "target_database": "project",
       "used_by_directives": []
+    },
+    {
+      "name": "merge_worker_branch",
+      "file_path": "helpers/changeset/merge.py",
+      "parameters": [
+        {"name": "branch", "type": "string", "required": true, "default": null, "description": "Git ref of the worker branch to integrate, e.g. 'aimfp-alice-001'"},
+        {"name": "base_commit", "type": "string", "required": false, "default": null, "description": "3-way base / branch point. Default = git merge-base(HEAD, branch)"},
+        {"name": "worker_id", "type": "string", "required": false, "default": null, "description": "Optional InterCommAIMFP worker identity (provenance + status hint)"},
+        {"name": "source", "type": "string", "required": false, "default": "auto", "description": "'auto' to also text-merge the branch's SOURCE into main (keeping main's project.db), or 'skip' to merge only DB state"},
+        {"name": "on_conflict", "type": "string", "required": false, "default": "report", "description": "'report' to apply DB state even if the source merge conflicts, or 'abort' to stop before applying"}
+      ],
+      "purpose": "(For use with InterCommAIMFP) ONE-CALL branch-ref merge orchestrator: takes a branch name and runs the whole documented sequence internally — export_state_changeset, optional source text-merge (keeping main's project.db, never blob-merging it), then apply_state_changeset — returning only a small result/conflict summary. The ~8k-token changeset never crosses the agent boundary, so a real fan-out stops serializing on the master hand-carrying blobs. Idempotent like apply; records a merge_history row; conflicts are still returned as structured data (never guessed). Mutates the working project.db (after backup) and leaves the source merge uncommitted for you to review and commit.",
+      "error_handling": "success=false if project root unresolved, branch missing/merge-base uncomputable, a genuine source-merge error (dirty tree / unknown ref → merge aborted), on_conflict='abort' with source conflicts, or apply failure (backup restored). Source/apply CONFLICTS are not failures — they are returned in data for review.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "This replaces the manual export -> hand-carry -> apply loop. Prefer it over calling the three tools yourself; the changeset is persisted server-side and applied internally.",
+        "REVIEW data.conflicts (DB) and data.source_merge.conflicts (code) — both are returned for YOU to resolve; nothing is guessed. data.backup_path is a pre-apply snapshot of main's project.db if you need to revert the DB.",
+        "On success the source merge is left UNCOMMITTED. Resolve any code conflicts, then COMMIT the merged source + updated project.db to main before moving to the next branch.",
+        "§5.5 bridge (no coupling): forward data.{worker_id, branch, status} to InterCommAIMFP's intercomm_worktree_set_status yourself — AIMFP does not write InterComm's DB. data.status is 'merged' when clean and 'conflict' when any conflict was returned (both are valid InterComm worktree statuses). data.intercomm_present tells you whether the coordination layer is installed; if so, intercomm_get_protocol returns the full master/worker protocol.",
+        "Idempotent: safe to re-run. For a self-consistent 'remove edge + delete node' changeset that reports a delete-with-dependents conflict, re-run once (apply-to-fixpoint). After all branches: aimfp_status, then git_sync_state."
+      ],
+      "implementation_notes": [
+        "Returns Result with data={applied[], conflicts[], minted_ids[], backup_path, base_main_commit, source_merge{merged_paths,conflicts,in_progress}, changeset_id, summary, branch, worker_id, status:'merged'|'conflict', intercomm_present}",
+        "Steps: export_state_changeset (persists) -> _effect_source_merge (git merge --no-commit --no-ff, then checkout HEAD -- project.db) -> apply_state_changeset(changeset)",
+        "Source merge keeps main's project.db via 'git checkout HEAD -- .aimfp-project/project.db' so the binary DB is never blob-merged; the changeset is the only thing that moves DB state",
+        "Records merge_history (source_branch, conflicts_detected, resolution_details=summary, merged_by=worker_id) and marks/inserts the work_branches row status='merged'",
+        "Presence-gated bridge is no-coupling: status hint returned, not written to InterComm's DB"
+      ],
+      "target_database": "project",
+      "used_by_directives": []
+    },
+    {
+      "name": "merge_worker_branches",
+      "file_path": "helpers/changeset/merge.py",
+      "parameters": [
+        {"name": "branches", "type": "array", "required": true, "default": null, "description": "List of branch names (strings) or {branch, base_commit?, worker_id?} objects to integrate one at a time"},
+        {"name": "order", "type": "string", "required": false, "default": "as-listed", "description": "'as-listed' or 'additive-first' (branches with no delete/remove ops integrate first)"},
+        {"name": "on_conflict", "type": "string", "required": false, "default": "stop", "description": "'stop' to halt the batch on the first branch that returns conflicts, or 'continue' to integrate the rest"}
+      ],
+      "purpose": "(For use with InterCommAIMFP) Batch wrapper over merge_worker_branch: integrate a list of worker branches one at a time, each moving main forward and re-minting against the prior. 'additive-first' ordering lands the low-risk purely-additive branches before any structural/deleting ones. Each branch goes through the full export->source-merge->apply sequence; conflicts are surfaced per branch, never guessed.",
+      "error_handling": "success=false if branches is empty/not a list or an entry is malformed. Per-branch failures are captured in data.results[] (with on_conflict='stop' the batch halts at data.stopped_at).",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Run detect_state_conflicts(branches) FIRST to spot cross-branch overlap, and plan_disjoint_partitions to avoid it up front; then batch-integrate the (ideally disjoint) branches here.",
+        "If data.stopped_at is set, the batch halted there on a conflict — resolve it (review that result's conflicts), commit, then call again with the remaining branches.",
+        "After each branch's source merge you must COMMIT main before the next branch's merge-base is correct; integrate, resolve, commit, repeat. Land additive branches before structural ones (order='additive-first').",
+        "§5.5 bridge: forward each result's {worker_id, branch, status} (status 'merged' or 'conflict') to InterCommAIMFP's intercomm_worktree_set_status."
+      ],
+      "implementation_notes": [
+        "Returns Result with data={results[], integrated[], stopped_at?}; each results[] entry = {branch, success, result|error}",
+        "Calls merge_worker_branch(branch, base_commit?, worker_id?, on_conflict='report') per branch",
+        "order='additive-first' exports each branch to rank delete/remove-free changesets first (extra read-only exports)"
+      ],
+      "target_database": "project",
+      "used_by_directives": []
+    },
+    {
+      "name": "summarize_state_changeset",
+      "file_path": "helpers/changeset/summarize.py",
+      "parameters": [
+        {"name": "branch", "type": "string", "required": false, "default": null, "description": "Git ref whose changeset to summarize (requires base_commit)"},
+        {"name": "base_commit", "type": "string", "required": false, "default": null, "description": "3-way base / branch point (used with branch)"},
+        {"name": "changeset_id", "type": "string", "required": false, "default": null, "description": "Handle from a prior export_state_changeset (loads the persisted artifact, no git work)"}
+      ],
+      "purpose": "(For use with InterCommAIMFP) Cheap, low-token counts summary of ONE branch's changeset — add/modify/delete per entity kind, add/remove per reference kind, touched files/modules, and warning count — WITHOUT returning the full ~8k-token object. Affordable to read for every pending branch before deciding apply order. Identify the changeset by changeset_id (loads the persisted artifact) or by branch+base_commit (re-exports). Pure read.",
+      "error_handling": "success=false if neither changeset_id nor (branch AND base_commit) is provided, if the changeset_id is not found, or if the underlying export fails.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Use this per-branch to decide apply order cheaply; use detect_state_conflicts for the cross-branch overlap view. Small changesets (mostly add) are safe to land first.",
+        "data.warnings flags unresolved/null semantic keys — fix with backfill_semantic_keys on main before applying.",
+        "Pure read — safe to call repeatedly while planning the merge queue. Prefer passing changeset_id (no git work) when you already exported the branch."
+      ],
+      "implementation_notes": [
+        "Returns Result with data={summary, provenance, warnings} — no entities[]/references[]",
+        "summary={entities:{kind:{add,modify,delete}}, references:{kind:{add,remove}}, touched_files[], touched_modules[], totals:{entities,references,warnings}}",
+        "changeset_id path loads .aimfp-project/changesets/<id>.json; branch+base_commit path calls export_state_changeset"
+      ],
+      "target_database": "project",
+      "used_by_directives": []
+    },
+    {
+      "name": "verify_fanout_ready",
+      "file_path": "helpers/changeset/preflight.py",
+      "parameters": [],
+      "purpose": "(For use with InterCommAIMFP) Pre-fan-out preflight on current main: cheap insurance against silent fan-out corruption. Asserts (a) every relevant row has a stable identity key (hierarchy slugs + function/type entity_key — i.e. backfill_semantic_keys has nothing left to do), (b) .aimfp-project/project.db is committed (clean working tree for that path) so every clone shares the same base, and (c) no schema migration is pending. Returns {ready, blockers}. Run on main BEFORE spawning workers. Pure read.",
+      "error_handling": "success=false only if project root unresolved or project.db missing. A not-ready project is success=true with ready=false and a populated blockers list (not an error).",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Run this on main BEFORE spawning InterCommAIMFP workers. If data.ready is false, clear every blocker first — otherwise workers branch from a mismatched baseline and export_state_changeset cannot match entities.",
+        "Blocker 'missing stable identity keys' → run backfill_semantic_keys, then commit project.db. Blocker 'uncommitted project.db' → commit it on main. Blocker 'migration pending' → open the project once to migrate.",
+        "MUST commit project.db to main BEFORE spawning workers: export reads committed, immutable blobs and cannot mint keys, so unkeyed/uncommitted state corrupts every clone.",
+        "Pure read — safe to re-run after fixing blockers until data.ready is true."
+      ],
+      "implementation_notes": [
+        "Returns Result with data={ready, blockers[], missing_keys:{table:count}, project_db_committed, schema_version}",
+        "Missing-key check reuses _HIERARCHY_TABLES (slug on milestones/tasks/subtasks/sidequests/items; entity_key on functions/types)",
+        "Committed check: git status --porcelain -- .aimfp-project/project.db is empty",
+        "Migration check compares schema_version row to EXPECTED_SCHEMA_VERSION"
+      ],
+      "target_database": "project",
+      "used_by_directives": []
+    },
+    {
+      "name": "plan_disjoint_partitions",
+      "file_path": "helpers/changeset/partition.py",
+      "parameters": [
+        {"name": "targets", "type": "array", "required": false, "default": null, "description": "File paths, module names, or task/milestone slugs to partition. Omit to partition every tracked file."},
+        {"name": "n_workers", "type": "integer", "required": false, "default": null, "description": "Number of partitions to pack components into. Omit for one partition per connected component."}
+      ],
+      "purpose": "(For use with InterCommAIMFP) Compute DISJOINT file/module partitions so parallel workers don't overlap — the cheap complexity lever that converts most semantic conflicts into non-events. Only AIMFP can compute this well because it owns the function->function interaction graph and type-usage edges that define real dependency boundaries. Builds an undirected file-coupling graph (interaction edges + type-usage edges + module co-membership), takes connected components as atomic ownership units (never split), and bin-packs whole components into n_workers balanced partitions. Returns proposed per-worker ownership sets plus shared/contended files. Pure read; a planning aid you may tweak or override.",
+      "error_handling": "success=false only if project root unresolved or project.db missing. No matching files → success=true with empty partitions and a note.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Use this BEFORE fanning out: give each worker the files/modules of one partition so their changesets are disjoint (mostly pure additions, minimal apply conflicts).",
+        "data.shared_files (files in >1 module) and data.note (e.g. 'all targets are one component') flag ownership you must resolve manually — split the coupling or give the whole region to one worker.",
+        "A single giant connected component means the region cannot be parallelized without creating cross-worker dependencies; reduce coupling first or assign it to one worker.",
+        "Pure read — safe to call repeatedly while planning the fan-out. Pair with detect_state_conflicts after the fact to confirm disjointness."
+      ],
+      "implementation_notes": [
+        "Returns Result with data={partitions[], shared_files[], component_count, file_count, note?}",
+        "partitions[]: {worker_index, files[], modules[], file_count}",
+        "Coupling graph via DSU: interactions (function->function lifted to file<->file), types_functions (type's file <-> using function's file), module_files (co-membership)",
+        "targets resolve as: exact file path | module name -> its files | task/sidequest slug -> flow_ids -> file_flows -> files",
+        "Components are never split; n_workers caps the bin count (greedy largest-first balancing)"
+      ],
+      "target_database": "project",
+      "used_by_directives": []
+    },
+    {
+      "name": "get_merge_history",
+      "file_path": "helpers/changeset/history.py",
+      "parameters": [
+        {"name": "branch", "type": "string", "required": false, "default": null, "description": "Optional source-branch filter (exact match on merge_history.source_branch and work_branches.branch_name)"},
+        {"name": "since", "type": "string", "required": false, "default": null, "description": "Optional ISO timestamp lower bound on merge_history.merge_timestamp (e.g. '2026-06-26')"}
+      ],
+      "purpose": "(For use with InterCommAIMFP) Read tool over the existing merge_history and work_branches tables: which branches were integrated, when, with how many conflicts, by whom. Lets the master answer 'has this branch already been applied?' (idempotency / resume after interruption) and gives a human an audit trail. Pure read; small surface over data merge_worker_branch records.",
+      "error_handling": "success=false only if project root unresolved or project.db missing. Missing tables degrade to empty lists (not an error).",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Check data.already_merged before re-integrating a branch — re-applying is idempotent but the check lets you skip work and resume a partially-completed fan-out cleanly.",
+        "data.merges is the per-integration audit trail (conflicts, merged_by, resolution_details); data.branches is the work_branches roster with status.",
+        "Pure read — safe to call anytime to report fan-out progress to the user."
+      ],
+      "implementation_notes": [
+        "Returns Result with data={merges[], branches[], already_merged}",
+        "already_merged = branch given AND (>=1 merge_history row OR a work_branches row with status='merged')",
+        "Filters: branch (exact), since (merge_timestamp >=); ordered newest-first"
+      ],
+      "target_database": "project",
+      "used_by_directives": []
     }
   ],
   "metadata": {
     "file": "helpers-changeset.json",
-    "count": 4,
-    "status": "Stages 1 & 2 complete. backfill_semantic_keys + export_state_changeset + apply_state_changeset + detect_state_conflicts done. Stage 3 (canonical IDs) is optional/gated.",
-    "last_updated": "2026-06-23",
-    "notes": "AIMFP-side semantic changeset merge tools for InterCommAIMFP multi-agent parallel work. See docs/intercommaimfptools/toolsneeded.md (spec) and IMPLEMENTATION-PLAN.md. Pure tools (no directive_flow); the master invokes them directly in its merge sequence."
+    "count": 10,
+    "status": "Stages 1 & 2 complete plus InterCommAIMFP merge-orchestrator addon (MERGE-ORCHESTRATOR-AND-BRIDGES.md): changeset_id handle, merge_worker_branch[es], summarize_state_changeset, verify_fanout_ready, plan_disjoint_partitions, get_merge_history. Stage 3 (canonical IDs) is optional/gated.",
+    "last_updated": "2026-06-26",
+    "notes": "AIMFP-side semantic changeset merge tools for InterCommAIMFP multi-agent parallel work. See docs/intercommaimfptools/ (toolsneeded.md spec, MERGE-ORCHESTRATOR-AND-BRIDGES.md addon). Pure tools (no directive_flow); the master invokes them directly in its merge sequence. All are InterCommAIMFP addon surface — labelled accordingly and gated on the .intercomm-aimfp/intercomm.db presence signal where relevant (§3). The §5.5 worktree-status bridge is the no-coupling form (status hint returned, not written to InterComm's DB)."
   }
 }

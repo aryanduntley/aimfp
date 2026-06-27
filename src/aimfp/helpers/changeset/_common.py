@@ -9,18 +9,175 @@ the slug column.
 (db-at-commit extraction and entity/reference diffing land here in Phases 2–3.)
 """
 
+import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 import sqlite3
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any
 
 from ..shared.slugs import mint_slug
 from ..utils import AIMFP_PROJECT_DIR
 
 # Relative path of the committed project DB inside the repo (for `git show`).
 PROJECT_DB_REL_PATH = f"{AIMFP_PROJECT_DIR}/project.db"
+
+# ============================================================================
+# InterCommAIMFP presence gating (§3 of MERGE-ORCHESTRATOR-AND-BRIDGES.md)
+# ============================================================================
+#
+# Every tool in this package is an InterCommAIMFP *addon surface*. The tools stay
+# registered always (consistent with the existing changeset tools, which are also
+# always present and merely labelled "for use with InterCommAIMFP"), but anything
+# that should only fire / be advised when the coordination layer is installed keys
+# off this cheap, one-directional presence signal:
+#
+#     <project_root>/.intercomm-aimfp/intercomm.db
+#
+# AIMFP only checks that the file EXISTS — it never reads inside that DB (doing so
+# would couple AIMFP to InterComm's schema, violating the boundary in §6). When the
+# signal is absent, AIMFP behaves exactly as it does today.
+
+INTERCOMM_DIR_NAME = ".intercomm-aimfp"
+INTERCOMM_DB_NAME = "intercomm.db"
+
+
+def intercomm_present(project_root: str) -> bool:
+    """
+    Effect: True if InterCommAIMFP's shared coordination DB exists at the project root.
+
+    Presence-only signal — a single ``path.exists`` against the AIMFP-resolved
+    (worktree-aware) project root. AIMFP MUST NOT read inside that DB; existence is
+    the only signal the addon surface needs.
+    """
+    return os.path.exists(os.path.join(project_root, INTERCOMM_DIR_NAME, INTERCOMM_DB_NAME))
+
+
+# ============================================================================
+# Server-side changeset persistence (§2.1 — the changeset_id handle)
+# ============================================================================
+#
+# The merge path's one ergonomic wall: an LLM harness has no pipe between two tool
+# calls, so feeding an 8k-token changeset from export -> apply meant re-transcribing
+# the whole object by hand. Instead export persists the changeset under the project
+# and returns a small handle; apply reloads it by handle. The id is a pure function
+# of (base_commit, branch) so re-exporting a branch is idempotent (same id, same file).
+
+CHANGESET_DIR_REL = f"{AIMFP_PROJECT_DIR}/changesets"
+
+
+def changeset_id_for(base_commit: Optional[str], branch: str) -> str:
+    """Pure: stable handle for the changeset of (base_commit -> branch tip)."""
+    digest = hashlib.sha1(f"{base_commit or ''}\x00{branch}".encode("utf-8")).hexdigest()[:8]
+    safe = re.sub(r"[^A-Za-z0-9._-]", "-", branch or "branch").strip("-") or "branch"
+    return f"cs-{safe}-{digest}"
+
+
+def _changeset_dir(project_root: str) -> str:
+    """Pure: absolute path of the per-project changeset store."""
+    return os.path.join(project_root, CHANGESET_DIR_REL)
+
+
+def _changeset_path(project_root: str, changeset_id: str) -> str:
+    """Pure: absolute path of one persisted changeset JSON file."""
+    return os.path.join(_changeset_dir(project_root), f"{changeset_id}.json")
+
+
+def _effect_persist_changeset(project_root: str, changeset_id: str,
+                              changeset: Dict[str, Any]) -> Optional[str]:
+    """
+    Effect: Write a changeset to ``.aimfp-project/changesets/<id>.json``.
+
+    Returns the path on success, or None if the directory/file could not be written
+    (persistence is best-effort — export still returns the full inline object too, so
+    a write failure degrades to the legacy hand-carry rather than failing the export).
+    """
+    try:
+        os.makedirs(_changeset_dir(project_root), exist_ok=True)
+        path = _changeset_path(project_root, changeset_id)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(changeset, fh, sort_keys=True, indent=2)
+        return path
+    except OSError:
+        return None
+
+
+def _effect_load_changeset(project_root: str, changeset_id: str) -> Optional[Dict[str, Any]]:
+    """Effect: Load a persisted changeset by handle, or None if absent/unreadable."""
+    path = _changeset_path(project_root, changeset_id)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+# ============================================================================
+# Cheap changeset summary (§5.3) — counts only, never the full object
+# ============================================================================
+
+def summarize_changeset(changeset: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Pure: small counts block for a changeset — affordable to read for every branch.
+
+    Shape::
+
+        {
+          "entities": {kind: {add, modify, delete}, ...},
+          "references": {kind: {add, remove}, ...},
+          "touched_files": [path, ...],
+          "touched_modules": [name, ...],
+          "totals": {"entities": int, "references": int, "warnings": int},
+        }
+    """
+    entities = changeset.get("entities") or []
+    references = changeset.get("references") or []
+    warnings = changeset.get("warnings") or []
+
+    ent_counts: Dict[str, Dict[str, int]] = {}
+    touched_files: set = set()
+    touched_modules: set = set()
+    for e in entities:
+        kind = e.get("kind", "?")
+        op = e.get("op", "?")
+        ent_counts.setdefault(kind, {"add": 0, "modify": 0, "delete": 0})
+        if op in ent_counts[kind]:
+            ent_counts[kind][op] += 1
+        key = e.get("semantic_key") or {}
+        if kind == "files" and key.get("path"):
+            touched_files.add(key["path"])
+        if kind == "modules" and key.get("name"):
+            touched_modules.add(key["name"])
+        attrs = e.get("attributes") or {}
+        if attrs.get("file"):
+            touched_files.add(attrs["file"])
+
+    ref_counts: Dict[str, Dict[str, int]] = {}
+    for r in references:
+        kind = r.get("kind", "?")
+        op = r.get("op", "?")
+        ref_counts.setdefault(kind, {"add": 0, "remove": 0})
+        if op in ref_counts[kind]:
+            ref_counts[kind][op] += 1
+        if r.get("file"):
+            f = r["file"]
+            if isinstance(f, dict) and f.get("path"):
+                touched_files.add(f["path"])
+
+    return {
+        "entities": ent_counts,
+        "references": ref_counts,
+        "touched_files": sorted(touched_files),
+        "touched_modules": sorted(touched_modules),
+        "totals": {
+            "entities": len(entities),
+            "references": len(references),
+            "warnings": len(warnings),
+        },
+    }
 
 
 # (table, kind, column) for every table that carries a stable minted key.

@@ -30,6 +30,9 @@ from ._common import (
     code_entity_key,
     _row_get,
     _safe_rows,
+    changeset_id_for,
+    _effect_persist_changeset,
+    summarize_changeset,
 )
 
 
@@ -337,17 +340,36 @@ def export_state_changeset(
             "backfill_semantic_keys on main and re-commit so every clone shares stable slugs."
         )
 
+    changeset = {
+        "provenance": {
+            "worker_id": worker_id,
+            "branch": branch,
+            "base_main_commit": base_commit,
+        },
+        "entities": entities,
+        "references": references,
+        "warnings": warnings,
+    }
+
+    # §2.1 — persist the changeset server-side and return a small handle so the master
+    # never has to re-transcribe the full object into apply_state_changeset. The id is a
+    # pure function of (base_commit, branch), so re-exporting is idempotent. The full
+    # object is STILL returned (back-compat / debugging); summary is the cheap counts block.
+    changeset_id = changeset_id_for(base_commit, branch)
+    backup_path = _effect_persist_changeset(project_root, changeset_id, changeset)
+    summary = summarize_changeset(changeset)
+
+    data = dict(changeset)
+    data["changeset_id"] = changeset_id if backup_path else None
+    data["summary"] = summary
+    if backup_path is None:
+        warnings.append(
+            "Could not persist the changeset server-side; pass the inline object to "
+            "apply_state_changeset (no changeset_id handle available)."
+        )
+
     return Result(
         success=True,
-        data={
-            "provenance": {
-                "worker_id": worker_id,
-                "branch": branch,
-                "base_main_commit": base_commit,
-            },
-            "entities": entities,
-            "references": references,
-            "warnings": warnings,
-        },
+        data=data,
         return_statements=get_return_statements("export_state_changeset"),
     )
