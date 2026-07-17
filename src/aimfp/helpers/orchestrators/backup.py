@@ -25,6 +25,7 @@ from ._common import (
     resolve_project_root,
     database_exists,
     BACKUPS_DIR_NAME,
+    Result,
 )
 
 
@@ -32,11 +33,15 @@ from ._common import (
 # Public Entry Point (called by aimfp_run)
 # ============================================================================
 
-def check_and_run_backup() -> Dict[str, Any]:
+def check_and_run_backup(project_root: Optional[str] = None) -> Dict[str, Any]:
     """
     Effect: Check if backup should be triggered and run it if so.
 
     Called by aimfp_run when is_new_session=True.
+
+    Args:
+        project_root: Explicit root for embedding hosts; defaults to the
+            cached/discovered session root (the MCP behavior)
 
     Returns:
         dict with {
@@ -47,7 +52,7 @@ def check_and_run_backup() -> Dict[str, Any]:
         }
     """
     try:
-        project_root = resolve_project_root()
+        project_root = project_root or resolve_project_root()
         settings = _get_backup_settings_safe(project_root)
         backup_duration = int(settings.get('backup_duration', '30'))
 
@@ -76,6 +81,41 @@ def check_and_run_backup() -> Dict[str, Any]:
             'backup_result': None,
             'reason': f'Backup check failed: {str(e)}',
         }
+
+
+def check_backup_due(project_root: Optional[str] = None) -> Result:
+    """
+    Effect: Check whether the inactivity backup is due WITHOUT creating one.
+
+    Public embedding API — the read-only half of check_and_run_backup, for
+    hosts that want the check à la carte and control the backup themselves.
+
+    Args:
+        project_root: Explicit root for embedding hosts; defaults to the
+            cached/discovered session root
+
+    Returns:
+        Result with data={
+            due: bool,
+            last_activity: str or None,
+            backup_duration_days: int
+        }
+    """
+    try:
+        root = project_root or resolve_project_root()
+        settings = _get_backup_settings_safe(root)
+        backup_duration = int(settings.get('backup_duration', '30'))
+        last_activity = _get_last_activity_timestamp(root)
+        return Result(
+            success=True,
+            data={
+                'due': _should_trigger_backup(last_activity, backup_duration),
+                'last_activity': last_activity,
+                'backup_duration_days': backup_duration,
+            },
+        )
+    except Exception as e:
+        return Result(success=False, error=f"Backup check failed: {str(e)}")
 
 
 # ============================================================================

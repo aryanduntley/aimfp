@@ -31,7 +31,7 @@ from pathlib import Path
 from ..utils import get_return_statements
 
 # Import common project utilities (DRY principle)
-from ._common import get_cached_project_root, _open_project_connection
+from ._common import get_cached_project_root, _open_project_connection, _resolve_fs_path
 from ..utils import resolve_project_root, get_project_db_path, database_exists
 
 
@@ -39,7 +39,7 @@ from ..utils import resolve_project_root, get_project_db_path, database_exists
 # Global Constants
 # ============================================================================
 
-from typing import Final
+from typing import Final, Optional
 
 # Infrastructure types
 INFRASTRUCTURE_TYPE_PROJECT_ROOT: Final[str] = 'project_root'
@@ -265,12 +265,14 @@ def _get_git_hash() -> Optional[str]:
         return None
 
 
-def _check_git_diff(file_path: str) -> bool:
+def _check_git_diff(file_path: str, cwd: Optional[str] = None) -> bool:
     """
     Effect: Check if file has uncommitted changes in Git.
 
     Args:
         file_path: Path to file
+        cwd: Directory to run git in (defaults to process cwd — the repo root
+             under MCP; embedding hosts pass the project root explicitly)
 
     Returns:
         True if file has changes, False otherwise
@@ -278,7 +280,8 @@ def _check_git_diff(file_path: str) -> bool:
     try:
         result = subprocess.run(
             ['git', 'diff', '--quiet', file_path],
-            timeout=5
+            timeout=5,
+            cwd=cwd
         )
         # Return code 0 means no changes, 1 means changes
         return result.returncode != 0
@@ -490,7 +493,8 @@ def create_project(
     goals: List[str],
     status: str = "active",
     version: int = 1,
-    user_directives_status: Optional[str] = None
+    user_directives_status: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> AddResult:
     """
     Initialize project entry (one per database).
@@ -520,7 +524,7 @@ def create_project(
             error=f"Invalid user_directives_status: {user_directives_status}. Must be one of: {', '.join(VALID_USER_DIRECTIVES_STATUSES)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -554,14 +558,14 @@ def create_project(
         )
 
 
-def get_project() -> ProjectResult:
+def get_project(project_root: Optional[str] = None) -> ProjectResult:
     """
     Get project metadata (single entry).
 
     Returns:
         ProjectResult with project metadata or None if not initialized
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -587,7 +591,8 @@ def update_project(
     goals: Optional[List[str]] = None,
     status: Optional[str] = None,
     version: Optional[int] = None,
-    user_directives_status: Optional[str] = None
+    user_directives_status: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> UpdateResult:
     """
     Update project metadata.
@@ -613,7 +618,7 @@ def update_project(
     # Validate user_directives_status if provided (allow explicit None to clear)
     # Note: This allows setting it to None, which is valid
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -646,7 +651,7 @@ def update_project(
         )
 
 
-def blueprint_has_changed(blueprint_path: str) -> BlueprintChangeResult:
+def blueprint_has_changed(blueprint_path: str, project_root: Optional[str] = None) -> BlueprintChangeResult:
     """
     Check if ProjectBlueprint.md has changed using Git or filesystem timestamp.
 
@@ -656,7 +661,7 @@ def blueprint_has_changed(blueprint_path: str) -> BlueprintChangeResult:
     Returns:
         BlueprintChangeResult with changed status and method
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -670,8 +675,12 @@ def blueprint_has_changed(blueprint_path: str) -> BlueprintChangeResult:
                 error="No project exists in database"
             )
 
+        # Root-relative paths resolve against the project root — cwd is not
+        # guaranteed to be the root when embedded
+        fs_path = _resolve_fs_path(blueprint_path, project_root)
+
         # Try Git method first
-        if _check_git_diff(blueprint_path):
+        if _check_git_diff(fs_path, cwd=project_root):
             return BlueprintChangeResult(
                 success=True,
                 changed=True,
@@ -679,8 +688,8 @@ def blueprint_has_changed(blueprint_path: str) -> BlueprintChangeResult:
             )
 
         # Fallback to filesystem timestamp method
-        if os.path.exists(blueprint_path):
-            file_mtime = os.path.getmtime(blueprint_path)
+        if os.path.exists(fs_path):
+            file_mtime = os.path.getmtime(fs_path)
             # Parse updated_at timestamp from database
             import datetime
             try:
@@ -708,7 +717,7 @@ def blueprint_has_changed(blueprint_path: str) -> BlueprintChangeResult:
         )
 
 
-def get_infrastructure_by_type(type: str) -> InfrastructureResult:
+def get_infrastructure_by_type(type: str, project_root: Optional[str] = None) -> InfrastructureResult:
     """
     Get all infrastructure of specific type.
 
@@ -718,7 +727,7 @@ def get_infrastructure_by_type(type: str) -> InfrastructureResult:
     Returns:
         InfrastructureResult with infrastructure entries (empty if none found)
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -738,7 +747,7 @@ def get_infrastructure_by_type(type: str) -> InfrastructureResult:
         )
 
 
-def get_all_infrastructure() -> InfrastructureResult:
+def get_all_infrastructure(project_root: Optional[str] = None) -> InfrastructureResult:
     """
     Get all infrastructure entries including standard fields (even if empty).
 
@@ -748,7 +757,7 @@ def get_all_infrastructure() -> InfrastructureResult:
     Returns:
         InfrastructureResult with all infrastructure entries (empty tuple if table doesn't exist)
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -871,7 +880,7 @@ def reconcile_stored_source_directory(project_root: str) -> None:
         pass
 
 
-def update_source_directory(new_source_dir: str) -> SourceDirResult:
+def update_source_directory(new_source_dir: str, project_root: Optional[str] = None) -> SourceDirResult:
     """
     Update source directory in infrastructure table.
 
@@ -885,7 +894,7 @@ def update_source_directory(new_source_dir: str) -> SourceDirResult:
         SourceDirResult with success status
     """
     # Auto-convert absolute paths to relative
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     new_source_dir = _make_relative_source_dir(new_source_dir, project_root)
 
     # Validate new_source_dir
@@ -924,14 +933,14 @@ def update_source_directory(new_source_dir: str) -> SourceDirResult:
         )
 
 
-def get_project_root() -> SourceDirResult:
+def get_project_root(project_root: Optional[str] = None) -> SourceDirResult:
     """
     Get project root directory from infrastructure table.
 
     Returns:
         SourceDirResult with project root path or error
     """
-    cached_root = get_cached_project_root()
+    cached_root = project_root or get_cached_project_root()
     conn = _open_project_connection(cached_root)
 
     try:
@@ -960,7 +969,7 @@ def get_project_root() -> SourceDirResult:
         )
 
 
-def update_project_root(new_project_root: str) -> SourceDirResult:
+def update_project_root(new_project_root: str, project_root: Optional[str] = None) -> SourceDirResult:
     """
     Update project root in infrastructure table.
 
@@ -980,7 +989,7 @@ def update_project_root(new_project_root: str) -> SourceDirResult:
             error=f"Project root must be an absolute path, got: {new_project_root}"
         )
 
-    cached_root = get_cached_project_root()
+    cached_root = project_root or get_cached_project_root()
     conn = _open_project_connection(cached_root)
 
     try:

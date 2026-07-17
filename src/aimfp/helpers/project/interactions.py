@@ -420,7 +420,8 @@ def _get_interactions_by_file_effect(
 def add_interaction(
     source: str,
     target: str,
-    interaction_type: str
+    interaction_type: str,
+    project_root: Optional[str] = None
 ) -> AddInteractionResult:
     """
     Add function dependency/interaction (by function names).
@@ -456,7 +457,7 @@ def add_interaction(
         )
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -522,7 +523,8 @@ def add_interaction(
 
 
 def add_interactions(
-    interactions: List[Tuple[int, int, str, Optional[str]]]
+    interactions: List[Tuple[int, int, str, Optional[str]]],
+    project_root: Optional[str] = None
 ) -> AddInteractionsResult:
     """
     Add multiple interactions at once (by function IDs).
@@ -566,7 +568,7 @@ def add_interactions(
             )
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -611,7 +613,8 @@ def update_interaction(
     source_function_id: Optional[int] = None,
     target_function_id: Optional[int] = None,
     interaction_type: Optional[str] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> UpdateInteractionResult:
     """
     Update interaction metadata.
@@ -657,7 +660,7 @@ def update_interaction(
         )
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -710,7 +713,8 @@ def delete_interaction(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str = "entry_deletion"
+    note_type: str = "entry_deletion",
+    project_root: Optional[str] = None
 ) -> DeleteInteractionResult:
     """
     Delete interaction (internal use, not exposed as MCP tool).
@@ -738,7 +742,7 @@ def delete_interaction(
         True
     """
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -783,6 +787,7 @@ def delete_interaction(
 
 def get_interactions_by_function(
     function_name: str,
+    project_root: Optional[str] = None
 ) -> InteractionQueryResult:
     """
     Get all interactions for a function (both as source and target).
@@ -807,7 +812,7 @@ def get_interactions_by_function(
         process_data_id_42 --call--> validate_input_id_15
         validate_input_id_15 --chain--> format_output_id_23
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -831,6 +836,7 @@ def get_interactions_by_function(
 
 def get_interactions_by_file(
     file_id: int,
+    project_root: Optional[str] = None
 ) -> InteractionQueryResult:
     """
     Get all interactions for functions in a file.
@@ -853,7 +859,7 @@ def get_interactions_by_file(
         >>> len(result.interactions)
         7
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

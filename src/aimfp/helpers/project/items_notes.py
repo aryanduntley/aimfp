@@ -52,7 +52,7 @@ from ._common import (
 # ============================================================================
 
 # Items have different statuses than tasks (no 'blocked')
-from typing import Final
+from typing import Final, Optional
 VALID_ITEM_STATUSES: Final[frozenset[str]] = frozenset([
     'pending', 'in_progress', 'completed'
 ])
@@ -760,7 +760,8 @@ def _delete_note(conn: sqlite3.Connection, note_id: int) -> None:
 
 def get_items_for_task(
     task_id: int,
-    status: Optional[str] = None
+    status: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> ItemQueryResult:
     """
     Get items for task, optionally filtered by status.
@@ -779,7 +780,7 @@ def get_items_for_task(
             error=f"Invalid status: {status}. Must be one of: {', '.join(VALID_ITEM_STATUSES)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -801,7 +802,8 @@ def get_items_for_task(
 
 def get_items_for_subtask(
     subtask_id: int,
-    status: Optional[str] = None
+    status: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> ItemQueryResult:
     """
     Get items for subtask, optionally filtered by status.
@@ -820,7 +822,7 @@ def get_items_for_subtask(
             error=f"Invalid status: {status}. Must be one of: {', '.join(VALID_ITEM_STATUSES)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -842,7 +844,8 @@ def get_items_for_subtask(
 
 def get_items_for_sidequest(
     sidequest_id: int,
-    status: Optional[str] = None
+    status: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> ItemQueryResult:
     """
     Get items for sidequest, optionally filtered by status.
@@ -861,7 +864,7 @@ def get_items_for_sidequest(
             error=f"Invalid status: {status}. Must be one of: {', '.join(VALID_ITEM_STATUSES)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -883,7 +886,8 @@ def get_items_for_sidequest(
 
 def get_incomplete_items(
     for_table: str,
-    for_id: int
+    for_id: int,
+    project_root: Optional[str] = None
 ) -> ItemQueryResult:
     """
     Get incomplete items for any parent type.
@@ -906,7 +910,7 @@ def get_incomplete_items(
             error=f"Invalid table: {for_table}. Must be one of: {', '.join(valid_tables)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -931,7 +935,8 @@ def delete_item(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str = "entry_deletion"
+    note_type: str = "entry_deletion",
+    project_root: Optional[str] = None
 ) -> DeleteResult:
     """
     Delete item with status validation (only pending items can be deleted).
@@ -946,7 +951,7 @@ def delete_item(
     Returns:
         DeleteResult with success status
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -998,7 +1003,8 @@ def add_item(
     reference_id: int,
     name: str,
     description: Optional[str] = None,
-    status: str = "pending"
+    status: str = "pending",
+    project_root: Optional[str] = None
 ) -> AddResult:
     """
     Create a single work item under a task, subtask, or sidequest.
@@ -1036,7 +1042,7 @@ def add_item(
             error="Item name cannot be empty"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1084,7 +1090,8 @@ def add_item(
 def add_items(
     reference_table: str,
     reference_id: int,
-    items: List[dict]
+    items: List[dict],
+    project_root: Optional[str] = None
 ) -> AddResult:
     """
     Batch-create multiple work items under a single parent.
@@ -1128,7 +1135,7 @@ def add_items(
                 error=f"Item at index {i} has empty name"
             )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1177,7 +1184,8 @@ def update_item(
     id: int,
     name: Optional[str] = None,
     status: Optional[str] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> UpdateResult:
     """
     Update a single item's status, name, or description.
@@ -1205,7 +1213,7 @@ def update_item(
             error="No fields to update — provide at least one of: name, status, description"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1238,7 +1246,8 @@ def update_item(
 
 def update_items(
     ids: List[int],
-    data: dict
+    data: dict,
+    project_root: Optional[str] = None
 ) -> UpdateResult:
     """
     Batch-update multiple items with the same field values.
@@ -1281,7 +1290,7 @@ def update_items(
             error=f"Unknown fields: {', '.join(unknown)}. Allowed: {', '.join(valid_fields)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1325,7 +1334,8 @@ def add_note(
     source: str = "ai",
     severity: str = "info",
     directive_name: Optional[str] = None,
-    send_with_directive: bool = False
+    send_with_directive: bool = False,
+    project_root: Optional[str] = None
 ) -> AddResult:
     """
     Add note to project database.
@@ -1371,7 +1381,7 @@ def add_note(
             error="send_with_directive=True requires directive_name to be set"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1406,7 +1416,8 @@ def get_notes_comprehensive(
     source: Optional[str] = None,
     severity: Optional[str] = None,
     directive_name: Optional[str] = None,
-    exclude_note_types: Optional[list] = None
+    exclude_note_types: Optional[list] = None,
+    project_root: Optional[str] = None
 ) -> NoteQueryResult:
     """
     Advanced note search with filters.
@@ -1441,7 +1452,7 @@ def get_notes_comprehensive(
             error=f"Invalid severity: {severity}. Must be one of: {', '.join(VALID_SEVERITY_LEVELS)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1472,7 +1483,8 @@ def search_notes(
     source: Optional[str] = None,
     severity: Optional[str] = None,
     directive_name: Optional[str] = None,
-    exclude_note_types: Optional[list] = None
+    exclude_note_types: Optional[list] = None,
+    project_root: Optional[str] = None
 ) -> NoteQueryResult:
     """
     Search note content with optional filters.
@@ -1508,7 +1520,7 @@ def search_notes(
             error=f"Invalid severity: {severity}. Must be one of: {', '.join(VALID_SEVERITY_LEVELS)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1540,7 +1552,8 @@ def update_note(
     source: Optional[str] = None,
     severity: Optional[str] = None,
     directive_name: Optional[str] = None,
-    send_with_directive: Optional[bool] = None
+    send_with_directive: Optional[bool] = None,
+    project_root: Optional[str] = None
 ) -> UpdateResult:
     """
     Update note metadata.
@@ -1578,7 +1591,7 @@ def update_note(
             error=f"Invalid severity: {severity}. Must be one of: {', '.join(VALID_SEVERITY_LEVELS)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1614,7 +1627,8 @@ def update_note(
 
 
 def delete_note(
-    id: int
+    id: int,
+    project_root: Optional[str] = None
 ) -> DeleteResult:
     """
     Delete note (discouraged - notes should be preserved for audit trail).
@@ -1625,7 +1639,7 @@ def delete_note(
     Returns:
         DeleteResult with success status
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

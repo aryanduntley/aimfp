@@ -719,7 +719,8 @@ def _swap_completion_paths_order_effect(
 # ============================================================================
 
 def get_flows_for_theme(
-    theme_id: int
+    theme_id: int,
+    project_root: Optional[str] = None
 ) -> FlowsQueryResult:
     """
     Get all flows for a theme.
@@ -739,7 +740,7 @@ def get_flows_for_theme(
         >>> len(result.flows)
         3
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -762,7 +763,8 @@ def get_flows_for_theme(
 
 
 def get_themes_for_flow(
-    flow_id: int
+    flow_id: int,
+    project_root: Optional[str] = None
 ) -> ThemesQueryResult:
     """
     Get all themes for a flow.
@@ -782,7 +784,7 @@ def get_themes_for_flow(
         >>> len(result.themes)
         2
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -805,7 +807,8 @@ def get_themes_for_flow(
 
 
 def get_files_by_flow(
-    flow_id: int
+    flow_id: int,
+    project_root: Optional[str] = None
 ) -> FilesQueryResult:
     """
     Get all files for a flow.
@@ -825,7 +828,7 @@ def get_files_by_flow(
         >>> len(result.files)
         8
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -848,7 +851,8 @@ def get_files_by_flow(
 
 
 def get_flows_for_file(
-    file_id: int
+    file_id: int,
+    project_root: Optional[str] = None
 ) -> FlowsQueryResult:
     """
     Get all flows for a file.
@@ -868,7 +872,7 @@ def get_flows_for_file(
         >>> len(result.flows)
         2
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -894,7 +898,8 @@ def add_completion_path(
     name: str,
     status: str = "pending",
     description: Optional[str] = None,
-    order_index: int = 1
+    order_index: int = 1,
+    project_root: Optional[str] = None
 ) -> AddCompletionPathResult:
     """
     Add completion path stage.
@@ -929,7 +934,7 @@ def add_completion_path(
             error=f"Invalid status '{status}', must be one of: {valid_statuses}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -959,7 +964,7 @@ def add_completion_path(
         conn.close()
 
 
-def get_all_completion_paths() -> CompletionPathsQueryResult:
+def get_all_completion_paths(project_root: Optional[str] = None) -> CompletionPathsQueryResult:
     """
     Get all completion paths ordered by order_index.
 
@@ -975,7 +980,7 @@ def get_all_completion_paths() -> CompletionPathsQueryResult:
         >>> len(result.paths)
         5
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1000,7 +1005,7 @@ def get_all_completion_paths() -> CompletionPathsQueryResult:
         conn.close()
 
 
-def get_next_completion_path() -> CompletionPathQueryResult:
+def get_next_completion_path(project_root: Optional[str] = None) -> CompletionPathQueryResult:
     """
     Get lowest order_index with status != completed.
 
@@ -1016,7 +1021,7 @@ def get_next_completion_path() -> CompletionPathQueryResult:
         >>> result.path.name
         'Core Development'
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1049,7 +1054,8 @@ def get_next_completion_path() -> CompletionPathQueryResult:
 
 
 def get_completion_paths_by_status(
-    status: str
+    status: str,
+    project_root: Optional[str] = None
 ) -> CompletionPathsQueryResult:
     """
     Get completion paths filtered by status.
@@ -1069,7 +1075,7 @@ def get_completion_paths_by_status(
         >>> len(result.paths)
         1
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1094,7 +1100,7 @@ def get_completion_paths_by_status(
         conn.close()
 
 
-def get_incomplete_completion_paths() -> CompletionPathsQueryResult:
+def get_incomplete_completion_paths(project_root: Optional[str] = None) -> CompletionPathsQueryResult:
     """
     Get all non-completed paths.
 
@@ -1110,7 +1116,7 @@ def get_incomplete_completion_paths() -> CompletionPathsQueryResult:
         >>> len(result.paths)
         3
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1139,7 +1145,8 @@ def update_completion_path(
     id: int,
     name: Optional[str] = None,
     status: Optional[str] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> UpdateCompletionPathResult:
     """
     Update completion path.
@@ -1175,7 +1182,7 @@ def update_completion_path(
             error=f"Invalid status '{status}', must be one of: {valid_statuses}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1210,7 +1217,8 @@ def delete_completion_path(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str = "entry_deletion"
+    note_type: str = "entry_deletion",
+    project_root: Optional[str] = None
 ) -> DeleteCompletionPathResult:
     """
     Delete completion path with milestone validation.
@@ -1237,7 +1245,7 @@ def delete_completion_path(
         >>> result.success
         True
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1289,7 +1297,8 @@ def delete_completion_path(
 
 def reorder_completion_path(
     id: int,
-    new_order_index: int
+    new_order_index: int,
+    project_root: Optional[str] = None
 ) -> ReorderResult:
     """
     Change order_index for a completion path.
@@ -1308,7 +1317,7 @@ def reorder_completion_path(
         >>> result.success
         True
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1337,7 +1346,7 @@ def reorder_completion_path(
         conn.close()
 
 
-def reorder_all_completion_paths() -> ReorderAllResult:
+def reorder_all_completion_paths(project_root: Optional[str] = None) -> ReorderAllResult:
     """
     Fix gaps and duplicates in order_index.
 
@@ -1353,7 +1362,7 @@ def reorder_all_completion_paths() -> ReorderAllResult:
         >>> result.renumbered_count
         2
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1380,7 +1389,8 @@ def reorder_all_completion_paths() -> ReorderAllResult:
 
 def swap_completion_paths_order(
     id1: int,
-    id2: int
+    id2: int,
+    project_root: Optional[str] = None
 ) -> ReorderResult:
     """
     Swap order_index of two completion paths.
@@ -1399,7 +1409,7 @@ def swap_completion_paths_order(
         >>> result.success
         True
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1480,6 +1490,7 @@ def _remove_file_flow_effect(conn: sqlite3.Connection, file_id: int, flow_id: in
 def add_file_to_flow(
     file_id: int,
     flow_id: int,
+    project_root: Optional[str] = None
 ) -> AddFileFlowResult:
     """
     Link a file to a flow in the file_flows junction table.
@@ -1499,7 +1510,7 @@ def add_file_to_flow(
         >>> result.success
         True
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1542,6 +1553,7 @@ def add_file_to_flow(
 
 def add_file_flows(
     links: List[Tuple[int, int]],
+    project_root: Optional[str] = None
 ) -> AddFileFlowsBatchResult:
     """
     Link multiple files to flows in the file_flows junction table (batch).
@@ -1567,7 +1579,7 @@ def add_file_flows(
             error="Links list cannot be empty",
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1616,6 +1628,7 @@ def add_file_flows(
 def remove_file_from_flow(
     file_id: int,
     flow_id: int,
+    project_root: Optional[str] = None
 ) -> RemoveFileFlowResult:
     """
     Remove a file-flow link from the file_flows junction table.
@@ -1635,7 +1648,7 @@ def remove_file_from_flow(
         >>> result.success
         True
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

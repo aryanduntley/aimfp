@@ -412,7 +412,8 @@ def reserve_function(
     purpose: Optional[str] = None,
     parameters: Optional[List[Dict[str, Any]]] = None,
     returns: Optional[Dict[str, Any]] = None,
-    skip_id_naming: bool = False
+    skip_id_naming: bool = False,
+    project_root: Optional[str] = None
 ) -> ReserveResult:
     """
     Reserve function ID for naming before creation.
@@ -444,7 +445,7 @@ def reserve_function(
         # Use result.id to create: calculate_sum_id_99 (unless skip_id_naming=True)
     """
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -485,7 +486,8 @@ def reserve_function(
 
 
 def reserve_functions(
-    functions: List[Dict[str, Any]]
+    functions: List[Dict[str, Any]],
+    project_root: Optional[str] = None
 ) -> ReserveBatchResult:
     """
     Reserve multiple function IDs at once.
@@ -520,7 +522,7 @@ def reserve_functions(
         )
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -579,7 +581,8 @@ def finalize_function(
     purpose: Optional[str] = None,
     parameters: Optional[List[Dict[str, Any]]] = None,
     returns: Optional[Dict[str, Any]] = None,
-    skip_id_naming: bool = False
+    skip_id_naming: bool = False,
+    project_root: Optional[str] = None
 ) -> FinalizeResult:
     """
     Finalize reserved function after creation.
@@ -622,7 +625,7 @@ def finalize_function(
     returns_json = serialize_returns(returns)
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -704,7 +707,8 @@ def finalize_function(
 
 
 def finalize_functions(
-    functions: List[Dict[str, Any]]
+    functions: List[Dict[str, Any]],
+    project_root: Optional[str] = None
 ) -> FinalizeBatchResult:
     """
     Finalize multiple reserved functions.
@@ -769,7 +773,7 @@ def finalize_functions(
         file_ids.add(file_id)
 
     # Effect: open connection and finalize batch
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -851,7 +855,8 @@ def finalize_functions(
 def search_functions(
     search_string: str,
     include_details: bool = True,
-    details_only: bool = False
+    details_only: bool = False,
+    project_root: Optional[str] = None
 ) -> FunctionQueryResult:
     """
     Search functions by name or purpose using FTS5 full-text search.
@@ -872,7 +877,7 @@ def search_functions(
         >>> [f.name for f in result.functions]
         ['calculate_sum_id_42', 'calculate_total_id_55']
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -923,7 +928,8 @@ def search_functions(
 def get_function_by_name(
     function_name: str,
     include_details: bool = True,
-    details_only: bool = False
+    details_only: bool = False,
+    project_root: Optional[str] = None
 ) -> FunctionQueryResult:
     """
     Get functions by name (very high-frequency lookup).
@@ -950,7 +956,7 @@ def get_function_by_name(
         'src/aimfp/__main__.py'
     """
     # Effect: open connection and query
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

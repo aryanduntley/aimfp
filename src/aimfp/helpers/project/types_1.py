@@ -554,7 +554,8 @@ def reserve_type(
     description: Optional[str] = None,
     links: Optional[Dict[str, Any]] = None,
     file_id: Optional[int] = None,
-    skip_id_naming: bool = False
+    skip_id_naming: bool = False,
+    project_root: Optional[str] = None
 ) -> ReserveResult:
     """
     Reserve type ID for naming before creation.
@@ -586,7 +587,7 @@ def reserve_type(
         # Use result.id to create: Maybe_id_7 (unless skip_id_naming=True)
     """
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -627,7 +628,8 @@ def reserve_type(
 
 
 def reserve_types(
-    types: List[Dict[str, Any]]
+    types: List[Dict[str, Any]],
+    project_root: Optional[str] = None
 ) -> ReserveBatchResult:
     """
     Reserve multiple type IDs at once.
@@ -662,7 +664,7 @@ def reserve_types(
         )
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -720,7 +722,8 @@ def finalize_type(
     description: Optional[str] = None,
     links: Optional[Dict[str, Any]] = None,
     file_id: Optional[int] = None,
-    skip_id_naming: bool = False
+    skip_id_naming: bool = False,
+    project_root: Optional[str] = None
 ) -> FinalizeResult:
     """
     Finalize reserved type after creation.
@@ -763,7 +766,7 @@ def finalize_type(
     links_str = serialize_links(links)
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -837,7 +840,8 @@ def finalize_type(
 
 
 def finalize_types(
-    types: List[Dict[str, Any]]
+    types: List[Dict[str, Any]],
+    project_root: Optional[str] = None
 ) -> FinalizeBatchResult:
     """
     Finalize multiple reserved types.
@@ -904,7 +908,7 @@ def finalize_types(
             file_ids.add(file_id)
 
     # Effect: open connection and finalize batch
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -978,7 +982,8 @@ def update_type(
     name: Optional[str] = None,
     file_id: Optional[int] = None,
     definition_json: Optional[Dict[str, Any]] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> UpdateResult:
     """
     Update type metadata.
@@ -1019,7 +1024,7 @@ def update_type(
         )
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1100,7 +1105,8 @@ def delete_type(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str = "entry_deletion"
+    note_type: str = "entry_deletion",
+    project_root: Optional[str] = None
 ) -> DeleteResult:
     """
     Delete type with relationship validation.
@@ -1133,7 +1139,7 @@ def delete_type(
         42
     """
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1228,7 +1234,8 @@ def _get_type_by_name_effect(conn: sqlite3.Connection, type_name: str) -> List[s
 def search_types(
     search_string: str,
     include_details: bool = True,
-    details_only: bool = False
+    details_only: bool = False,
+    project_root: Optional[str] = None
 ) -> TypeQueryResult:
     """
     Search types by name or description using FTS5 full-text search.
@@ -1249,7 +1256,7 @@ def search_types(
         >>> [t.name for t in result.types]
         ['Maybe_id_7']
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1300,7 +1307,8 @@ def search_types(
 def get_type_by_name(
     type_name: str,
     include_details: bool = True,
-    details_only: bool = False
+    details_only: bool = False,
+    project_root: Optional[str] = None
 ) -> TypeQueryResult:
     """
     Look up types by name.
@@ -1324,7 +1332,7 @@ def get_type_by_name(
         'src/types.py'
     """
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

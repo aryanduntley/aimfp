@@ -648,7 +648,8 @@ def _delete_flow_effect(conn: sqlite3.Connection, flow_id: int) -> None:
 # ============================================================================
 
 def get_theme_by_name(
-    theme_name: str
+    theme_name: str,
+    project_root: Optional[str] = None
 ) -> ThemeQueryResult:
     """
     Get theme by name (fairly frequent lookup).
@@ -668,7 +669,7 @@ def get_theme_by_name(
         >>> result.theme.id
         1
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -698,7 +699,8 @@ def get_theme_by_name(
 
 
 def get_flow_by_name(
-    flow_name: str
+    flow_name: str,
+    project_root: Optional[str] = None
 ) -> FlowQueryResult:
     """
     Get flow by name (fairly frequent lookup).
@@ -718,7 +720,7 @@ def get_flow_by_name(
         >>> result.flow.id
         5
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -747,7 +749,7 @@ def get_flow_by_name(
         conn.close()
 
 
-def get_all_themes() -> ThemesQueryResult:
+def get_all_themes(project_root: Optional[str] = None) -> ThemesQueryResult:
     """
     Get all project themes.
 
@@ -763,7 +765,7 @@ def get_all_themes() -> ThemesQueryResult:
         >>> len(result.themes)
         5
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -785,7 +787,7 @@ def get_all_themes() -> ThemesQueryResult:
         conn.close()
 
 
-def get_all_flows() -> FlowsQueryResult:
+def get_all_flows(project_root: Optional[str] = None) -> FlowsQueryResult:
     """
     Get all project flows.
 
@@ -801,7 +803,7 @@ def get_all_flows() -> FlowsQueryResult:
         >>> len(result.flows)
         15
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -827,7 +829,8 @@ def add_theme(
     name: str,
     description: Optional[str] = None,
     ai_generated: bool = True,
-    confidence_score: Optional[float] = 0.0
+    confidence_score: Optional[float] = 0.0,
+    project_root: Optional[str] = None
 ) -> AddThemeResult:
     """
     Add project theme.
@@ -855,7 +858,7 @@ def add_theme(
         >>> result.id
         1
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -889,7 +892,8 @@ def update_theme(
     theme_id: int,
     name: Optional[str] = None,
     description: Optional[str] = None,
-    confidence_score: Optional[float] = None
+    confidence_score: Optional[float] = None,
+    project_root: Optional[str] = None
 ) -> UpdateThemeResult:
     """
     Update theme metadata.
@@ -917,7 +921,7 @@ def update_theme(
             error="At least one parameter must be provided for update"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -952,7 +956,8 @@ def delete_theme(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str = "entry_deletion"
+    note_type: str = "entry_deletion",
+    project_root: Optional[str] = None
 ) -> DeleteThemeResult:
     """
     Delete theme with flow validation.
@@ -979,7 +984,7 @@ def delete_theme(
         >>> result.success
         True
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1033,7 +1038,8 @@ def add_flow(
     name: str,
     description: Optional[str] = None,
     ai_generated: bool = True,
-    confidence_score: Optional[float] = 0.0
+    confidence_score: Optional[float] = 0.0,
+    project_root: Optional[str] = None
 ) -> AddFlowResult:
     """
     Add project flow.
@@ -1061,7 +1067,7 @@ def add_flow(
         >>> result.id
         5
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1092,7 +1098,8 @@ def add_flow(
 
 
 def get_file_ids_from_flows(
-    flow_ids: List[int]
+    flow_ids: List[int],
+    project_root: Optional[str] = None
 ) -> FileIdsResult:
     """
     Get all file IDs associated with flows.
@@ -1118,7 +1125,7 @@ def get_file_ids_from_flows(
             file_ids=()
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1146,7 +1153,8 @@ def update_flow(
     flow_id: int,
     name: Optional[str] = None,
     description: Optional[str] = None,
-    confidence_score: Optional[float] = None
+    confidence_score: Optional[float] = None,
+    project_root: Optional[str] = None
 ) -> UpdateFlowResult:
     """
     Update flow metadata.
@@ -1174,7 +1182,7 @@ def update_flow(
             error="At least one parameter must be provided for update"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1209,7 +1217,8 @@ def delete_flow(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str = "entry_deletion"
+    note_type: str = "entry_deletion",
+    project_root: Optional[str] = None
 ) -> DeleteFlowResult:
     """
     Delete flow with comprehensive validation.
@@ -1236,7 +1245,7 @@ def delete_flow(
         >>> result.success
         True
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

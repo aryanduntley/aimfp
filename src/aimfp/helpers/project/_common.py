@@ -31,6 +31,7 @@ Imported from utils.py (global):
 - _open_connection: Database connection with row factory
 """
 
+import os
 import sqlite3
 from typing import Optional, Final
 
@@ -40,6 +41,38 @@ from ..utils import (  # noqa: F401 - re-exported for convenience
     _open_project_connection,
     get_cached_project_root,
 )
+
+
+# ============================================================================
+# Filesystem Path Resolution
+# ============================================================================
+
+def _resolve_fs_path(path: str, project_root: Optional[str] = None) -> str:
+    """
+    Resolve a non-absolute filesystem path against the project root.
+
+    The database stores root-relative paths. Under MCP the server runs with
+    cwd == project root, so bare paths resolve correctly; an embedding host
+    may run anywhere, so non-absolute paths must be anchored to the root
+    explicitly before filesystem checks.
+
+    Args:
+        path: Path to resolve (absolute paths returned unchanged)
+        project_root: Explicit root; falls back to the cached project root
+
+    Returns:
+        Absolute path when a root is available; the path unchanged when the
+        path is absolute or no root is established (pre-existing behavior)
+    """
+    if os.path.isabs(path):
+        return path
+    root = project_root
+    if root is None:
+        try:
+            root = get_cached_project_root()
+        except RuntimeError:
+            return path
+    return os.path.join(root, path)
 
 
 # ============================================================================

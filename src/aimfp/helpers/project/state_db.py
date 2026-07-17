@@ -19,6 +19,7 @@ from pathlib import Path
 
 from ..utils import get_return_statements
 from ...database.connection import Result
+from ._common import _resolve_fs_path
 
 
 # ============================================================================
@@ -70,6 +71,10 @@ def create_state_database(source_directory: str) -> Result:
             state_dir: str
         }
     """
+    # Non-absolute source directories resolve against the project root
+    # (cwd is not guaranteed to be the root when embedded)
+    source_directory = _resolve_fs_path(source_directory)
+
     state_dir = _get_state_dir(source_directory)
     db_path = _get_state_db_path(source_directory)
 

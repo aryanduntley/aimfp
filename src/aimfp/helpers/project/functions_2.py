@@ -472,7 +472,8 @@ def _delete_function_effect(
 def get_functions_by_file(
     file_id: int,
     include_details: bool = True,
-    details_only: bool = False
+    details_only: bool = False,
+    project_root: Optional[str] = None
 ) -> FunctionsQueryResult:
     """
     Get all functions in a file (high-frequency).
@@ -496,7 +497,7 @@ def get_functions_by_file(
         'calculate_sum_id_99'
     """
     # Effect: open connection and query
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -535,7 +536,8 @@ def update_function(
     name: Optional[str] = None,
     purpose: Optional[str] = None,
     parameters: Optional[List[Dict[str, Any]]] = None,
-    returns: Optional[Dict[str, Any]] = None
+    returns: Optional[Dict[str, Any]] = None,
+    project_root: Optional[str] = None
 ) -> UpdateResult:
     """
     Update function metadata.
@@ -576,7 +578,7 @@ def update_function(
         )
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -648,7 +650,8 @@ def update_function(
 
 def update_functions_for_file(
     file_id: int,
-    functions: List[Dict[str, Any]]
+    functions: List[Dict[str, Any]],
+    project_root: Optional[str] = None
 ) -> BatchUpdateResult:
     """
     Update multiple functions in a single file.
@@ -682,7 +685,7 @@ def update_functions_for_file(
         )
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -767,7 +770,8 @@ def update_functions_for_file(
 def update_function_file_location(
     function_id: int,
     old_file_id: int,
-    new_file_id: int
+    new_file_id: int,
+    project_root: Optional[str] = None
 ) -> LocationUpdateResult:
     """
     Move function to different file (internal use, not exposed as MCP tool).
@@ -790,7 +794,7 @@ def update_function_file_location(
         True
     """
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -877,7 +881,8 @@ def delete_function(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str = "entry_deletion"
+    note_type: str = "entry_deletion",
+    project_root: Optional[str] = None
 ) -> DeleteResult:
     """
     Delete function with validation and interaction cascade.
@@ -910,7 +915,7 @@ def delete_function(
         42
     """
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

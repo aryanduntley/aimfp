@@ -217,7 +217,8 @@ def _delete_relationship_effect(
 # ============================================================================
 
 def add_types_functions(
-    relationships: List[Tuple[int, int, str]]
+    relationships: List[Tuple[int, int, str]],
+    project_root: Optional[str] = None
 ) -> AddRelationshipsResult:
     """
     Add type-function relationship(s).
@@ -271,7 +272,7 @@ def add_types_functions(
             )
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -326,7 +327,8 @@ def add_types_functions(
 def update_type_function_role(
     type_id: int,
     function_id: int,
-    role: str
+    role: str,
+    project_root: Optional[str] = None
 ) -> UpdateRoleResult:
     """
     Update relationship role only (internal use, not exposed as MCP tool).
@@ -357,7 +359,7 @@ def update_type_function_role(
         )
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -400,7 +402,8 @@ def delete_type_function(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str = "entry_deletion"
+    note_type: str = "entry_deletion",
+    project_root: Optional[str] = None
 ) -> DeleteRelationshipResult:
     """
     Remove type-function relationship (internal use, not exposed as MCP tool).
@@ -428,7 +431,7 @@ def delete_type_function(
         True
     """
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

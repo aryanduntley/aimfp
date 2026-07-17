@@ -24,7 +24,12 @@ from typing import Any, Dict, Optional, List, Tuple, Union
 from ..utils import get_return_statements
 
 # Import common project utilities (DRY principle)
-from ._common import _open_connection, get_cached_project_root, _open_project_connection
+from ._common import (
+    _open_connection,
+    get_cached_project_root,
+    _open_project_connection,
+    _resolve_fs_path,
+)
 
 
 # ============================================================================
@@ -374,7 +379,8 @@ def reserve_file(
     name: str,
     path: str,
     language: str,
-    skip_id_naming: bool = False
+    skip_id_naming: bool = False,
+    project_root: Optional[str] = None
 ) -> ReserveResult:
     """
     Reserve file ID for naming before creation.
@@ -400,7 +406,7 @@ def reserve_file(
         # Use result.id to create: calculator_id_42.py (unless skip_id_naming=True)
     """
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -430,7 +436,8 @@ def reserve_file(
 
 
 def reserve_files(
-    files: Union[List[Tuple[str, str, str, bool]], List[Dict[str, Any]]]
+    files: Union[List[Tuple[str, str, str, bool]], List[Dict[str, Any]]],
+    project_root: Optional[str] = None
 ) -> ReserveBatchResult:
     """
     Reserve multiple file IDs at once.
@@ -468,7 +475,7 @@ def reserve_files(
         )
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -514,7 +521,8 @@ def finalize_file(
     name: str,
     path: str,
     language: str,
-    skip_id_naming: bool = False
+    skip_id_naming: bool = False,
+    project_root: Optional[str] = None
 ) -> FinalizeResult:
     """
     Finalize reserved file after creation.
@@ -550,15 +558,16 @@ def finalize_file(
             error=f"File name must contain '_id_{file_id}' pattern"
         )
 
-    # Verify file exists on filesystem
-    if not os.path.exists(path):
+    # Verify file exists on filesystem (root-relative paths resolve against
+    # the project root — cwd is not guaranteed to be the root when embedded)
+    if not os.path.exists(_resolve_fs_path(path, project_root)):
         return FinalizeResult(
             success=False,
             error=f"File does not exist at path: {path}"
         )
 
     # Effect: open connection and finalize
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -584,7 +593,8 @@ def finalize_file(
 
 
 def finalize_files(
-    files: Union[List[Tuple[int, str, str, str, bool]], List[Dict[str, Any]]]
+    files: Union[List[Tuple[int, str, str, str, bool]], List[Dict[str, Any]]],
+    project_root: Optional[str] = None
 ) -> FinalizeBatchResult:
     """
     Finalize multiple reserved files.
@@ -631,8 +641,8 @@ def finalize_files(
                 error=f"File name '{name}' must contain '_id_{file_id}' pattern"
             )
 
-        # Check file exists
-        if not os.path.exists(path):
+        # Check file exists (root-relative paths resolve against the project root)
+        if not os.path.exists(_resolve_fs_path(path, project_root)):
             return FinalizeBatchResult(
                 success=False,
                 error=f"File does not exist at path: {path}"
@@ -641,7 +651,7 @@ def finalize_files(
         finalizations.append((file_id, name, path, language))
 
     # Effect: open connection and finalize batch
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -667,7 +677,8 @@ def finalize_files(
 
 
 def get_file_by_name(
-    file_name: str
+    file_name: str,
+    project_root: Optional[str] = None
 ) -> FilesQueryResult:
     """
     Get files by name (high-frequency lookup).
@@ -691,7 +702,7 @@ def get_file_by_name(
         'src/aimfp/__init__.py'
     """
     # Effect: open connection and query
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -716,7 +727,8 @@ def get_file_by_name(
 
 
 def get_file_by_path(
-    file_path: str
+    file_path: str,
+    project_root: Optional[str] = None
 ) -> FileQueryResult:
     """
     Get file by path (very high-frequency lookup).
@@ -740,7 +752,7 @@ def get_file_by_path(
         'calculator_id_42.py'
     """
     # Effect: open connection and query
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

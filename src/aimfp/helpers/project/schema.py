@@ -120,14 +120,14 @@ def _query_table_info(conn: sqlite3.Connection, table: str) -> Tuple[FieldInfo, 
 # Public Helper Functions
 # ============================================================================
 
-def get_project_tables() -> TablesResult:
+def get_project_tables(project_root: Optional[str] = None) -> TablesResult:
     """
     List all tables in project database.
 
     Returns:
         TablesResult with table names
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -147,7 +147,7 @@ def get_project_tables() -> TablesResult:
         )
 
 
-def get_project_fields(table: str) -> FieldsResult:
+def get_project_fields(table: str, project_root: Optional[str] = None) -> FieldsResult:
     """
     Get field names and types for a specific table.
 
@@ -157,7 +157,7 @@ def get_project_fields(table: str) -> FieldsResult:
     Returns:
         FieldsResult with field information
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -187,14 +187,14 @@ def get_project_fields(table: str) -> FieldsResult:
         )
 
 
-def get_project_schema() -> SchemaResult:
+def get_project_schema(project_root: Optional[str] = None) -> SchemaResult:
     """
     Get complete schema for project database.
 
     Returns:
         SchemaResult with full schema (table_name -> fields mapping)
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -222,7 +222,7 @@ def get_project_schema() -> SchemaResult:
         )
 
 
-def get_project_json_parameters(table: str) -> JsonParametersResult:
+def get_project_json_parameters(table: str, project_root: Optional[str] = None) -> JsonParametersResult:
     """
     Get available fields for table to use with generic add/update operations.
     Filters out id, created_at, updated_at fields.
@@ -233,7 +233,7 @@ def get_project_json_parameters(table: str) -> JsonParametersResult:
     Returns:
         JsonParametersResult with field_name -> type_hint mapping
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

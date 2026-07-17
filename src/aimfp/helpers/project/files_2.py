@@ -23,7 +23,14 @@ from typing import Optional, List, Tuple
 from ..utils import get_return_statements
 
 # Import common project utilities (DRY principle)
-from ._common import _open_connection, _check_file_exists, _create_deletion_note, get_cached_project_root, _open_project_connection
+from ._common import (
+    _open_connection,
+    _check_file_exists,
+    _create_deletion_note,
+    get_cached_project_root,
+    _open_project_connection,
+    _resolve_fs_path,
+)
 
 
 # ============================================================================
@@ -247,12 +254,14 @@ def _check_git_available() -> bool:
         return False
 
 
-def _git_file_changed(file_path: str) -> bool:
+def _git_file_changed(file_path: str, cwd: Optional[str] = None) -> bool:
     """
     Effect: Check if file has uncommitted changes in Git.
 
     Args:
         file_path: Path to file
+        cwd: Directory to run git in (defaults to process cwd — the repo root
+             under MCP; embedding hosts pass the project root explicitly)
 
     Returns:
         True if file has changes, False if clean
@@ -262,7 +271,8 @@ def _git_file_changed(file_path: str) -> bool:
         result = subprocess.run(
             ["git", "diff", "--quiet", file_path],
             capture_output=True,
-            timeout=5
+            timeout=5,
+            cwd=cwd
         )
         return result.returncode != 0
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -406,7 +416,8 @@ def update_file(
     file_id: int,
     name: Optional[str] = None,
     path: Optional[str] = None,
-    language: Optional[str] = None
+    language: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> UpdateResult:
     """
     Update file metadata.
@@ -446,7 +457,7 @@ def update_file(
         )
 
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -493,7 +504,8 @@ def update_file(
 
 
 def file_has_changed(
-    file_id: int
+    file_id: int,
+    project_root: Optional[str] = None
 ) -> ChangeDetectionResult:
     """
     Check if file changed using Git (if available) or filesystem timestamp.
@@ -516,7 +528,7 @@ def file_has_changed(
         'git'
     """
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -535,8 +547,10 @@ def file_has_changed(
                 error=f"File path not found for ID {file_id}"
             )
 
-        # Check if file exists on filesystem
-        if not os.path.exists(file_path):
+        # Check if file exists on filesystem (root-relative DB paths resolve
+        # against the project root — cwd is not guaranteed to be the root)
+        fs_path = _resolve_fs_path(file_path, project_root)
+        if not os.path.exists(fs_path):
             return ChangeDetectionResult(
                 success=False,
                 error=f"File does not exist at path: {file_path}"
@@ -544,7 +558,7 @@ def file_has_changed(
 
         # Try Git method first
         if _check_git_available():
-            changed = _git_file_changed(file_path)
+            changed = _git_file_changed(fs_path, cwd=project_root)
             return ChangeDetectionResult(
                 success=True,
                 changed=changed,
@@ -560,7 +574,7 @@ def file_has_changed(
             )
 
         db_timestamp = _parse_sqlite_timestamp(db_timestamp_str)
-        fs_mtime = _get_filesystem_mtime(file_path)
+        fs_mtime = _get_filesystem_mtime(fs_path)
 
         if fs_mtime is None:
             return ChangeDetectionResult(
@@ -588,7 +602,8 @@ def file_has_changed(
 
 
 def update_file_timestamp(
-    file_id: int
+    file_id: int,
+    project_root: Optional[str] = None
 ) -> TimestampUpdateResult:
     """
     Update file timestamp (sub-helper called automatically after function updates).
@@ -609,7 +624,7 @@ def update_file_timestamp(
         True
     """
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -640,7 +655,8 @@ def delete_file(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str = "entry_deletion"
+    note_type: str = "entry_deletion",
+    project_root: Optional[str] = None
 ) -> DeleteResult:
     """
     Delete file with comprehensive cross-reference validation.
@@ -671,7 +687,7 @@ def delete_file(
         42
     """
     # Effect: open connection
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

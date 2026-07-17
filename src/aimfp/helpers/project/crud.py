@@ -78,7 +78,7 @@ class DeleteResult:
 # Global Constants - Reserved Tables
 # ============================================================================
 
-from typing import Final
+from typing import Final, Optional
 
 # Tables with reserve/finalize workflows
 RESERVED_WORKFLOW_TABLES: Final[frozenset[str]] = frozenset([
@@ -251,7 +251,7 @@ def _is_reserved(conn: sqlite3.Connection, table: str, id: int) -> bool:
 # Public Helper Functions
 # ============================================================================
 
-def get_from_project(table: str, id_array: List[int]) -> QueryResult:
+def get_from_project(table: str, id_array: List[int], project_root: Optional[str] = None) -> QueryResult:
     """
     Get records by ID(s) - EMPTY ARRAY NOT ALLOWED.
 
@@ -268,7 +268,7 @@ def get_from_project(table: str, id_array: List[int]) -> QueryResult:
             error="id_array must contain at least one ID"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -292,7 +292,8 @@ def get_from_project_where(
     table: str,
     conditions: Dict[str, Any],
     limit: Optional[int] = None,
-    orderby: Optional[str] = None
+    orderby: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> QueryResult:
     """
     Flexible filtering with structured JSON conditions.
@@ -306,7 +307,7 @@ def get_from_project_where(
     Returns:
         QueryResult with records (empty array if no matches)
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -326,7 +327,7 @@ def get_from_project_where(
         )
 
 
-def query_project(table: str, query: str) -> QueryResult:
+def query_project(table: str, query: str, project_root: Optional[str] = None) -> QueryResult:
     """
     Execute complex SQL WHERE clause (advanced, rare use).
 
@@ -337,7 +338,7 @@ def query_project(table: str, query: str) -> QueryResult:
     Returns:
         QueryResult with records (empty array if no matches)
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -357,7 +358,7 @@ def query_project(table: str, query: str) -> QueryResult:
         )
 
 
-def add_project_entry(table: str, data: Dict[str, Any]) -> AddResult:
+def add_project_entry(table: str, data: Dict[str, Any], project_root: Optional[str] = None) -> AddResult:
     """
     Add new entry to project database.
 
@@ -386,7 +387,7 @@ def add_project_entry(table: str, data: Dict[str, Any]) -> AddResult:
             error=f"Cannot insert directly into '{table}' table. Use {helper_name}() helper instead to maintain reserve/finalize workflow."
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -410,7 +411,7 @@ def add_project_entry(table: str, data: Dict[str, Any]) -> AddResult:
         )
 
 
-def update_project_entry(table: str, id: int, data: Dict[str, Any]) -> UpdateResult:
+def update_project_entry(table: str, id: int, data: Dict[str, Any], project_root: Optional[str] = None) -> UpdateResult:
     """
     Update existing entry.
 
@@ -439,7 +440,7 @@ def update_project_entry(table: str, id: int, data: Dict[str, Any]) -> UpdateRes
         except (ValueError, TypeError):
             return UpdateResult(success=False, error=f"Invalid id: expected integer, got '{id}'")
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -488,7 +489,8 @@ def delete_project_entry(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str
+    note_type: str,
+    project_root: Optional[str] = None
 ) -> DeleteResult:
     """
     Smart delete with automatic routing to specialized functions when needed.
@@ -528,7 +530,7 @@ def delete_project_entry(
         )
 
     # Generic delete for tables without specialized helpers
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -571,7 +573,8 @@ def delete_reserved(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str = "entry_deletion"
+    note_type: str = "entry_deletion",
+    project_root: Optional[str] = None
 ) -> DeleteResult:
     """
     Delete abandoned reserved entries (escape hatch for cancelled reserve operations).
@@ -597,7 +600,7 @@ def delete_reserved(
             error=f"delete_reserved only allowed for tables: {', '.join(RESERVED_WORKFLOW_TABLES)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

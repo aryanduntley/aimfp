@@ -19,7 +19,7 @@ import shutil
 import sqlite3
 import tempfile
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from ._common import (
     get_core_db_path,
@@ -29,6 +29,7 @@ from ._common import (
     _get_table_names,
     get_return_statements,
     Result,
+    AIMFP_PROJECT_DIR,
 )
 
 
@@ -168,6 +169,36 @@ def _check_pending_migrations(project_root: str, aimfp_folder: str) -> Dict[str,
         'up_to_date': up_to_date,
         'skipped': skipped,
     }
+
+
+# ============================================================================
+# Public Embedding API
+# ============================================================================
+
+def check_pending_migrations(project_root: Optional[str] = None) -> Result:
+    """
+    Effect: Check which project databases need schema migration.
+
+    Public embedding API — the same read-only check aimfp_run performs on a
+    new session, exposed à la carte. Applying migrations remains the job of
+    migrate_databases.
+
+    Args:
+        project_root: Explicit root for embedding hosts; defaults to the
+            cached/discovered session root
+
+    Returns:
+        Result with data={checked, pending, up_to_date, skipped}
+        (the _check_pending_migrations payload)
+    """
+    try:
+        root = project_root or resolve_project_root()
+    except RuntimeError as e:
+        return Result(success=False, error=str(e))
+    return Result(
+        success=True,
+        data=_check_pending_migrations(root, AIMFP_PROJECT_DIR),
+    )
 
 
 # ============================================================================

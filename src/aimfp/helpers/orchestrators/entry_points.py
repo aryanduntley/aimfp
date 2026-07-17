@@ -91,7 +91,7 @@ def _reconcile_stored_project_root(project_root: str) -> None:
 # aimfp_init
 # ============================================================================
 
-def aimfp_init(project_root: str) -> Result:
+def aimfp_init(project_root: str, init_git: bool = True) -> Result:
     """
     Phase 1 mechanical setup orchestrator for project initialization.
 
@@ -100,6 +100,9 @@ def aimfp_init(project_root: str) -> Result:
 
     Args:
         project_root: Absolute path to project root directory
+        init_git: Run `git init` when no repo exists (default True — the MCP
+            behavior). Embedding hosts pass False for throwaway projects
+            where a git repo is unwanted; git_status reports 'skipped'.
 
     Returns:
         Result with data={
@@ -154,6 +157,8 @@ def aimfp_init(project_root: str) -> Result:
         git_status = 'git_unavailable'
         if os.path.isdir(git_dir):
             git_status = 'pre_existing'
+        elif not init_git:
+            git_status = 'skipped'
         else:
             try:
                 subprocess.run(
@@ -572,7 +577,7 @@ def aimfp_status(
 # aimfp_run
 # ============================================================================
 
-def aimfp_run(is_new_session: bool = False) -> Result:
+def aimfp_run(is_new_session: bool = False, start_watchdog: bool = True) -> Result:
     """
     Main entry point orchestrator. Called on every AI interaction.
 
@@ -588,6 +593,11 @@ def aimfp_run(is_new_session: bool = False) -> Result:
 
     Args:
         is_new_session: True for first interaction / new session / after breaks
+        start_watchdog: Spawn the detached watchdog subprocess on a new
+            session (default True — the MCP behavior). Embedding hosts pass
+            False to run the watcher in-process instead (see
+            aimfp.watchdog.start_watcher); reconciliation and reminder
+            reading still run, watchdog status reports 'external'.
 
     Returns:
         If is_new_session=True:
@@ -675,10 +685,16 @@ def aimfp_run(is_new_session: bool = False) -> Result:
         # Watchdog: start subprocess first (skip reconciliation — we run it here),
         # then run reconciliation synchronously to eliminate race condition,
         # then read reminders (now includes reconciliation results).
-        watchdog_start = _start_watchdog(project_root)
-        _run_reconciliation_sync(project_root)
-        watchdog_read = _read_reminders(project_root)
-        watchdog_data = _reconcile_watchdog_status(watchdog_start, watchdog_read)
+        if start_watchdog:
+            watchdog_start = _start_watchdog(project_root)
+            _run_reconciliation_sync(project_root)
+            watchdog_read = _read_reminders(project_root)
+            watchdog_data = _reconcile_watchdog_status(watchdog_start, watchdog_read)
+        else:
+            # Embedding host owns the watcher (aimfp.watchdog.start_watcher)
+            _run_reconciliation_sync(project_root)
+            watchdog_read = _read_reminders(project_root)
+            watchdog_data = {**watchdog_read, 'status': 'external'}
 
         # Bundle: status
         status_result = aimfp_status(type="summary")
@@ -693,25 +709,8 @@ def aimfp_run(is_new_session: bool = False) -> Result:
         # Note: supportive_context is included via aimfp_status() — not called separately
 
         # Bundle: Case 2 context (if this is a Case 2 project)
-        case_2_context = None
         user_directives_status = status_data.get('user_directives_status')
-        if user_directives_status is not None:
-            case_2_context = {
-                'is_case_2': True,
-                'status': user_directives_status,
-                'phase': _get_case_2_phase(user_directives_status),
-                'next_action': _get_case_2_next_action(user_directives_status),
-                'pipeline': 'parse → validate → implement → approve → activate',
-                'note': 'Implementation phase uses standard Case 1 development (file tracking, tasks, milestones)',
-                'user_directive_names': (
-                    'user_directive_parse', 'user_directive_validate',
-                    'user_directive_implement', 'user_directive_approve',
-                    'user_directive_activate', 'user_directive_monitor',
-                    'user_directive_update', 'user_directive_deactivate',
-                    'user_directive_status'
-                ),
-                'routing': status_data.get('case_2_routing'),
-            }
+        case_2_context = _build_case_2_context(status_data)
 
         # Note: modules_summary already included via aimfp_status() — not duplicated here
 
@@ -754,6 +753,101 @@ def aimfp_run(is_new_session: bool = False) -> Result:
 
     except Exception as e:
         return Result(success=False, error=f"aimfp_run failed: {str(e)}")
+
+
+def _build_case_2_context(status_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Pure: Build the Case 2 context dict from status data, or None for
+    Case 1 projects. Shared by aimfp_run and build_status_bundle.
+    """
+    user_directives_status = status_data.get('user_directives_status')
+    if user_directives_status is None:
+        return None
+    return {
+        'is_case_2': True,
+        'status': user_directives_status,
+        'phase': _get_case_2_phase(user_directives_status),
+        'next_action': _get_case_2_next_action(user_directives_status),
+        'pipeline': 'parse → validate → implement → approve → activate',
+        'note': 'Implementation phase uses standard Case 1 development (file tracking, tasks, milestones)',
+        'user_directive_names': (
+            'user_directive_parse', 'user_directive_validate',
+            'user_directive_implement', 'user_directive_approve',
+            'user_directive_activate', 'user_directive_monitor',
+            'user_directive_update', 'user_directive_deactivate',
+            'user_directive_status'
+        ),
+        'routing': status_data.get('case_2_routing'),
+    }
+
+
+def build_status_bundle(project_root: Optional[str] = None) -> Result:
+    """
+    Effect: Assemble the aimfp_run session bundle minus side effects.
+
+    Public embedding API — the data core of aimfp_run(is_new_session=True):
+    status (aimfp_status summary), user settings, Case 2 context, and
+    deferred notes. Deliberately does NOT: spawn or touch the watchdog, run
+    backups or reconciliation, check migrations (check_pending_migrations),
+    or include the MCP-oriented guidance / supportive-context strings
+    (get_supportive_context covers those on demand).
+
+    The status stack resolves the project root through the session cache.
+    When project_root is passed and the cache is unbound, the cache is bound
+    to it (same effect as aimfp_run). A project_root that CONFLICTS with an
+    already-bound cache is refused rather than silently served from the
+    wrong project — for cross-project reads use the per-helper project_root
+    parameters instead.
+
+    Args:
+        project_root: Explicit root for embedding hosts; defaults to the
+            cached/discovered session root
+
+    Returns:
+        Result with data={
+            project_root, status, user_settings, case_2_context,
+            deferred_notes
+        }
+    """
+    try:
+        if project_root is None:
+            root = resolve_project_root()
+        else:
+            root = project_root
+            try:
+                cached = get_cached_project_root()
+            except RuntimeError:
+                set_project_root(root)
+                cached = root
+            if os.path.realpath(cached) != os.path.realpath(root):
+                return Result(
+                    success=False,
+                    error=(
+                        f"Process is bound to project root '{cached}'; cannot "
+                        f"build a status bundle for '{root}'. The status stack "
+                        "resolves through the session cache — use per-helper "
+                        "project_root parameters for cross-project reads."
+                    ),
+                )
+    except RuntimeError as e:
+        return Result(success=False, error=str(e))
+
+    try:
+        status_result = aimfp_status(type="summary")
+        status_data = status_result.data if status_result.success else {}
+
+        return Result(
+            success=True,
+            data={
+                'project_root': root,
+                'status': status_data,
+                'user_settings': _get_user_settings_safe(root),
+                'case_2_context': _build_case_2_context(status_data),
+                'deferred_notes': _get_deferred_notes_summary(root),
+            },
+        )
+    except Exception as e:
+        return Result(success=False, error=f"build_status_bundle failed: {str(e)}")
 
 
 def _reconcile_watchdog_status(

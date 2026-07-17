@@ -124,7 +124,8 @@ def _check_field_exists(conn: sqlite3.Connection, table_name: str, field_name: s
 
 def project_allowed_check_constraints(
     table: str,
-    field: str
+    field: str,
+    project_root: Optional[str] = None
 ) -> CheckConstraintResult:
     """
     Returns list of allowed values for CHECK constraint enum fields in project.db.
@@ -137,7 +138,7 @@ def project_allowed_check_constraints(
     Returns:
         CheckConstraintResult with allowed values or error
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

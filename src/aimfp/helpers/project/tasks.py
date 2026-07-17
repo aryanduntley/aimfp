@@ -721,7 +721,8 @@ def add_milestone(
     completion_path_id: int,
     name: str,
     status: str = "pending",
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> AddResult:
     """
     Add milestone to completion path.
@@ -743,7 +744,7 @@ def add_milestone(
         )
 
     # Open connection and insert
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -777,7 +778,8 @@ def add_milestone(
 
 
 def get_milestones_by_path(
-    completion_path_id: int
+    completion_path_id: int,
+    project_root: Optional[str] = None
 ) -> MilestoneQueryResult:
     """
     Get all milestones for a completion path.
@@ -788,7 +790,7 @@ def get_milestones_by_path(
     Returns:
         MilestoneQueryResult with milestones
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -809,7 +811,8 @@ def get_milestones_by_path(
 
 
 def get_milestones_by_status(
-    status: str
+    status: str,
+    project_root: Optional[str] = None
 ) -> MilestoneQueryResult:
     """
     Get milestones filtered by status.
@@ -827,7 +830,7 @@ def get_milestones_by_status(
             error=f"Invalid status: {status}. Must be one of: {', '.join(VALID_MILESTONE_STATUSES)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -847,14 +850,14 @@ def get_milestones_by_status(
         )
 
 
-def get_incomplete_milestones() -> MilestoneQueryResult:
+def get_incomplete_milestones(project_root: Optional[str] = None) -> MilestoneQueryResult:
     """
     Get all non-completed milestones.
 
     Returns:
         MilestoneQueryResult with incomplete milestones
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -879,7 +882,8 @@ def update_milestone(
     name: Optional[str] = None,
     completion_path_id: Optional[int] = None,
     status: Optional[str] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> UpdateResult:
     """
     Update milestone metadata.
@@ -901,7 +905,7 @@ def update_milestone(
             error=f"Invalid status: {status}. Must be one of: {', '.join(VALID_MILESTONE_STATUSES)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -959,7 +963,8 @@ def delete_milestone(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str = "entry_deletion"
+    note_type: str = "entry_deletion",
+    project_root: Optional[str] = None
 ) -> DeleteResult:
     """
     Delete milestone with task validation.
@@ -974,7 +979,7 @@ def delete_milestone(
     Returns:
         DeleteResult with success status
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1024,7 +1029,8 @@ def add_task(
     status: str = "pending",
     priority: str = "medium",
     description: Optional[str] = None,
-    flow_ids: Optional[List[int]] = None
+    flow_ids: Optional[List[int]] = None,
+    project_root: Optional[str] = None
 ) -> AddResult:
     """
     Add task to milestone.
@@ -1054,7 +1060,7 @@ def add_task(
             error=f"Invalid priority: {priority}. Must be one of: {', '.join(VALID_PRIORITY_LEVELS)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1089,7 +1095,8 @@ def add_task(
 
 def get_incomplete_tasks_by_milestone(
     milestone_id: int,
-    skip_pending: bool = False
+    skip_pending: bool = False,
+    project_root: Optional[str] = None
 ) -> TaskQueryResult:
     """
     Get open tasks for a milestone with related subtasks/sidequests.
@@ -1101,7 +1108,7 @@ def get_incomplete_tasks_by_milestone(
     Returns:
         TaskQueryResult with incomplete tasks
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1121,14 +1128,14 @@ def get_incomplete_tasks_by_milestone(
         )
 
 
-def get_incomplete_tasks() -> TaskQueryResult:
+def get_incomplete_tasks(project_root: Optional[str] = None) -> TaskQueryResult:
     """
     Get all incomplete tasks with subtasks/sidequests.
 
     Returns:
         TaskQueryResult with all incomplete tasks
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1149,7 +1156,8 @@ def get_incomplete_tasks() -> TaskQueryResult:
 
 
 def get_tasks_by_milestone(
-    milestone_id: int
+    milestone_id: int,
+    project_root: Optional[str] = None
 ) -> TaskQueryResult:
     """
     Get all tasks for a milestone (any status).
@@ -1160,7 +1168,7 @@ def get_tasks_by_milestone(
     Returns:
         TaskQueryResult with all tasks for milestone
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1186,7 +1194,8 @@ def get_tasks_comprehensive(
     date_range_created: Optional[List[str]] = None,
     date_range_updated: Optional[List[str]] = None,
     milestone_id: Optional[int] = None,
-    priority: Optional[str] = None
+    priority: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> TaskQueryResult:
     """
     Advanced task search with multiple filters.
@@ -1216,7 +1225,7 @@ def get_tasks_comprehensive(
             error=f"Invalid priority: {priority}. Must be one of: {', '.join(VALID_PRIORITY_LEVELS)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1239,7 +1248,8 @@ def get_tasks_comprehensive(
 
 
 def get_task_flows(
-    task_id: int
+    task_id: int,
+    project_root: Optional[str] = None
 ) -> FlowIdsResult:
     """
     Get flow IDs for a task.
@@ -1250,7 +1260,7 @@ def get_task_flows(
     Returns:
         FlowIdsResult with flow IDs array
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1280,7 +1290,8 @@ def get_task_flows(
 
 
 def get_task_files(
-    task_id: int
+    task_id: int,
+    project_root: Optional[str] = None
 ) -> FilesResult:
     """
     Get all files related to task via flows (orchestrator).
@@ -1291,7 +1302,7 @@ def get_task_files(
     Returns:
         FilesResult with related files
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1337,7 +1348,8 @@ def update_task(
     status: Optional[str] = None,
     description: Optional[str] = None,
     flow_ids: Optional[List[int]] = None,
-    priority: Optional[str] = None
+    priority: Optional[str] = None,
+    project_root: Optional[str] = None
 ) -> UpdateResult:
     """
     Update task metadata.
@@ -1368,7 +1380,7 @@ def update_task(
             error=f"Invalid priority: {priority}. Must be one of: {', '.join(VALID_PRIORITY_LEVELS)}"
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1429,7 +1441,8 @@ def delete_task(
     note_reason: str,
     note_severity: str,
     note_source: str,
-    note_type: str = "entry_deletion"
+    note_type: str = "entry_deletion",
+    project_root: Optional[str] = None
 ) -> DeleteResult:
     """
     Delete task with item validation.
@@ -1444,7 +1457,7 @@ def delete_task(
     Returns:
         DeleteResult with success status
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:

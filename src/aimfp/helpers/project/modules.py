@@ -512,6 +512,7 @@ def add_module(
     description: Optional[str] = None,
     purpose: Optional[str] = None,
     external_dependencies: Optional[List[str]] = None,
+    project_root: Optional[str] = None
 ) -> AddModuleResult:
     """
     Create a new module (reusable code boundary).
@@ -536,7 +537,7 @@ def add_module(
     if not path or not path.strip():
         return AddModuleResult(success=False, error="Module path is required")
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -563,7 +564,7 @@ def add_module(
         conn.close()
 
 
-def get_module_by_name(name: str) -> ModuleQueryResult:
+def get_module_by_name(name: str, project_root: Optional[str] = None) -> ModuleQueryResult:
     """
     Get module by name.
 
@@ -573,7 +574,7 @@ def get_module_by_name(name: str) -> ModuleQueryResult:
     Returns:
         ModuleQueryResult with module record or None if not found
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -589,7 +590,7 @@ def get_module_by_name(name: str) -> ModuleQueryResult:
         conn.close()
 
 
-def get_module_by_path(path: str) -> ModuleQueryResult:
+def get_module_by_path(path: str, project_root: Optional[str] = None) -> ModuleQueryResult:
     """
     Get module by directory path.
 
@@ -599,7 +600,7 @@ def get_module_by_path(path: str) -> ModuleQueryResult:
     Returns:
         ModuleQueryResult with module record or None if not found
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -615,14 +616,14 @@ def get_module_by_path(path: str) -> ModuleQueryResult:
         conn.close()
 
 
-def get_all_modules() -> ModulesQueryResult:
+def get_all_modules(project_root: Optional[str] = None) -> ModulesQueryResult:
     """
     Get all modules in the project.
 
     Returns:
         ModulesQueryResult with tuple of all module records
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -649,6 +650,7 @@ def update_module(
     description: Optional[str] = None,
     purpose: Optional[str] = None,
     external_dependencies: Optional[List[str]] = None,
+    project_root: Optional[str] = None
 ) -> UpdateModuleResult:
     """
     Update module metadata. Only non-None fields are updated.
@@ -667,7 +669,7 @@ def update_module(
     if all(v is None for v in (name, path, description, purpose, external_dependencies)):
         return UpdateModuleResult(success=False, error="No fields to update")
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -691,7 +693,7 @@ def update_module(
         conn.close()
 
 
-def delete_module(module_id: int) -> DeleteModuleResult:
+def delete_module(module_id: int, project_root: Optional[str] = None) -> DeleteModuleResult:
     """
     Delete a module. CASCADE removes module_files junction entries.
     The files themselves are NOT deleted.
@@ -702,7 +704,7 @@ def delete_module(module_id: int) -> DeleteModuleResult:
     Returns:
         DeleteModuleResult with file_count showing files that were in the module
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -734,6 +736,7 @@ def delete_module(module_id: int) -> DeleteModuleResult:
 def add_file_to_module(
     file_id: int,
     module_id: int,
+    project_root: Optional[str] = None
 ) -> ModuleFileResult:
     """
     Assign a file to a module.
@@ -747,7 +750,7 @@ def add_file_to_module(
     Returns:
         ModuleFileResult
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -777,6 +780,7 @@ def add_file_to_module(
 def remove_file_from_module(
     file_id: int,
     module_id: int,
+    project_root: Optional[str] = None
 ) -> ModuleFileResult:
     """
     Remove a file from a module.
@@ -791,7 +795,7 @@ def remove_file_from_module(
     Returns:
         ModuleFileResult
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -818,7 +822,7 @@ def remove_file_from_module(
         conn.close()
 
 
-def get_module_files(module_id: int) -> ModuleFilesResult:
+def get_module_files(module_id: int, project_root: Optional[str] = None) -> ModuleFilesResult:
     """
     Get all files assigned to a module via module_files junction.
 
@@ -828,7 +832,7 @@ def get_module_files(module_id: int) -> ModuleFilesResult:
     Returns:
         ModuleFilesResult with tuple of file records
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -850,7 +854,7 @@ def get_module_files(module_id: int) -> ModuleFilesResult:
         conn.close()
 
 
-def get_module_functions(module_id: int) -> ModuleFunctionsResult:
+def get_module_functions(module_id: int, project_root: Optional[str] = None) -> ModuleFunctionsResult:
     """
     Get all functions in module files (via module_files junction).
 
@@ -860,7 +864,7 @@ def get_module_functions(module_id: int) -> ModuleFunctionsResult:
     Returns:
         ModuleFunctionsResult with tuple of function records
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -885,7 +889,7 @@ def get_module_functions(module_id: int) -> ModuleFunctionsResult:
         conn.close()
 
 
-def get_module_types(module_id: int) -> ModuleTypesResult:
+def get_module_types(module_id: int, project_root: Optional[str] = None) -> ModuleTypesResult:
     """
     Get all types in module files (via module_files junction).
 
@@ -895,7 +899,7 @@ def get_module_types(module_id: int) -> ModuleTypesResult:
     Returns:
         ModuleTypesResult with tuple of type records
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -920,7 +924,7 @@ def get_module_types(module_id: int) -> ModuleTypesResult:
         conn.close()
 
 
-def get_module_dependencies(module_id: int) -> ModuleDependenciesResult:
+def get_module_dependencies(module_id: int, project_root: Optional[str] = None) -> ModuleDependenciesResult:
     """
     Get cross-module dependencies for a module.
 
@@ -934,7 +938,7 @@ def get_module_dependencies(module_id: int) -> ModuleDependenciesResult:
     Returns:
         ModuleDependenciesResult with dependency records
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -964,7 +968,7 @@ def get_module_dependencies(module_id: int) -> ModuleDependenciesResult:
         conn.close()
 
 
-def get_module_for_file(file_id: int) -> ModuleQueryResult:
+def get_module_for_file(file_id: int, project_root: Optional[str] = None) -> ModuleQueryResult:
     """
     Find which module a file belongs to (reverse lookup via junction table).
 
@@ -974,7 +978,7 @@ def get_module_for_file(file_id: int) -> ModuleQueryResult:
     Returns:
         ModuleQueryResult with module record or None if file is not in any module
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -998,7 +1002,7 @@ def get_module_for_file(file_id: int) -> ModuleQueryResult:
         conn.close()
 
 
-def get_unassigned_files() -> UnassignedFilesResult:
+def get_unassigned_files(project_root: Optional[str] = None) -> UnassignedFilesResult:
     """
     Find files not assigned to any module.
 
@@ -1008,7 +1012,7 @@ def get_unassigned_files() -> UnassignedFilesResult:
     Returns:
         UnassignedFilesResult with tuple of unassigned file records
     """
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1031,7 +1035,7 @@ def get_unassigned_files() -> UnassignedFilesResult:
         conn.close()
 
 
-def search_modules(search_string: str) -> ModulesQueryResult:
+def search_modules(search_string: str, project_root: Optional[str] = None) -> ModulesQueryResult:
     """
     Search modules by name, purpose, or description.
 
@@ -1046,7 +1050,7 @@ def search_modules(search_string: str) -> ModulesQueryResult:
     if not search_string or not search_string.strip():
         return ModulesQueryResult(success=False, error="Search string is required")
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1068,6 +1072,7 @@ def search_modules(search_string: str) -> ModulesQueryResult:
 
 def add_files_to_module(
     links: List[Tuple[int, int]],
+    project_root: Optional[str] = None
 ) -> ModuleFilesBatchResult:
     """
     Assign multiple files to modules in batch (module_files junction).
@@ -1087,7 +1092,7 @@ def add_files_to_module(
             error="Links list cannot be empty",
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
@@ -1133,6 +1138,7 @@ def add_files_to_module(
 
 def remove_files_from_module(
     links: List[Tuple[int, int]],
+    project_root: Optional[str] = None
 ) -> ModuleFilesBatchResult:
     """
     Remove multiple files from modules in batch (module_files junction).
@@ -1152,7 +1158,7 @@ def remove_files_from_module(
             error="Links list cannot be empty",
         )
 
-    project_root = get_cached_project_root()
+    project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
