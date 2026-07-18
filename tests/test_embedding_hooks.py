@@ -202,3 +202,85 @@ class TestHookD_ComposableSubSteps:
         r = build_status_bundle(root_b)
         assert not r.success
         assert "bound to project root" in r.error
+
+
+class TestHookA_TimestampThreading:
+    """Regression: finalize/update of functions and types must thread the
+    resolved root into the update_file_timestamp sub-helper. Pre-fix, these
+    passed their own DB writes but died at the timestamp step with
+    'Project root not established' whenever the cache was unset (or, worse,
+    stamped a different project's DB when the cache was bound elsewhere)."""
+
+    def test_function_lifecycle_cache_never_set(self):
+        from aimfp.helpers.project.functions_1 import (
+            finalize_function, finalize_functions, reserve_functions,
+        )
+        from aimfp.helpers.project.functions_2 import update_function
+
+        root = _make_bare_project("tsfn")
+        r = reserve_file(name="mod", path="src/mod.py", language="python",
+                         skip_id_naming=True, project_root=root)
+        assert r.success, r.error
+        os.makedirs(os.path.join(root, "src"), exist_ok=True)
+        with open(os.path.join(root, "src", "mod.py"), "w") as f:
+            f.write("# t\n")
+        fr = finalize_file(file_id=r.id, name="mod.py", path="src/mod.py",
+                           language="python", skip_id_naming=True,
+                           project_root=root)
+        assert fr.success, fr.error
+
+        rf = reserve_functions(
+            [{"name": "fn_a", "file_id": r.id, "purpose": "p",
+              "parameters": "none", "returns": "int", "skip_id_naming": True},
+             {"name": "fn_b", "file_id": r.id, "purpose": "p",
+              "parameters": "none", "returns": "int", "skip_id_naming": True}],
+            project_root=root)
+        assert rf.success, rf.error
+
+        ff = finalize_functions(
+            [{"function_id": rf.ids[0], "name": "fn_a", "file_id": r.id,
+              "skip_id_naming": True}],
+            project_root=root)
+        assert ff.success, ff.error
+
+        f1 = finalize_function(function_id=rf.ids[1], name="fn_b",
+                               file_id=r.id, skip_id_naming=True,
+                               project_root=root)
+        assert f1.success, f1.error
+
+        uf = update_function(function_id=rf.ids[0], purpose="p2",
+                             project_root=root)
+        assert uf.success, uf.error
+        assert connection._cached_project_root is None
+
+    def test_type_lifecycle_cache_never_set(self):
+        from aimfp.helpers.project.types_1 import (
+            finalize_type, reserve_type, update_type,
+        )
+
+        root = _make_bare_project("tsty")
+        r = reserve_file(name="shapes", path="src/shapes.py", language="python",
+                         skip_id_naming=True, project_root=root)
+        assert r.success, r.error
+        os.makedirs(os.path.join(root, "src"), exist_ok=True)
+        with open(os.path.join(root, "src", "shapes.py"), "w") as f:
+            f.write("# t\n")
+        fr = finalize_file(file_id=r.id, name="shapes.py", path="src/shapes.py",
+                           language="python", skip_id_naming=True,
+                           project_root=root)
+        assert fr.success, fr.error
+
+        rt = reserve_type(name="Shape", definition_json={"kind": "record"},
+                          description="d", file_id=r.id, skip_id_naming=True,
+                          project_root=root)
+        assert rt.success, rt.error
+
+        ft = finalize_type(type_id=rt.id, name="Shape",
+                           definition_json={"kind": "record"}, description="d",
+                           file_id=r.id, skip_id_naming=True,
+                           project_root=root)
+        assert ft.success, ft.error
+
+        ut = update_type(type_id=rt.id, description="d2", project_root=root)
+        assert ut.success, ut.error
+        assert connection._cached_project_root is None

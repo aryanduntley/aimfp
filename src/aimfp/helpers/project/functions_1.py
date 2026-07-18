@@ -678,7 +678,7 @@ def finalize_function(
         conn.close()
 
         # Effect: update file timestamp (uses separate connection)
-        timestamp_result = update_file_timestamp(file_id)
+        timestamp_result = update_file_timestamp(file_id, project_root=project_root)
         if not timestamp_result.success:
             return FinalizeResult(
                 success=False,
@@ -825,7 +825,7 @@ def finalize_functions(
 
         # Effect: update timestamps for all affected files
         for file_id in file_ids:
-            timestamp_result = update_file_timestamp(file_id)
+            timestamp_result = update_file_timestamp(file_id, project_root=project_root)
             if not timestamp_result.success:
                 return FinalizeBatchResult(
                     success=False,

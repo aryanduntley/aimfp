@@ -811,7 +811,7 @@ def finalize_type(
 
         # Effect: update file timestamp if file_id provided
         if file_id is not None:
-            timestamp_result = update_file_timestamp(file_id)
+            timestamp_result = update_file_timestamp(file_id, project_root=project_root)
             if not timestamp_result.success:
                 return FinalizeResult(
                     success=False,
@@ -950,7 +950,7 @@ def finalize_types(
 
         # Effect: update timestamps for all affected files
         for file_id in file_ids:
-            timestamp_result = update_file_timestamp(file_id)
+            timestamp_result = update_file_timestamp(file_id, project_root=project_root)
             if not timestamp_result.success:
                 return FinalizeBatchResult(
                     success=False,
@@ -1072,7 +1072,7 @@ def update_type(
 
         # Effect: update file timestamp if file_id exists
         if timestamp_file_id is not None:
-            timestamp_result = update_file_timestamp(timestamp_file_id)
+            timestamp_result = update_file_timestamp(timestamp_file_id, project_root=project_root)
             if not timestamp_result.success:
                 return UpdateResult(
                     success=False,

@@ -620,7 +620,7 @@ def update_function(
         conn.close()
 
         # Effect: update file timestamp (uses separate connection)
-        timestamp_result = update_file_timestamp(file_id)
+        timestamp_result = update_file_timestamp(file_id, project_root=project_root)
         if not timestamp_result.success:
             return UpdateResult(
                 success=False,
@@ -740,7 +740,7 @@ def update_functions_for_file(
         conn.close()
 
         # Effect: update file timestamp once (uses separate connection)
-        timestamp_result = update_file_timestamp(file_id)
+        timestamp_result = update_file_timestamp(file_id, project_root=project_root)
         if not timestamp_result.success:
             return BatchUpdateResult(
                 success=False,
@@ -843,14 +843,14 @@ def update_function_file_location(
         conn.close()
 
         # Effect: update timestamps for both files
-        old_timestamp_result = update_file_timestamp(old_file_id)
+        old_timestamp_result = update_file_timestamp(old_file_id, project_root=project_root)
         if not old_timestamp_result.success:
             return LocationUpdateResult(
                 success=False,
                 error=f"Updated but old file timestamp update failed: {old_timestamp_result.error}"
             )
 
-        new_timestamp_result = update_file_timestamp(new_file_id)
+        new_timestamp_result = update_file_timestamp(new_file_id, project_root=project_root)
         if not new_timestamp_result.success:
             return LocationUpdateResult(
                 success=False,

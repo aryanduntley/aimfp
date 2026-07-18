@@ -1207,7 +1207,7 @@ def _get_infrastructure_safe(project_root: str) -> Tuple[Dict[str, Any], ...]:
     """Effect: Get infrastructure data, returning empty tuple on failure."""
     try:
         from ..project.metadata import get_all_infrastructure
-        result = get_all_infrastructure()
+        result = get_all_infrastructure(project_root=project_root)
         if result.success:
             return result.infrastructure if hasattr(result, 'infrastructure') and result.infrastructure else ()
         return ()
