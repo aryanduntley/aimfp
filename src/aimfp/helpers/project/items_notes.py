@@ -118,9 +118,39 @@ class AddResult:
 
 
 @dataclass(frozen=True)
+class BatchAddResult:
+    """
+    Result of batch add operation.
+
+    Distinct from AddResult: batch creates report every new primary key in
+    `ids` rather than overloading the single `id` field with a row count.
+    """
+    success: bool
+    ids: Tuple[int, ...] = ()
+    count: int = 0
+    error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class UpdateResult:
     """Result of update operation."""
     success: bool
+    error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class BatchUpdateResult:
+    """
+    Result of batch update operation.
+
+    `updated_count` is the row count the database reported, not the number of
+    IDs asked for — the two diverging means the write did not match what
+    validation approved.
+    """
+    success: bool
+    updated_count: int = 0
     error: Optional[str] = None
     return_statements: Tuple[str, ...] = ()
 
@@ -402,6 +432,75 @@ def _update_item_fields(
     conn.commit()
 
 
+def _classify_items_by_parent(
+    conn: sqlite3.Connection,
+    ids: List[int],
+    reference_table: str,
+    reference_id: int
+) -> Tuple[Tuple[int, ...], Tuple[Tuple[int, str, int], ...]]:
+    """
+    Effect: Split requested IDs into those that do not exist and those owned
+    by a different parent.
+
+    Args:
+        conn: Database connection
+        ids: Item IDs the caller asked to update
+        reference_table: Parent table the items are expected to belong to
+        reference_id: Parent ID the items are expected to belong to
+
+    Returns:
+        (missing_ids, foreign_rows) where foreign_rows holds
+        (item_id, actual_reference_table, actual_reference_id) triples
+    """
+    unique_ids = tuple(dict.fromkeys(ids))
+    placeholders = ",".join("?" for _ in unique_ids)
+    cursor = conn.execute(
+        f"SELECT id, reference_table, reference_id FROM items WHERE id IN ({placeholders})",
+        unique_ids
+    )
+    owners = {
+        row['id']: (row['reference_table'], row['reference_id'])
+        for row in cursor.fetchall()
+    }
+
+    missing = tuple(item_id for item_id in unique_ids if item_id not in owners)
+    foreign = tuple(
+        (item_id, owners[item_id][0], owners[item_id][1])
+        for item_id in unique_ids
+        if item_id in owners and owners[item_id] != (reference_table, reference_id)
+    )
+    return missing, foreign
+
+
+def _format_foreign_items_error(
+    foreign: Tuple[Tuple[int, str, int], ...],
+    reference_table: str,
+    reference_id: int
+) -> str:
+    """
+    Pure: Build the error naming which IDs belong elsewhere and to whom.
+
+    Names the actual owners so the caller can tell a typo from a stale ID
+    without a follow-up query.
+
+    Args:
+        foreign: (item_id, actual_reference_table, actual_reference_id) triples
+        reference_table: Parent table the caller claimed
+        reference_id: Parent ID the caller claimed
+
+    Returns:
+        Error message string
+    """
+    id_list = ", ".join(str(item_id) for item_id, _, _ in foreign)
+    owners = ", ".join(dict.fromkeys(
+        f"{table} {parent_id}" for _, table, parent_id in foreign
+    ))
+    return (
+        f"Items [{id_list}] do not belong to {reference_table} ID {reference_id} "
+        f"(they belong to: {owners}). No items were updated."
+    )
+
+
 def _batch_update_items(
     conn: sqlite3.Connection,
     ids: List[int],
@@ -430,13 +529,15 @@ def _batch_update_items(
         return 0
 
     fields.append("updated_at = CURRENT_TIMESTAMP")
-    placeholders = ",".join("?" for _ in ids)
-    values.extend(ids)
+    unique_ids = tuple(dict.fromkeys(ids))
+    placeholders = ",".join("?" for _ in unique_ids)
+    values.extend(unique_ids)
 
     query = f"UPDATE items SET {', '.join(fields)} WHERE id IN ({placeholders})"
-    conn.execute(query, values)
-    conn.commit()
-    return len(ids)
+    cursor = conn.execute(query, values)
+    # rowcount, not len(ids) — the caller uses this to confirm the write matched
+    # what validation approved. Echoing the input back would defeat the check.
+    return cursor.rowcount
 
 
 # ============================================================================
@@ -1092,7 +1193,7 @@ def add_items(
     reference_id: int,
     items: List[dict],
     project_root: Optional[str] = None
-) -> AddResult:
+) -> BatchAddResult:
     """
     Batch-create multiple work items under a single parent.
     All items created with status 'pending'. Atomic — all or none.
@@ -1103,20 +1204,20 @@ def add_items(
         items: List of {name: str, description?: str} dicts
 
     Returns:
-        AddResult with count on success (id field holds count of inserted items)
+        BatchAddResult with ids of every inserted item (and their count) on success
     """
     # Normalize and validate reference_table
     normalized_table = _normalize_table_name(reference_table)
     valid_tables = {'tasks', 'subtasks', 'sidequests'}
     if normalized_table not in valid_tables:
-        return AddResult(
+        return BatchAddResult(
             success=False,
             error=f"Invalid reference_table: {reference_table}. Must be one of: {', '.join(valid_tables)}"
         )
 
     # Validate items list
     if not items:
-        return AddResult(
+        return BatchAddResult(
             success=False,
             error="Items list cannot be empty"
         )
@@ -1124,13 +1225,13 @@ def add_items(
     # Validate each item has a non-empty name
     for i, item in enumerate(items):
         if not isinstance(item, dict):
-            return AddResult(
+            return BatchAddResult(
                 success=False,
                 error=f"Item at index {i} must be a dict with 'name' key"
             )
         item_name = item.get("name", "")
         if not item_name or not str(item_name).strip():
-            return AddResult(
+            return BatchAddResult(
                 success=False,
                 error=f"Item at index {i} has empty name"
             )
@@ -1142,7 +1243,7 @@ def add_items(
         # Check parent exists
         if not _check_entity_exists(conn, normalized_table, reference_id):
             conn.close()
-            return AddResult(
+            return BatchAddResult(
                 success=False,
                 error=f"Parent {normalized_table} ID {reference_id} not found"
             )
@@ -1155,7 +1256,7 @@ def add_items(
         row = cursor.fetchone()
         if row['status'] == 'completed':
             conn.close()
-            return AddResult(
+            return BatchAddResult(
                 success=False,
                 error=f"Cannot add items: parent {normalized_table} ID {reference_id} is already completed"
             )
@@ -1166,15 +1267,16 @@ def add_items(
 
         return_stmts = get_return_statements("add_items")
 
-        return AddResult(
+        return BatchAddResult(
             success=True,
-            id=len(ids),
+            ids=ids,
+            count=len(ids),
             return_statements=return_stmts
         )
 
     except Exception as e:
         conn.close()
-        return AddResult(
+        return BatchAddResult(
             success=False,
             error=f"Database error: {str(e)}"
         )
@@ -1247,36 +1349,54 @@ def update_item(
 def update_items(
     ids: List[int],
     data: dict,
+    reference_table: str,
+    reference_id: int,
     project_root: Optional[str] = None
-) -> UpdateResult:
+) -> BatchUpdateResult:
     """
     Batch-update multiple items with the same field values.
     Atomic — all updates succeed or none apply.
 
+    Every ID must belong to the named parent. Batch updates are the one place
+    a wrong ID writes silently — the rows exist, so nothing errors — so the
+    caller states the parent it means and it is checked against the
+    reference_table/reference_id already stored on each item.
+
     Args:
         ids: List of item IDs to update
         data: Field-value pairs to apply (e.g., {status: 'completed'})
+        reference_table: Parent the items must belong to ('tasks', 'subtasks', 'sidequests')
+        reference_id: ID of the parent task, subtask, or sidequest
 
     Returns:
-        UpdateResult with success status
+        BatchUpdateResult with the row count the database reported
     """
+    # Normalize and validate reference_table
+    normalized_table = _normalize_table_name(reference_table)
+    valid_tables = {'tasks', 'subtasks', 'sidequests'}
+    if normalized_table not in valid_tables:
+        return BatchUpdateResult(
+            success=False,
+            error=f"Invalid reference_table: {reference_table}. Must be one of: {', '.join(valid_tables)}"
+        )
+
     # Validate ids
     if not ids:
-        return UpdateResult(
+        return BatchUpdateResult(
             success=False,
             error="IDs list cannot be empty"
         )
 
     # Validate data
     if not data:
-        return UpdateResult(
+        return BatchUpdateResult(
             success=False,
             error="Data dict cannot be empty"
         )
 
     # Validate status if in data
     if "status" in data and not _validate_item_status(data["status"]):
-        return UpdateResult(
+        return BatchUpdateResult(
             success=False,
             error=f"Invalid status: {data['status']}. Must be one of: {', '.join(VALID_ITEM_STATUSES)}"
         )
@@ -1285,7 +1405,7 @@ def update_items(
     valid_fields = {"name", "status", "description"}
     unknown = set(data.keys()) - valid_fields
     if unknown:
-        return UpdateResult(
+        return BatchUpdateResult(
             success=False,
             error=f"Unknown fields: {', '.join(unknown)}. Allowed: {', '.join(valid_fields)}"
         )
@@ -1294,29 +1414,80 @@ def update_items(
     conn = _open_project_connection(project_root)
 
     try:
-        # Validate all IDs exist
-        for item_id in ids:
-            if not _check_entity_exists(conn, "items", item_id):
-                conn.close()
-                return UpdateResult(
-                    success=False,
-                    error=f"Item ID {item_id} not found"
+        # Validation and write share one transaction. WAL allows concurrent
+        # writers, so without this a parallel worker could delete or reparent
+        # a row between the check below and the UPDATE, and the guard would
+        # pass on state that no longer holds.
+        conn.execute("BEGIN IMMEDIATE")
+
+        # Parent must exist before any item is measured against it
+        if not _check_entity_exists(conn, normalized_table, reference_id):
+            conn.rollback()
+            conn.close()
+            return BatchUpdateResult(
+                success=False,
+                error=f"Parent {normalized_table} ID {reference_id} not found"
+            )
+
+        # Validate every ID exists AND belongs to the named parent
+        missing, foreign = _classify_items_by_parent(
+            conn, ids, normalized_table, reference_id
+        )
+
+        if missing:
+            conn.rollback()
+            conn.close()
+            return BatchUpdateResult(
+                success=False,
+                error=(
+                    f"Item IDs not found: {', '.join(str(i) for i in missing)}. "
+                    f"No items were updated."
                 )
+            )
+
+        if foreign:
+            conn.rollback()
+            conn.close()
+            return BatchUpdateResult(
+                success=False,
+                error=_format_foreign_items_error(foreign, normalized_table, reference_id)
+            )
 
         # Batch update (atomic)
-        _batch_update_items(conn, ids, data)
+        expected = len(dict.fromkeys(ids))
+        updated_count = _batch_update_items(conn, ids, data)
+
+        # The write must match what validation approved. A mismatch means the
+        # rows moved under us — roll back rather than report a partial success.
+        if updated_count != expected:
+            conn.rollback()
+            conn.close()
+            return BatchUpdateResult(
+                success=False,
+                error=(
+                    f"Expected to update {expected} items but the database reported "
+                    f"{updated_count}. Rolled back — no items were updated."
+                )
+            )
+
+        conn.commit()
         conn.close()
 
         return_stmts = get_return_statements("update_items")
 
-        return UpdateResult(
+        return BatchUpdateResult(
             success=True,
+            updated_count=updated_count,
             return_statements=return_stmts
         )
 
     except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         conn.close()
-        return UpdateResult(
+        return BatchUpdateResult(
             success=False,
             error=f"Database error: {str(e)}"
         )

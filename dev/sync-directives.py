@@ -29,6 +29,7 @@ This version aligns with the full schema (v2.0) for aimfp_core.db.
 """
 
 import os
+import re
 import json
 import sqlite3
 from typing import List, Dict, Any, Set, Tuple
@@ -94,7 +95,37 @@ MIGRATIONS_DIR = os.path.join(SCRIPT_DIR, "migrations")
 # Sync report in dev/logs/
 SYNC_REPORT_FILE = os.path.join(SCRIPT_DIR, "logs", "sync_report.json")
 
-CURRENT_SCHEMA_VERSION = "2.0"
+CORE_SCHEMA_SQL = os.path.join(
+    PROJECT_ROOT, "src", "aimfp", "database", "schemas", "aimfp_core.sql"
+)
+
+
+def _read_schema_version_from_sql() -> str:
+    """
+    Read the core schema version straight from aimfp_core.sql.
+
+    ensure_schema() already treats that file as the source of truth, so the
+    version is derived from it rather than restated here. A hardcoded copy
+    silently drifts the moment the SQL is bumped without this file — and the
+    tail of run_migrations() would then stamp the DB back to the stale value.
+    """
+    with open(CORE_SCHEMA_SQL, 'r', encoding='utf-8') as f:
+        sql = f.read()
+
+    match = re.search(
+        r"INSERT\s+OR\s+REPLACE\s+INTO\s+schema_version\s*\([^)]*\)\s*VALUES\s*\(\s*1\s*,\s*'([^']+)'\s*\)",
+        sql,
+        re.IGNORECASE,
+    )
+    if not match:
+        raise ValueError(
+            f"Could not find a schema_version seed in {CORE_SCHEMA_SQL}. "
+            f"Expected: INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, 'X.Y');"
+        )
+    return match.group(1)
+
+
+CURRENT_SCHEMA_VERSION = _read_schema_version_from_sql()
 DRY_RUN = False
 
 
@@ -223,8 +254,14 @@ def run_migrations(conn: sqlite3.Connection):
                     conn.rollback()
                 raise
 
-    # Update to current version
-    if get_current_db_version(conn) != CURRENT_SCHEMA_VERSION:
+    # Update to current version — never downgrade. ensure_schema() has already
+    # seeded the version from the SQL; if the DB sits ahead of the target, that
+    # is the newer truth and stamping it back would fake a pending migration.
+    final_version = get_current_db_version(conn)
+    if final_version != CURRENT_SCHEMA_VERSION:
+        if [int(n) for n in final_version.split('.')] > [int(n) for n in CURRENT_SCHEMA_VERSION.split('.')]:
+            print(f"⚠️  Database at {final_version} is ahead of target {CURRENT_SCHEMA_VERSION} — leaving as is")
+            return
         set_db_version(conn, CURRENT_SCHEMA_VERSION)
 
     print(f"✅ Database migrated to version {CURRENT_SCHEMA_VERSION}")

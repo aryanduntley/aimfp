@@ -35,7 +35,7 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
         a. reserve_file → search_modules for overlap → write FP code → finalize_file
         b. reserve functions → finalize functions (purpose, parameters, returns populated)
         c. add_file_to_flow, add_file_to_module (if domain logic), add_interactions, add_types_functions
-        d. Item done → update_item(id=<item_id>, status='completed') or batch via update_items(ids=[...], data={status:'completed'})
+        d. Item done → update_item(id=<item_id>, status='completed') or batch via update_items(ids=[...], data={status:'completed'}, reference_table='tasks', reference_id=<task_id>) — every id must belong to that parent
     13. All items done → project_task_complete → update_task(status='completed')
     14. More tasks? → create next (goto 11). No → project_milestone_complete
     15. More milestones? → activate next (goto 10). No → project_completion_check → done

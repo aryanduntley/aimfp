@@ -405,10 +405,24 @@
           "required": true,
           "default": null,
           "description": "Field-value pairs to apply to all items (e.g., {status: 'completed'})"
+        },
+        {
+          "name": "reference_table",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Parent the items must belong to: 'tasks', 'subtasks', or 'sidequests'"
+        },
+        {
+          "name": "reference_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "ID of the parent task, subtask, or sidequest that owns every item in ids"
         }
       ],
       "purpose": "Batch-update multiple items with the same field values. Primary use: marking multiple items completed at once when parent completes.",
-      "error_handling": "Return error if any ID not found. Atomic — all updates succeed or none apply.",
+      "error_handling": "Return error if reference_table is invalid, the parent record is not found, any ID does not exist, or any ID belongs to a different parent (error names the actual owners). Atomic — all updates succeed or none apply.",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
@@ -442,12 +456,14 @@
         }
       ],
       "implementation_notes": [
-        "Returns {success: true, updated_count: N}",
+        "Returns {success: true, updated_count: N} — N is the DB-reported row count, not len(ids)",
         "SQL: UPDATE items SET <fields> WHERE id IN (?, ?, ...) within a transaction",
         "Only updates fields present in data object — partial updates supported",
-        "Validate all IDs exist before applying updates",
+        "Validate all IDs exist AND that every item's reference_table/reference_id matches the parent passed in before applying updates",
+        "Reject the whole call if any ID belongs to another parent — a wrong batch ID otherwise writes silently because the rows do exist",
         "Sets updated_at = CURRENT_TIMESTAMP on every update",
-        "Use transaction — all updates applied atomically"
+        "Use transaction — all updates applied atomically",
+        "Run validation and the UPDATE inside one BEGIN IMMEDIATE transaction; roll back if the row count does not match the validated ID count (WAL allows a concurrent worker to move rows in between)"
       ]
     },
     {
