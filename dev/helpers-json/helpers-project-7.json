@@ -49,6 +49,14 @@
           "is_required": true,
           "parameters_mapping": {},
           "description": "Create milestones for completion paths during decomposition - defines project phases"
+        },
+        {
+          "directive_name": "project_add_path",
+          "execution_context": "insert_completion_path",
+          "sequence_order": 2,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Attach milestones to the newly inserted completion path"
         }
       ],
       "implementation_notes": [
@@ -233,6 +241,14 @@
             "completed_at": "current_timestamp"
           },
           "description": "Mark milestone as completed after all tasks finish - updates status and logs completion time"
+        },
+        {
+          "directive_name": "project_progression",
+          "execution_context": "open_next_milestone",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Mark the next milestone in_progress when the previous one completes"
         }
       ],
       "implementation_notes": [
@@ -380,6 +396,38 @@
             "priority": "workflow.priority"
           },
           "description": "Atomic task creation - validates inputs and creates task record in database"
+        },
+        {
+          "directive_name": "project_progression",
+          "execution_context": "create_first_milestone_task",
+          "sequence_order": 2,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Create the first task for a newly opened milestone (ONE task at a time, not all at once)"
+        },
+        {
+          "directive_name": "project_progression",
+          "execution_context": "evaluate_and_create_next_task",
+          "sequence_order": 2,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Create the next task after the previous one completes"
+        },
+        {
+          "directive_name": "project_progression",
+          "execution_context": "create_first_task_for_milestone",
+          "sequence_order": 2,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Create the opening task when advancing to the next milestone"
+        },
+        {
+          "directive_name": "project_add_path",
+          "execution_context": "insert_task",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Insert a task when extending the roadmap"
         }
       ],
       "implementation_notes": [

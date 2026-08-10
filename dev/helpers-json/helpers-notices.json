@@ -1,0 +1,50 @@
+{
+  "helpers": [
+    {
+      "name": "get_pending_notices",
+      "file_path": "helpers/orchestrators/notices.py",
+      "parameters": [],
+      "purpose": "Get one-time release notices this project has not yet been shown. Returns ONLY unacknowledged notices, already filtered for applicability — a notice pinned to a schema version stays hidden until that database has actually reached it. An empty result is the normal steady state. Called automatically by aimfp_run(is_new_session=true), which puts the result in data.notices and omits the key entirely when nothing is pending, so you never need to call this yourself in a normal session.",
+      "error_handling": "Never raises. Returns an empty result when the core or preferences database is unreadable, or when this project predates the notices tables (its pending migration is surfaced separately and notices resume afterward).",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Deliver each notice's 'message' to the user in your own words — it was written to be said aloud, not pasted.",
+        "For a notice with action_required=true you MUST ask the question it contains and WAIT for the answer. Do not assume a default and move on.",
+        "Acknowledge only AFTER acting: acknowledge_notice(notice_key, outcome='<what the user decided>'). Acknowledging before the user answers loses the message permanently — it never fires again.",
+        "Never acknowledge a notice you did not actually deliver."
+      ],
+      "target_database": "multi_db",
+      "used_by_directives": []
+    },
+    {
+      "name": "acknowledge_notice",
+      "file_path": "helpers/orchestrators/notices.py",
+      "parameters": [
+        {
+          "name": "notice_key",
+          "type": "string",
+          "required": true,
+          "description": "Notice identifier from get_pending_notices (e.g. 'backup_interval_intro')"
+        },
+        {
+          "name": "outcome",
+          "type": "string",
+          "required": false,
+          "description": "Short record of what the user decided (e.g. 'set backup_interval_days=14'). Kept for audit and worth filling in."
+        }
+      ],
+      "purpose": "Mark a notice as delivered so it never fires again for this project. Writes to acknowledged_notices in user_preferences.db; the notice text itself lives in the read-only core database and is untouched. Call only AFTER acting on the notice — for an action_required notice that means after the user has actually answered, not merely been asked.",
+      "error_handling": "Returns error when notice_key is empty, user_preferences.db is missing, or the acknowledged_notices table does not exist (run migrate_databases first).",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Notice acknowledged — it will not appear in any future session for this project.",
+        "Record the user's decision in 'outcome' rather than leaving it null. A year from now that is the only trace of why a setting has the value it does.",
+        "If the notice asked the user to change a setting, verify you actually applied the change (e.g. update_user_setting) before considering it handled."
+      ],
+      "target_database": "user_preferences",
+      "used_by_directives": []
+    }
+  ]
+}

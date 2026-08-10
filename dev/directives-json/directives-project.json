@@ -118,7 +118,16 @@
                 "interface ",
                 "abstract class"
               ],
-              "file_types": ["*.py", "*.js", "*.ts", "*.java", "*.cpp", "*.cs", "*.rb", "*.php"],
+              "file_types": [
+                "*.py",
+                "*.js",
+                "*.ts",
+                "*.java",
+                "*.cpp",
+                "*.cs",
+                "*.rb",
+                "*.php"
+              ],
               "threshold": "3+ OOP patterns detected across multiple files"
             },
             "trigger": "fp_no_oop directive for pattern detection",
@@ -710,7 +719,14 @@
           "if": "reserved_successfully_with_naming_exception",
           "then": "write_without_embedded_id",
           "details": {
-            "file_exceptions": ["__init__.py", ".db files", "pyproject.toml", "setup.py", "conftest.py", "requirements.txt"],
+            "file_exceptions": [
+              "__init__.py",
+              ".db files",
+              "pyproject.toml",
+              "setup.py",
+              "conftest.py",
+              "requirements.txt"
+            ],
             "file_reason": "These files require specific names for Python/tooling conventions",
             "action": "Reserve with skip_id_naming=True, finalize with skip_id_naming=True - name preserved without ID suffix",
             "database_field": "id_in_name=0 indicates entity name does NOT contain _id_XX pattern",
@@ -724,7 +740,11 @@
             "reason": "MCP tool functions must have clean names for external tool calls",
             "action": "Reserve with skip_id_naming=True - function tracked but name stays clean",
             "database_field": "id_in_name=0 for all MCP tools",
-            "examples": ["reserve_file", "finalize_function", "get_file_by_path"]
+            "examples": [
+              "reserve_file",
+              "finalize_function",
+              "get_file_by_path"
+            ]
           }
         },
         {
@@ -732,7 +752,11 @@
           "then": "skip_function_tracking",
           "details": {
             "pattern": "Functions starting with underscore (_)",
-            "examples": ["_open_connection", "_reserve_file_effect", "_validate_input"],
+            "examples": [
+              "_open_connection",
+              "_reserve_file_effect",
+              "_validate_input"
+            ],
             "reason": "Private/internal functions are implementation details, not public API",
             "action": "Do NOT reserve or track - only parent file is tracked",
             "track_instead": "Public functions (no underscore prefix) get full reserve/finalize treatment"
@@ -3465,49 +3489,57 @@
           "details": {
             "action": "Build file inventory",
             "steps": [
-              "Read source_directory from infrastructure table",
-              "Recursively scan for source files matching primary_language extensions",
-              "Also include other recognized source file types (config, data, script files)",
-              "Exclude: build artifacts, dependencies, generated files, .aimfp-project/, node_modules, __pycache__, etc.",
-              "Use same exclusion patterns as watchdog config.py for consistency",
-              "Also honor the project-root .watchdogignore file if present: skip any file matching its gitignore-style patterns so the catalog never registers files the watchdog ignores. Patterns containing '/' are anchored to the project root and match that subtree; patterns without '/' match a filename or any directory component anywhere (e.g. 'tests', '*_test.py', 'packages/host/extension/').",
-              "Build file inventory: path, size, last_modified, extension, language"
+              "Call scan_source_tree() — it reads source_directory from infrastructure, walks the tree, and applies the full exclusion stack (built-in EXCLUDED_DIRS/EXCLUDED_EXTENSIONS, the watchdog_excluded_* user settings, and the project-root .watchdogignore) so the catalog and the watchdog never disagree on scope.",
+              "For a large codebase, pass module_path to narrow the scan to one subtree and adopt it a module at a time rather than in a single overwhelming pass.",
+              "The scan is READ-ONLY — nothing is written. Review the returned inventory before registering anything.",
+              "Check each file's 'fidelity': 'full' (Python) carries real parameters and returns; 'names_only' carries names and line numbers only and REQUIRES you to supply purpose, parameters, and returns yourself.",
+              "Review 'parse_failures' and 'skipped_unsupported' — these files were not extracted and need manual handling or deliberate omission."
             ],
-            "note": "Exclusion patterns match watchdog EXCLUDED_DIRS and EXCLUDED_EXTENSIONS for consistency across the system, plus any user patterns in the project-root .watchdogignore file (same source the watchdog reads)."
+            "note": "scan_source_tree replaces manual directory walking. It shares its exclusion logic with the watchdog by construction rather than by convention.",
+            "use_helpers": [
+              "scan_source_tree"
+            ]
           }
         },
         {
           "if": "files_scanned",
           "then": "register_files_in_database",
           "details": {
-            "action": "Create file entries in project.db",
+            "action": "Register scanned files in project.db (single-phase)",
             "steps": [
-              "For each source file, use reserve_file helper to get database ID",
-              "Set file metadata: path, purpose (infer from filename and directory location), theme (infer from directory structure)",
-              "Use finalize_file helper to confirm registration",
-              "For large codebases (>100 files): process in batches, report progress to user periodically"
+              "Call catalog_files(files=[{name, path, language}, ...]) with the scan results.",
+              "Do NOT use reserve_file/finalize_file here. That two-phase protocol exists so a NEW file can be given an ID before it is written; code being adopted already exists on disk with a fixed name that no ID will ever be embedded into. catalog_files writes rows already finalized (is_reserved=0, id_in_name=0).",
+              "catalog_files is idempotent on path — re-cataloging after a re-scan updates rows instead of duplicating them, so it is safe to re-run.",
+              "Capture the returned IDs in input order: functions and types need file_id.",
+              "For large codebases (>100 files): register one module at a time and report progress to the user."
             ],
-            "use_helpers": ["reserve_file", "finalize_file"]
+            "use_helpers": [
+              "catalog_files"
+            ]
           }
         },
         {
           "if": "files_registered",
           "then": "scan_functions_per_file",
           "details": {
-            "action": "Identify and register all functions",
+            "action": "Register extracted functions and types (single-phase)",
             "steps": [
-              "For each registered file, parse function definitions using language-appropriate patterns",
-              "Use same FUNCTION_PATTERNS as watchdog analyzers for consistency (Python: def, JS/TS: function/arrow, Rust: fn, Go: func, etc.)",
-              "For each function identify: name, parameters, return type (if typed), purity assessment (pure / side effects / uncertain), purpose (infer from name and docstring)",
-              "Use reserve_function and finalize_function helpers to register in database",
-              "Flag impure functions with a note — these are informational, not blockers"
+              "Function and type signatures already came back from scan_source_tree — do not re-parse the files.",
+              "Enrich before writing: extraction seeds 'purpose' from the docstring's first line, so files without docstrings arrive with null purposes. Fill those in; null purpose fields make functions invisible to future lookup and reduce the DB to a name index.",
+              "Call catalog_functions(functions=[{name, file_id, purpose, parameters, returns}, ...]).",
+              "Call catalog_types(types=[{name, file_id, definition, description}, ...]) for the extracted type definitions.",
+              "Do NOT use reserve_function/finalize_function or reserve_type/finalize_type for existing code — same reasoning as catalog_files.",
+              "The 'is_effect' flag on each extracted function is a HINT read from declared intent (the _effect_ naming convention and the 'Effect:' docstring marker), not a purity verdict. Treat impurity as informational, never a blocker."
             ],
             "purity_assessment": {
               "pure": "No side effects detected, deterministic based on visible logic",
               "side_effects": "Contains I/O, mutations, or external calls not wrapped",
               "uncertain": "Cannot determine purity from static analysis alone"
             },
-            "use_helpers": ["reserve_function", "finalize_function"]
+            "use_helpers": [
+              "catalog_functions",
+              "catalog_types"
+            ]
           }
         },
         {
@@ -3519,10 +3551,16 @@
               "For each function, identify which other project functions it calls",
               "For each file, identify which other project files it imports from",
               "Identify external library dependencies per file",
-              "Create interaction entries in database via create_interaction helper",
-              "Build a dependency graph understanding for the project"
+              "Record dependencies via add_interactions (batch) — pass tuples of (source_function_id, target_function_id, interaction_type, description)",
+              "Link types to the functions that consume or produce them via add_types_functions",
+              "Assign files to modules via add_files_to_module and to flows via add_file_flows — a cataloged file with no flow is architecturally disconnected"
             ],
-            "use_helpers": ["create_interaction"]
+            "use_helpers": [
+              "add_interactions",
+              "add_types_functions",
+              "add_files_to_module",
+              "add_file_flows"
+            ]
           }
         },
         {
@@ -3663,7 +3701,12 @@
               "If no more stages: route to project_completion_check (project may be complete)",
               "Log milestone transition in notes"
             ],
-            "use_helpers": ["update_milestone_status", "create_task", "create_item"]
+            "use_helpers": [
+              "update_milestone",
+              "add_task",
+              "add_item",
+              "add_items"
+            ]
           }
         },
         {

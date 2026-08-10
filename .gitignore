@@ -45,6 +45,12 @@ docs/
 CLAUDE.md
 .claude/
 
+# AIMFP self-tracking: the databases and blueprint ARE committed on purpose, so a
+# fresh clone keeps its tracking. Only the churny runtime noise is excluded.
+.aimfp-project/backups/
+.aimfp-project/watchdog/
+.aimfp-project/logs/
+
 # MCPB
 aimfp.mcpb
 .mcpbignore

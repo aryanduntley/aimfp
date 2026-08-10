@@ -207,6 +207,22 @@ BEGIN
 END;
 
 -- ===============================================================
+-- Acknowledged Notices
+-- Per-project record of which system_notices (aimfp_core.db) have already
+-- been delivered, so a one-time announcement fires once and never nags again.
+--
+-- Only the acknowledgement lives here; the notice text ships in the read-only
+-- core database. A row's presence is what suppresses the notice, so deleting
+-- a row deliberately re-arms it.
+-- ===============================================================
+
+CREATE TABLE IF NOT EXISTS acknowledged_notices (
+    notice_key TEXT PRIMARY KEY,                -- Matches system_notices.notice_key
+    acknowledged_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    outcome TEXT                                -- Optional: what the user decided
+);
+
+-- ===============================================================
 -- Schema Version Tracking
 -- ===============================================================
 
@@ -216,4 +232,4 @@ CREATE TABLE IF NOT EXISTS schema_version (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.2');
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.3');

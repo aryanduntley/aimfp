@@ -238,6 +238,14 @@
           "is_required": false,
           "parameters_mapping": {},
           "description": "Create items for tasks during decomposition if item-level granularity is identified"
+        },
+        {
+          "directive_name": "project_progression",
+          "execution_context": "create_first_milestone_task",
+          "sequence_order": 3,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Add a single work item under the new task"
         }
       ],
       "implementation_notes": [
@@ -302,6 +310,14 @@
           "is_required": false,
           "parameters_mapping": {},
           "description": "Batch-create items for tasks during decomposition when multiple items are identified at once"
+        },
+        {
+          "directive_name": "project_progression",
+          "execution_context": "create_first_milestone_task",
+          "sequence_order": 3,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Batch-add work items under the new task in one call"
         }
       ],
       "implementation_notes": [
@@ -602,6 +618,38 @@
           "is_required": true,
           "parameters_mapping": {},
           "description": "Log sidequest outcome and lessons learned to notes table - captures exploratory work results for future reference"
+        },
+        {
+          "directive_name": "project_progression",
+          "execution_context": "reopen_post_completion_path",
+          "sequence_order": 2,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Log an evolution note recording why a post-completion path was reopened"
+        },
+        {
+          "directive_name": "project_error_handling",
+          "execution_context": "apply_resolution",
+          "sequence_order": 2,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Log the roadblock and the resolution applied, for transparency"
+        },
+        {
+          "directive_name": "project_performance_summary",
+          "execution_context": "record_success_rate",
+          "sequence_order": 2,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Persist the rolling success/failure summary as an audit note"
+        },
+        {
+          "directive_name": "project_user_referral",
+          "execution_context": "prompt_user",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Log the clarification request and the user response for later review"
         }
       ]
     },
@@ -681,6 +729,14 @@
           "is_required": true,
           "parameters_mapping": {},
           "description": "Read logged metrics from notes - retrieves historical metric data for analysis"
+        },
+        {
+          "directive_name": "project_performance_summary",
+          "execution_context": "summarize_recent_runs",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Read recent directive outcome notes to summarize successes, retries, and failures"
         }
       ]
     },
@@ -767,6 +823,14 @@
           "is_required": false,
           "parameters_mapping": {},
           "description": "Search for specific metrics by keyword - targeted metric retrieval from notes"
+        },
+        {
+          "directive_name": "project_error_handling",
+          "execution_context": "check_roadblocks",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Look for a previously stored resolution before prompting the user"
         }
       ]
     },
@@ -844,7 +908,16 @@
       "is_sub_helper": false,
       "return_statements": [],
       "target_database": "project",
-      "used_by_directives": []
+      "used_by_directives": [
+        {
+          "directive_name": "project_error_handling",
+          "execution_context": "apply_resolution",
+          "sequence_order": 3,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Mark a roadblock note completed or obsolete once resolved"
+        }
+      ]
     },
     {
       "name": "delete_note",

@@ -64,6 +64,14 @@
           "is_required": true,
           "parameters_mapping": {},
           "description": "Atomic subtask creation - creates focused, high-priority subtask and pauses parent"
+        },
+        {
+          "directive_name": "project_add_path",
+          "execution_context": "insert_subtask",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Insert a subtask under an existing parent task"
         }
       ],
       "implementation_notes": [
@@ -693,7 +701,7 @@
       ],
       "implementation_notes": [
         "Returns: Array of file objects",
-        "Chains: retrieve sidequest flows \u2192 get file IDs from flows \u2192 retrieve file details"
+        "Chains: retrieve sidequest flows → get file IDs from flows → retrieve file details"
       ]
     },
     {

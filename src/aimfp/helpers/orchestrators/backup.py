@@ -29,6 +29,11 @@ from ._common import (
 )
 
 
+# Days since the last backup before a scheduled backup is reported due, used when
+# the backup_interval_days setting is absent (projects predating the setting).
+DEFAULT_BACKUP_INTERVAL_DAYS: int = 7
+
+
 # ============================================================================
 # Public Entry Point (called by aimfp_run)
 # ============================================================================
@@ -83,6 +88,138 @@ def check_and_run_backup(project_root: Optional[str] = None) -> Dict[str, Any]:
         }
 
 
+def create_project_backup(project_root: Optional[str] = None) -> Result:
+    """
+    Create a backup of .aimfp-project/ right now, ignoring any threshold.
+
+    The on-demand counterpart to the automatic inactivity check. Zips everything
+    in .aimfp-project/ except backups/ and watchdog/, adds a generated
+    backup_summary.md, and rotates old archives per the backup_count setting.
+
+    Args:
+        project_root: Explicit root for embedding hosts; defaults to the
+            cached/discovered session root
+
+    Returns:
+        Result with data={created, backup_path, backup_name, rotated_count}
+    """
+    try:
+        root = project_root or resolve_project_root()
+        outcome = _create_project_backup(root)
+        if not outcome.get('created'):
+            return Result(
+                success=False,
+                error=outcome.get('error') or 'Backup failed for an unknown reason',
+            )
+        return Result(success=True, data=outcome)
+    except Exception as e:
+        return Result(success=False, error=f"Backup failed: {str(e)}")
+
+
+def check_scheduled_backup_due(project_root: Optional[str] = None) -> Result:
+    """
+    Effect: Check whether a scheduled backup is overdue, based on time since the
+    LAST BACKUP.
+
+    Distinct from check_backup_due, which measures inactivity — time since the
+    last project *change*. That inactivity rule only ever fires on dormant
+    projects, so an actively developed project (the one with the most to lose)
+    would never be backed up by it. This rule closes that gap.
+
+    Governed by the backup_interval_days setting; 0 disables scheduling entirely.
+
+    When the setting is ABSENT the default is DEFAULT_BACKUP_INTERVAL_DAYS, not 0.
+    Projects initialized before this setting existed never receive the new default
+    row — migrations rebuild from schema and transfer existing data, so a new seed
+    row does not reach them. Defaulting an absent setting to 0 would leave every
+    pre-existing project silently unprotected. An explicit 0 still disables.
+
+    Args:
+        project_root: Explicit root for embedding hosts; defaults to the
+            cached/discovered session root
+
+    Returns:
+        Result with data={scheduled, due, interval_days, last_backup,
+        days_since_backup, backup_count}
+    """
+    try:
+        root = project_root or resolve_project_root()
+        settings = _get_backup_settings_safe(root)
+
+        raw = settings.get('backup_interval_days')
+        try:
+            interval = DEFAULT_BACKUP_INTERVAL_DAYS if raw is None else int(raw)
+        except (TypeError, ValueError):
+            interval = DEFAULT_BACKUP_INTERVAL_DAYS
+
+        if interval <= 0:
+            return Result(success=True, data={
+                'scheduled': False,
+                'due': False,
+                'interval_days': 0,
+                'last_backup': None,
+                'days_since_backup': None,
+                'backup_count': 0,
+            })
+
+        backups_dir = os.path.join(get_aimfp_project_dir(root), BACKUPS_DIR_NAME)
+        newest, count = _latest_backup(backups_dir)
+
+        if newest is None:
+            return Result(success=True, data={
+                'scheduled': True,
+                'due': True,
+                'interval_days': interval,
+                'last_backup': None,
+                'days_since_backup': None,
+                'backup_count': 0,
+            })
+
+        name, mtime = newest
+        days_since = (datetime.now(timezone.utc) - mtime).days
+        return Result(success=True, data={
+            'scheduled': True,
+            'due': days_since >= interval,
+            'interval_days': interval,
+            'last_backup': name,
+            'days_since_backup': days_since,
+            'backup_count': count,
+        })
+
+    except Exception as e:
+        return Result(success=False, error=f"Scheduled backup check failed: {str(e)}")
+
+
+def _latest_backup(backups_dir: str) -> tuple:
+    """
+    Effect: Find the most recent backup archive and the total archive count.
+
+    Args:
+        backups_dir: Directory holding backup zips
+
+    Returns:
+        ((name, modified datetime) or None, total count)
+    """
+    if not os.path.isdir(backups_dir):
+        return (None, 0)
+
+    entries = [
+        f for f in os.listdir(backups_dir)
+        if f.startswith("aimfp-backup-") and f.endswith(".zip")
+    ]
+    if not entries:
+        return (None, 0)
+
+    newest = max(
+        entries,
+        key=lambda f: os.path.getmtime(os.path.join(backups_dir, f)),
+    )
+    mtime = datetime.fromtimestamp(
+        os.path.getmtime(os.path.join(backups_dir, newest)), timezone.utc
+    )
+    return ((newest, mtime), len(entries))
+
+
 def check_backup_due(project_root: Optional[str] = None) -> Result:
     """
     Effect: Check whether the inactivity backup is due WITHOUT creating one.
@@ -126,8 +263,14 @@ def _get_backup_settings_safe(project_root: str) -> Dict[str, str]:
     """
     Effect: Read backup settings from user_preferences.db.
 
-    Returns dict with keys: backup_count, backup_duration, backup_path.
-    Falls back to defaults if settings not found or DB inaccessible.
+    Reads every backup_* key rather than a fixed list. An explicit IN (...) list
+    silently ignores any setting added later — backup_interval_days was invisible
+    to this reader for exactly that reason, so the setting appeared to have no
+    effect no matter what the user set it to.
+
+    Returns a dict of all backup_* settings, with defaults filled in for the
+    long-standing three. Keys absent from the DB are simply absent from the
+    result, so callers can distinguish "unset" from "set to zero".
     """
     defaults = {
         'backup_count': '3',
@@ -142,7 +285,7 @@ def _get_backup_settings_safe(project_root: str) -> Dict[str, str]:
         try:
             cursor = conn.execute(
                 "SELECT setting_key, setting_value FROM user_settings "
-                "WHERE setting_key IN ('backup_count', 'backup_duration', 'backup_path')"
+                "WHERE setting_key LIKE 'backup%'"
             )
             for row in cursor.fetchall():
                 defaults[row['setting_key']] = row['setting_value']

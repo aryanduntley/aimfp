@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "aimfp": {
+      "type": "stdio",
+      "command": "python3",
+      "args": [
+        "-m",
+        "aimfp"
+      ],
+      "env": {}
+    },
+    "intercommaimfp": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/home/eveningb4dawn/Desktop/Projects/InterCommAIMFP/dist/mcp-entry.js"
+      ],
+      "env": {}
+    }
+  }
+}

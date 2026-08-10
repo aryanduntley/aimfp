@@ -12,6 +12,10 @@ Load via: get_supportive_context(variant='coding')
   Skip ID naming for: __init__.py, .db, pyproject.toml, setup.py, conftest.py.
   Private functions (_underscore): do NOT reserve or track.
 
+  EXISTING code (adoption, not authoring) → single-phase, NOT reserve/finalize:
+  scan_source_tree → catalog_files → catalog_functions/catalog_types → same linking tools.
+  See project_catalog directive.
+
 2. DRY PRINCIPLE & MODULAR REUSE
 
   Functions are puzzle pieces — self-contained, reusable, organized by domain.

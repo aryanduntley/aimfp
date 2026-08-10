@@ -30,6 +30,7 @@ This version aligns with the full schema (v2.0) for aimfp_core.db.
 
 import os
 import re
+import sys
 import json
 import sqlite3
 from typing import List, Dict, Any, Set, Tuple
@@ -88,6 +89,9 @@ DIRECTIVE_FLOW_FILES = [
     "directive_flow_project.json",
     "directive_flow_user_preferences.json"
 ]
+
+# One-time system notices in dev/notices-json/
+NOTICES_DIR = os.path.join(SCRIPT_DIR, "notices-json")
 
 # Migrations in dev/migrations/
 MIGRATIONS_DIR = os.path.join(SCRIPT_DIR, "migrations")
@@ -1032,6 +1036,9 @@ def sync_directives():
     # Sync directive flows
     sync_directive_flows(conn)
 
+    # Sync one-time system notices
+    notice_count = sync_system_notices(conn)
+
     if DRY_RUN:
         conn.rollback()
         print("🧪 Dry-run mode: no DB changes committed.")
@@ -1042,6 +1049,7 @@ def sync_directives():
     print(f"✅ Categories: {len(categories)}")
     print(f"✅ Intent Keywords: {len(intent_keywords)}")
     print(f"✅ Helpers: {len(all_helpers)}")
+    print(f"✅ System notices: {notice_count}")
 
     os.makedirs(os.path.dirname(SYNC_REPORT_FILE), exist_ok=True)
     with open(SYNC_REPORT_FILE, "w", encoding="utf-8") as f:
@@ -1057,6 +1065,73 @@ def sync_directives():
 # ===================================
 # INTEGRITY VALIDATION LAYER
 # ===================================
+
+def sync_system_notices(conn) -> int:
+    """
+    Load one-time system notices from dev/notices-json/*.json into system_notices.
+
+    Notices are replaced wholesale on every sync, exactly like directives and
+    helpers — the JSON is the source of truth. Per-project acknowledgements live
+    in user_preferences.db and are untouched by this, so re-syncing never re-fires
+    a notice a user has already seen.
+
+    Returns the number of notices loaded.
+    """
+    if not os.path.isdir(NOTICES_DIR):
+        return 0
+
+    notices = []
+    for path in sorted(Path(NOTICES_DIR).glob("*.json")):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"⚠️  Could not parse {path.name}: {e}")
+            continue
+        notices.extend(data.get("notices", []))
+
+    if not notices:
+        return 0
+
+    print("\n📢 Syncing one-time system notices...")
+    cur = conn.cursor()
+    seen = set()
+
+    for notice in notices:
+        key = notice.get("notice_key")
+        if not key:
+            print("⚠️  Notice missing notice_key — skipped")
+            continue
+        if key in seen:
+            print(f"⚠️  Duplicate notice_key '{key}' — later definition wins")
+        seen.add(key)
+
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO system_notices
+                (notice_key, title, message, severity, action_required,
+                 applies_to_db, applies_from_version, introduced_in)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                key,
+                notice.get("title", ""),
+                notice.get("message", ""),
+                notice.get("severity", "info"),
+                1 if notice.get("action_required") else 0,
+                notice.get("applies_to_db"),
+                notice.get("applies_from_version"),
+                notice.get("introduced_in"),
+            ),
+        )
+        scope = (
+            f"{notice.get('applies_to_db')} >= {notice.get('applies_from_version')}"
+            if notice.get("applies_to_db") else "all projects"
+        )
+        print(f"   • {key} ({scope})")
+
+    return len(seen)
+
 
 def validate_integrity(conn):
     """Runs a suite of consistency checks after sync."""
@@ -1099,6 +1174,81 @@ def validate_integrity(conn):
 
     if sub_helper_count > 0:
         print(f"   ✓ Found {sub_helper_count} sub-helpers (is_sub_helper=1)")
+
+    # 4b. Verify every is_tool=1 helper has a dispatch entry in the MCP registry.
+    # server.py advertises tools from this DB, but dispatch does TOOL_REGISTRY[name] —
+    # so a helper marked is_tool=1 with no registry entry is visible to the AI and
+    # raises KeyError when called. That drift shipped undetected once
+    # (remove_file_from_flow); this check makes it impossible to ship again.
+    try:
+        sys.path.insert(0, os.path.join(PROJECT_ROOT, "src"))
+        from aimfp.mcp_server.registry import TOOL_REGISTRY  # noqa: E402
+
+        cur.execute("SELECT name FROM helper_functions WHERE is_tool = 1;")
+        db_tools = {row["name"] for row in cur.fetchall()}
+        registered = set(TOOL_REGISTRY)
+
+        unregistered = sorted(db_tools - registered)
+        orphaned = sorted(registered - db_tools)
+
+        if unregistered:
+            issues.append(
+                "⚠️ is_tool=1 in DB but NOT in TOOL_REGISTRY (AI can see them; "
+                f"calling raises KeyError): {', '.join(unregistered)}"
+            )
+        if orphaned:
+            issues.append(
+                "⚠️ In TOOL_REGISTRY but not is_tool=1 in DB (unreachable dead "
+                f"entries): {', '.join(orphaned)}"
+            )
+        if not unregistered and not orphaned:
+            print(f"   ✓ Registry matches DB exactly ({len(registered)} tools dispatchable)")
+    except ImportError as e:
+        issues.append(f"⚠️ Could not import TOOL_REGISTRY to cross-check tools: {e}")
+    finally:
+        if sys.path and sys.path[0] == os.path.join(PROJECT_ROOT, "src"):
+            sys.path.pop(0)
+
+    # 4c. Verify every helper named in a directive's use_helpers array actually
+    # exists. Unlike used_by_directives (which becomes the FK-backed
+    # directive_helpers junction and therefore cannot reference a missing helper),
+    # use_helpers is free text inside the workflow JSON and is never checked — so
+    # it rots silently. Three dead names sat in project_catalog and three more in
+    # project_progression, naming helpers that were renamed create_* -> add_*.
+    def _collect_use_helpers(node, acc):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ('use_helpers', 'helpers') and isinstance(value, list):
+                    acc.update(h for h in value if isinstance(h, str))
+                else:
+                    _collect_use_helpers(value, acc)
+        elif isinstance(node, list):
+            for item in node:
+                _collect_use_helpers(item, acc)
+
+    cur.execute("SELECT name FROM helper_functions;")
+    known_helpers = {row["name"] for row in cur.fetchall()}
+    cur.execute("SELECT name, workflow FROM directives;")
+
+    dangling = {}
+    for row in cur.fetchall():
+        try:
+            workflow = json.loads(row['workflow']) if isinstance(row['workflow'], str) else row['workflow']
+        except (json.JSONDecodeError, TypeError):
+            continue
+        named = set()
+        _collect_use_helpers(workflow, named)
+        for helper in sorted(named - known_helpers):
+            dangling.setdefault(helper, []).append(row['name'])
+
+    if dangling:
+        for helper, directive_names in sorted(dangling.items()):
+            issues.append(
+                f"⚠️ Directive use_helpers names '{helper}', which is not a real "
+                f"helper (referenced by: {', '.join(directive_names)})."
+            )
+    else:
+        print("   ✓ All use_helpers references resolve to real helpers")
 
     # 5. Verify directive_helpers junction table has entries
     cur.execute("SELECT COUNT(*) as mapping_count FROM directive_helpers;")

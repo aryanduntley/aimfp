@@ -26,7 +26,9 @@
         "NOTES REVIEW: Before starting any task or user request, search_notes(search_string=<relevant keywords>, exclude_note_types=['completed','obsolete']) for prior decisions, deferred work, or warnings. Empty = proceed. Hits = review before coding. When a reviewed note is already handled, update_note(id, note_type='completed' or 'obsolete') to keep notes clean.",
         "TRACKING REMINDER: After ANY code change (even small fixes, param tweaks, refactors), review whether the change is database-worthy: file modified? function added/changed? parameters or return types altered? If YES — track immediately. Do not skip, do not ask, do not defer. 'Small' does not mean 'untracked.'",
         "MODULES: Review modules_summary[] for code boundary awareness. Each module has name, path, purpose, and file_count. When modifying files, respect module boundaries — use get_module_for_file() to check membership and get_module_dependencies() to understand cross-module impacts.",
-        "WATCHDOG REMINDERS: If watchdog.reminders is non-empty, review and handle each finding (deleted files, unregistered files, missing functions). Once all reminders have been addressed, call clear_watchdog() to acknowledge and clear them. Reminders persist until cleared — do not ignore them."
+        "WATCHDOG REMINDERS: If watchdog.reminders is non-empty, review and handle each finding (deleted files, unregistered files, missing functions). Once all reminders have been addressed, call clear_watchdog() to acknowledge and clear them. Reminders persist until cleared — do not ignore them.",
+        "SCHEDULED BACKUP: if data.scheduled_backup.due is true, PROMPT the user to create a backup (say how many days since data.scheduled_backup.last_backup, or that none exists). Call create_project_backup only if they agree — never back up silently. Cadence is the backup_interval_days setting; 0 disables these prompts.",
+        "RELEASE NOTICES: if data.notices is present, this project has never been shown these. Deliver each message in your own words. For any with action_required=true, ASK the question and WAIT for the answer — then apply it and call acknowledge_notice(notice_key, outcome='...'). The key is absent when nothing is pending, so its presence always means action."
       ],
       "implementation_notes": [
         "Returns: If is_new_session=true → bundles {status, user_settings, fp_directive_index, all_directive_names[], modules_summary[], infrastructure_data, guidance, watchdog: {started, start_error, status, reminders[], notice}}",
@@ -170,6 +172,14 @@
           "is_required": false,
           "parameters_mapping": {},
           "description": "Called by aimfp_run when is_new_session=true - provides comprehensive status for fresh context"
+        },
+        {
+          "directive_name": "project_progression",
+          "execution_context": "assess_progression_state",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Read current path/milestone/task state before deciding which progression branch applies"
         }
       ]
     },
@@ -531,39 +541,6 @@
             "flow_id": "current_flow_id_from_flows_loop"
           },
           "description": "Get all files implementing a flow with embedded functions - used to build dependency map showing file-flow-function relationships"
-        }
-      ]
-    },
-    {
-      "name": "create_project_backup",
-      "file_path": "helpers/orchestrators/backup.py",
-      "parameters": [],
-      "purpose": "Automated backup sub-helper. Checks project inactivity against backup_duration setting, creates zip backup of .aimfp-project/ (excluding backups/ and watchdog/), generates backup_summary.md, and rotates old backups per backup_count setting.",
-      "error_handling": "Returns {checked: true, triggered: false, reason: str} on any failure. Never throws — all errors are caught and returned as reason strings.",
-      "is_tool": false,
-      "is_sub_helper": true,
-      "return_statements": [],
-      "implementation_notes": [
-        "Sub-helper: not exposed as MCP tool, called only by aimfp_run orchestrator during is_new_session=true",
-        "Reads backup settings from user_preferences.db user_settings table: backup_count (default 3), backup_duration (default 30 days), backup_path (default .aimfp-project)",
-        "Queries last activity timestamp across all project.db tables (notes, files, functions, tasks, milestones, subtasks, sidequests, project)",
-        "If last_activity older than backup_duration days: creates zip backup",
-        "Zip contents: all .aimfp-project/ files EXCEPT backups/ and watchdog/ directories + auto-generated backup_summary.md",
-        "Backup naming: aimfp-backup-YYYY-MM-DD.zip (or aimfp-backup-YYYY-MM-DD-HH-MM.zip if same-day duplicate)",
-        "Rotation: keeps only backup_count most recent zip files, deletes oldest",
-        "Returns: {checked: true, triggered: bool, backup_result: {created, backup_path, backup_name, rotated_count, error} or null, reason: str}"
-      ],
-      "target_database": "multi_db",
-      "used_by_directives": [
-        {
-          "directive_name": "aimfp_run",
-          "execution_context": "automated_backup_on_new_session",
-          "sequence_order": 10,
-          "is_required": false,
-          "parameters_mapping": {
-            "project_root": "from discovered project root"
-          },
-          "description": "Sub-helper called by aimfp_run during is_new_session=true to automatically backup .aimfp-project/ when project has been inactive beyond the configured threshold"
         }
       ]
     },

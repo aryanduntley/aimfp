@@ -18,7 +18,7 @@ import shutil
 import sqlite3
 import subprocess
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 
 from ._common import (
     _open_project_connection,
@@ -727,6 +727,16 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: bool = True) -> Resu
         # Automated backup check: trigger if project inactive beyond threshold
         backup_data = check_and_run_backup()
 
+        # Scheduled backup check: report (do NOT auto-run) when the interval since
+        # the last backup has elapsed. The inactivity rule above only fires on
+        # dormant projects, so without this an actively developed project is never
+        # backed up. Reported rather than run so the AI surfaces it to the user.
+        scheduled_backup = _check_scheduled_backup_safe()
+
+        # One-time release notices: already filtered to unacknowledged, so this is
+        # None in the steady state and the key is simply absent from the payload.
+        pending_notices = _get_pending_notices_safe()
+
         # Migration check: detect pending schema migrations
         migration_data = _check_pending_migrations(project_root, AIMFP_PROJECT_DIR)
 
@@ -745,6 +755,8 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: bool = True) -> Resu
                 'watchdog': watchdog_data,
                 'case_2_context': case_2_context,
                 'backup': backup_data,
+                'scheduled_backup': scheduled_backup,
+                'notices': pending_notices,
                 'migration': migration_data,
                 'deferred_notes': deferred_notes,
             },
@@ -753,6 +765,48 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: bool = True) -> Resu
 
     except Exception as e:
         return Result(success=False, error=f"aimfp_run failed: {str(e)}")
+
+
+def _check_scheduled_backup_safe() -> Optional[Dict[str, Any]]:
+    """
+    Effect: Run the scheduled-backup check, degrading to None on any failure.
+
+    Session start must never fail because of a backup check, so every error is
+    swallowed — a missing backup notice is a far smaller problem than a session
+    that will not open.
+
+    Returns:
+        The check payload, or None when disabled or unavailable
+    """
+    try:
+        from .backup import check_scheduled_backup_due
+        result = check_scheduled_backup_due()
+        if not result.success or not result.data:
+            return None
+        return result.data if result.data.get('scheduled') else None
+    except Exception:
+        return None
+
+
+def _get_pending_notices_safe() -> Optional[List[Dict[str, Any]]]:
+    """
+    Effect: Fetch unacknowledged release notices, degrading to None on any failure.
+
+    Returns None rather than an empty list when nothing is pending, so the payload
+    carries no key at all in the steady state — an always-present empty field is
+    noise the AI has to read past on every single session.
+
+    Returns:
+        List of pending notices, or None when there are none or the lookup failed
+    """
+    try:
+        from .notices import get_pending_notices
+        result = get_pending_notices()
+        if not result.success or not result.notices:
+            return None
+        return list(result.notices)
+    except Exception:
+        return None
 
 
 def _build_case_2_context(status_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:

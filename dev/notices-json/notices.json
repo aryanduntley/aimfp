@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "One-time announcements delivered to the AI on session start, at most once per project.",
+    "",
+    "Use these when a release changes behavior or adds a setting the user should know about —",
+    "something a changelog would cover but nobody reads. The AI surfaces the message, acts on it,",
+    "then acknowledges it so it never fires again for that project.",
+    "",
+    "Fields:",
+    "  notice_key           stable id, never reuse or rename (the acknowledgement is keyed on it)",
+    "  title                one-line summary",
+    "  message              exactly what the AI should tell or ask the user",
+    "  severity             'info' or 'warning'",
+    "  action_required      true = AI must prompt and wait; false = inform only",
+    "  applies_to_db        pin to a migration: 'user_preferences' | 'project' | 'user_directives'",
+    "  applies_from_version fires only once applies_to_db has reached this version",
+    "  introduced_in        package version that added it (informational)",
+    "",
+    "Leave applies_to_db and applies_from_version null to fire for every project regardless of",
+    "schema version. Set both to tie a notice to the migration that introduced the change."
+  ],
+  "notices": [
+    {
+      "notice_key": "backup_interval_intro",
+      "title": "Scheduled backups are now on by default (every 7 days)",
+      "message": "AIMFP now checks on session start whether it has been more than backup_interval_days since the last backup, and asks before creating one. The default is every 7 days.\n\nThis is new because the pre-existing check only fired after 30 days of INACTIVITY — meaning an actively developed project was never backed up, which is backwards from what backups are for.\n\nASK THE USER NOW: does a 7-day backup cadence suit this project, or would they prefer a different interval or none at all? Then apply their answer with update_user_setting('backup_interval_days', '<days>') — use '0' to turn scheduled backups off entirely. If they have no preference, leave it at 7 and say so.\n\nBackups capture .aimfp-project/ state (tracking databases and the blueprint), not source code — git covers that. Only backup_count archives are kept, oldest rotated out.",
+      "severity": "info",
+      "action_required": true,
+      "applies_to_db": "user_preferences",
+      "applies_from_version": "1.3",
+      "introduced_in": "1.48.0"
+    }
+  ]
+}

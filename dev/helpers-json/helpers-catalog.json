@@ -1,0 +1,190 @@
+{
+  "helpers": [
+    {
+      "name": "scan_source_tree",
+      "file_path": "helpers/catalog/scan.py",
+      "parameters": [
+        {
+          "name": "module_path",
+          "type": "string",
+          "required": false,
+          "description": "Project-relative subtree to narrow the scan to (e.g. 'src/aimfp/helpers/project'). Defaults to the whole source_directory. Use this to adopt a large codebase one module at a time."
+        },
+        {
+          "name": "include_private",
+          "type": "boolean",
+          "required": false,
+          "default": true,
+          "description": "Include underscore-prefixed functions and types"
+        },
+        {
+          "name": "include_nested",
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "description": "Include functions defined inside other functions"
+        },
+        {
+          "name": "untracked_only",
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "description": "Report only files with no existing database record. Use on re-scans to see just what is new."
+        }
+      ],
+      "purpose": "Read-only inventory of an existing codebase for adoption into AIMFP tracking. Walks source_directory applying the watchdog's exact exclusion stack (built-in exclusions + watchdog_excluded_* settings + .watchdogignore), extracts signatures, and reports tracked vs untracked. Writes nothing — review the inventory, then register with catalog_files/catalog_functions/catalog_types.",
+      "error_handling": "Returns error if the scan path does not exist. Files that fail to parse are reported in parse_failures rather than aborting the scan; unreadable or unsupported-extension files are reported in skipped_unsupported.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "SCAN IS READ-ONLY — nothing was written. Review the inventory, enrich purposes where extraction left them null, then register via catalog_files first (functions and types need file_id).",
+        "ORDER MATTERS: catalog_files → capture returned IDs → catalog_functions and catalog_types using those file_ids → then compose the existing batch tools: add_files_to_module, add_file_flows, add_interactions, add_types_functions.",
+        "FIDELITY: files with fidelity='full' (Python) carry real parameters and returns. Files with fidelity='names_only' carry names and line numbers only — you MUST supply purpose, parameters, and returns yourself before cataloging, or the entries will be invisible to future lookup.",
+        "Large result sets: narrow with module_path and catalog one module at a time rather than registering hundreds of functions in a single pass.",
+        "If total_files is large and untracked_files equals it, this is a first-time adoption. Confirm the codebase is FP-compliant before cataloging — AIMFP rejects OOP codebases, and cataloging one commits you to tracking code the FP directives will fight."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_catalog",
+          "execution_context": "scan_all_source_files",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Build the file inventory with extracted signatures before any registration"
+        }
+      ]
+    },
+    {
+      "name": "scan_call_graph",
+      "file_path": "helpers/catalog/callgraph.py",
+      "parameters": [
+        {
+          "name": "module_path",
+          "type": "string",
+          "required": false,
+          "description": "Project-relative subtree to limit analysis to. Only the CALLING side is narrowed — functions outside it still resolve as targets, so cross-module edges are never lost."
+        }
+      ],
+      "purpose": "Build the interaction graph for already-cataloged functions: which tracked function calls which. Read-only — returns tuples shaped for add_interactions, which does the writing. Run AFTER catalog_files and catalog_functions. Resolution is conservative and strictest-first (explicit import, then same-file, then module alias, then project-wide unique name), following re-export chains through modules that define no functions of their own. Ambiguous targets are dropped and counted rather than guessed at, because a wrong edge sends future refactors chasing dependencies that do not exist.",
+      "error_handling": "Returns error if no tracked functions exist (catalog files and functions first). Files that fail to parse are skipped rather than aborting the scan. Non-Python files are skipped — call graph extraction requires ast.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "READ-ONLY — nothing was written. Pass the returned 'interactions' straight to add_interactions to persist the graph. Batch in chunks of a few hundred for large codebases.",
+        "Review 'resolved_by': edges resolved by 'unique_name' are the weakest class (matched only because the name happens to be unique project-wide). A high 'unique_name' share relative to 'import'/'local'/'reexport' suggests imports the resolver could not follow — worth a spot check.",
+        "'unresolved_count' greater than zero means real call edges were dropped as ambiguous. Inspect 'unresolved_sample' and add those interactions manually if they matter.",
+        "Python only. A polyglot codebase gets no edges for its non-Python files — record those interactions manually or leave the graph partial knowingly.",
+        "After writing interactions, link types to functions via add_types_functions to complete the index."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_catalog",
+          "execution_context": "map_interactions",
+          "sequence_order": 5,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Recover the dependency graph after files and functions are registered"
+        }
+      ]
+    },
+    {
+      "name": "catalog_files",
+      "file_path": "helpers/catalog/register.py",
+      "parameters": [
+        {
+          "name": "files",
+          "type": "array",
+          "required": true,
+          "description": "Array of {name, path, language} objects. 'path' is project-relative and is the identity key."
+        }
+      ],
+      "purpose": "Register existing files in project.db in a single phase. For code already on disk: rows are written finalized (is_reserved=0) with ID naming off, because existing filenames are fixed and cannot carry an _id_ suffix. Use INSTEAD OF reserve_files/finalize_files when adopting an existing codebase. Idempotent on path.",
+      "error_handling": "Returns error on an empty list or a record missing 'path'. Atomic — all records commit or none do. An already-tracked path is updated in place, never duplicated.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Files registered. IDs are returned in input order — map them back to your scan results to build the file_id for each function and type.",
+        "NEXT: catalog_functions and catalog_types for these files. A cataloged file with 0 tracked functions is incomplete unless it is data-only or config-only.",
+        "THEN: assign to modules via add_files_to_module and to flows via add_file_flows. A file with 0 flow assignments is architecturally disconnected.",
+        "created_count vs updated_count tells you whether this was a first catalog or a re-scan refresh."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_catalog",
+          "execution_context": "register_files_in_database",
+          "sequence_order": 2,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Single-phase registration of scanned files, replacing the reserve/finalize pair for existing code"
+        }
+      ]
+    },
+    {
+      "name": "catalog_functions",
+      "file_path": "helpers/catalog/register.py",
+      "parameters": [
+        {
+          "name": "functions",
+          "type": "array",
+          "required": true,
+          "description": "Array of {name, file_id, purpose, parameters, returns} objects. 'parameters' is a list of param dicts and 'returns' a dict; both are JSON-encoded on write."
+        }
+      ],
+      "purpose": "Register existing functions in project.db in a single phase. Use INSTEAD OF reserve_functions/finalize_functions when adopting an existing codebase. Idempotent on (file_id, name), so a re-scan after source changes refreshes signatures instead of duplicating them.",
+      "error_handling": "Returns error on an empty list or a record missing 'name' or 'file_id'. Atomic — all records commit or none do.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Functions registered. Verify purpose, parameters, and returns are populated — entries with null fields cannot be looked up by signature in future sessions and reduce the DB to a name index.",
+        "BLOCKED until interactions are mapped: for every cataloged function that calls another tracked function, record it via add_interactions. A cataloged codebase with zero interactions has no dependency graph, which is most of the value.",
+        "TYPES: link cataloged functions to the types they consume or produce via add_types_functions.",
+        "Functions extracted at fidelity='names_only' arrive with empty parameters and returns — fill these in rather than leaving them null."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_catalog",
+          "execution_context": "scan_functions_per_file",
+          "sequence_order": 3,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Single-phase registration of extracted function signatures"
+        }
+      ]
+    },
+    {
+      "name": "catalog_types",
+      "file_path": "helpers/catalog/register.py",
+      "parameters": [
+        {
+          "name": "types",
+          "type": "array",
+          "required": true,
+          "description": "Array of {name, file_id, definition, description} objects. 'definition' is a dict describing the type shape and is JSON-encoded on write."
+        }
+      ],
+      "purpose": "Register existing type definitions in project.db in a single phase. Use INSTEAD OF reserve_types/finalize_types when adopting an existing codebase. Idempotent on (file_id, name).",
+      "error_handling": "Returns error on an empty list, a record missing 'name', or a record with neither 'definition' nor 'definition_json'. Atomic — all records commit or none do.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Types registered. Verify definition and description are populated — types are the most frequently looked-up entities, and incomplete entries force the full file reads the DB exists to eliminate.",
+        "NEXT: link these types to the functions that use them via add_types_functions, so 'what functions use TypeX?' and refactoring impact analysis work."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_catalog",
+          "execution_context": "scan_functions_per_file",
+          "sequence_order": 4,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Single-phase registration of extracted type definitions"
+        }
+      ]
+    }
+  ]
+}

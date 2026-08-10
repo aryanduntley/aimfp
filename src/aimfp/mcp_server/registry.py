@@ -4,7 +4,7 @@ AIMFP MCP Server - Tool Registry
 Static dict mapping tool names to (module_path, function_name) tuples.
 Uses importlib for lazy loading — modules are only imported on first call.
 
-263 is_tool=true helpers registered. Generated from aimfp_core.db.
+275 is_tool=true helpers registered. Generated from aimfp_core.db.
 
 Why static, not DB-driven:
 - Predictable tool list, no runtime DB dependency for tool listing
@@ -91,6 +91,15 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "aimfp_status": ("aimfp.helpers.orchestrators.entry_points", "aimfp_status"),
     # helpers/orchestrators/migration.py (1 tool)
     "migrate_databases": ("aimfp.helpers.orchestrators.migration", "migrate_databases"),
+    # helpers/orchestrators/backup.py (2 tools)
+    "create_project_backup": ("aimfp.helpers.orchestrators.backup", "create_project_backup"),
+    "check_scheduled_backup_due": ("aimfp.helpers.orchestrators.backup", "check_scheduled_backup_due"),
+    # helpers/orchestrators/notices.py (2 tools)
+    "get_pending_notices": ("aimfp.helpers.orchestrators.notices", "get_pending_notices"),
+    "acknowledge_notice": ("aimfp.helpers.orchestrators.notices", "acknowledge_notice"),
+    # helpers/orchestrators/restore.py (2 tools)
+    "list_project_backups": ("aimfp.helpers.orchestrators.restore", "list_project_backups"),
+    "restore_project_backup": ("aimfp.helpers.orchestrators.restore", "restore_project_backup"),
     # helpers/orchestrators/query.py (1 tool)
     "query_project_state": ("aimfp.helpers.orchestrators.query", "query_project_state"),
     "get_files_by_flow_context": ("aimfp.helpers.orchestrators.query", "get_files_by_flow_context"),
@@ -238,10 +247,11 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "get_theme_by_name": ("aimfp.helpers.project.themes_flows_1", "get_theme_by_name"),
     "update_flow": ("aimfp.helpers.project.themes_flows_1", "update_flow"),
     "update_theme": ("aimfp.helpers.project.themes_flows_1", "update_theme"),
-    # helpers/project/themes_flows_2.py (16 tools)
+    # helpers/project/themes_flows_2.py (17 tools)
     "add_completion_path": ("aimfp.helpers.project.themes_flows_2", "add_completion_path"),
     "add_file_to_flow": ("aimfp.helpers.project.themes_flows_2", "add_file_to_flow"),
     "add_file_flows": ("aimfp.helpers.project.themes_flows_2", "add_file_flows"),
+    "remove_file_from_flow": ("aimfp.helpers.project.themes_flows_2", "remove_file_from_flow"),
     "delete_completion_path": ("aimfp.helpers.project.themes_flows_2", "delete_completion_path"),
     "get_all_completion_paths": ("aimfp.helpers.project.themes_flows_2", "get_all_completion_paths"),
     "get_completion_paths_by_status": ("aimfp.helpers.project.themes_flows_2", "get_completion_paths_by_status"),
@@ -320,6 +330,16 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "plan_disjoint_partitions": ("aimfp.helpers.changeset.partition", "plan_disjoint_partitions"),
     # helpers/changeset/history.py (1 tool)
     "get_merge_history": ("aimfp.helpers.changeset.history", "get_merge_history"),
+
+    # ── Catalog (adopting an existing FP codebase) ───────────────────────
+    # helpers/catalog/scan.py (1 tool)
+    "scan_source_tree": ("aimfp.helpers.catalog.scan", "scan_source_tree"),
+    # helpers/catalog/callgraph.py (1 tool)
+    "scan_call_graph": ("aimfp.helpers.catalog.callgraph", "scan_call_graph"),
+    # helpers/catalog/register.py (3 tools — single-phase, not reserve/finalize)
+    "catalog_files": ("aimfp.helpers.catalog.register", "catalog_files"),
+    "catalog_functions": ("aimfp.helpers.catalog.register", "catalog_functions"),
+    "catalog_types": ("aimfp.helpers.catalog.register", "catalog_types"),
 
     # ── User Directives ──────────────────────────────────────────────────
     # helpers/user_directives/crud.py (8 tools)

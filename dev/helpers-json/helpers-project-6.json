@@ -186,6 +186,14 @@
           "is_required": true,
           "parameters_mapping": {},
           "description": "Create completion path stages during user request decomposition - establishes project roadmap structure"
+        },
+        {
+          "directive_name": "project_add_path",
+          "execution_context": "insert_completion_path",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Insert a new completion path stage into the roadmap"
         }
       ]
     },
@@ -377,6 +385,30 @@
           "is_required": true,
           "parameters_mapping": {},
           "description": "Mark completion path as completed when all milestones in path finish - updates path status"
+        },
+        {
+          "directive_name": "project_progression",
+          "execution_context": "review_completion_path",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Advance or close the active completion path once its milestones are done"
+        },
+        {
+          "directive_name": "project_progression",
+          "execution_context": "reopen_post_completion_path",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Reopen Added Features or Updates (status in_progress) when post-completion work arrives"
+        },
+        {
+          "directive_name": "project_refactor_path",
+          "execution_context": "merge_entries",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Rewrite path entries when merging roadmap stages"
         }
       ]
     },
@@ -463,7 +495,16 @@
         "May create gaps in sequence - consider reorder_all after use"
       ],
       "target_database": "project",
-      "used_by_directives": []
+      "used_by_directives": [
+        {
+          "directive_name": "project_refactor_path",
+          "execution_context": "reorder_path",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Move a single completion path to a new order position"
+        }
+      ]
     },
     {
       "name": "reorder_all_completion_paths",
@@ -480,7 +521,16 @@
         "Preserves relative order while closing gaps"
       ],
       "target_database": "project",
-      "used_by_directives": []
+      "used_by_directives": [
+        {
+          "directive_name": "project_refactor_path",
+          "execution_context": "reorder_path",
+          "sequence_order": 2,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Rewrite the full ordering in one pass when several stages move together"
+        }
+      ]
     },
     {
       "name": "swap_completion_paths_order",
@@ -512,7 +562,16 @@
         "Exchanges order_index values between two paths"
       ],
       "target_database": "project",
-      "used_by_directives": []
+      "used_by_directives": [
+        {
+          "directive_name": "project_refactor_path",
+          "execution_context": "reorder_path",
+          "sequence_order": 3,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Swap two adjacent stages — cheapest case of reordering"
+        }
+      ]
     },
     {
       "name": "add_file_to_flow",

@@ -58,11 +58,20 @@ Verify prerequisites:
 **Action**: Build a complete file inventory.
 
 **Steps**:
-1. Read `source_directory` from infrastructure table
-2. Read `primary_language` from infrastructure table (for pattern selection)
-3. Recursively scan for source files matching language-appropriate extensions
-4. Also include other recognized source file types (config, data, scripts)
-5. Exclude build artifacts, dependencies, generated files:
+1. Call `scan_source_tree()` — one call does all of the below. It reads
+   `source_directory` from infrastructure, walks the tree, applies the full
+   exclusion stack, and extracts signatures. Pass `module_path` to narrow the scan
+   to one subtree and adopt a large codebase a module at a time.
+2. The scan is **read-only** — nothing is written. Review the inventory first.
+3. Check each file's `fidelity`:
+   - `full` (Python, via stdlib `ast`) — real parameters, return annotations, and
+     docstring-seeded purposes
+   - `names_only` (JS/TS/Rust/Go/Java, via regex) — names and line numbers only.
+     You **must** supply purpose, parameters, and returns yourself.
+4. Review `parse_failures` and `skipped_unsupported`: those files were not
+   extracted and need manual handling or deliberate omission.
+
+The scan applies these exclusions for you:
    - Use same exclusion patterns as watchdog `config.py` for consistency
    - Excluded dirs: `node_modules`, `venv`, `__pycache__`, `.git`, `build`, `dist`, `.aimfp-project`, etc.
    - Excluded extensions: `.pyc`, `.so`, `.dll`, `.lock`, `.log`, images, fonts, archives
@@ -78,15 +87,23 @@ Verify prerequisites:
 **Action**: Create file entries in `project.db`.
 
 **Steps**:
-1. For each source file, use `reserve_file` helper to get database ID
-2. Set file metadata:
-   - `path`: relative path from project root
-   - `purpose`: infer from filename and directory location
-   - `theme`: infer from directory structure (tentative — confirmed during discovery)
-3. Use `finalize_file` helper to confirm registration
-4. For large codebases (>100 files): process in batches of 20-50, report progress to user between batches
+1. Call `catalog_files(files=[{name, path, language}, ...])` with the scan results
+2. Capture the returned IDs — they come back in input order, and functions and
+   types need `file_id`
+3. For large codebases (>100 files): register one module at a time and report
+   progress to the user between modules
 
-**Helpers**: `reserve_file`, `finalize_file`
+**Do NOT use `reserve_file`/`finalize_file` here.** That protocol is two-phase
+because it serves writing *new* code: reserve an ID, embed it in the filename,
+write the file, finalize. Code being adopted already exists on disk with a fixed
+name that no ID will ever be embedded into, so the reserve phase has nothing left
+to do. `catalog_files` writes rows already finalized (`is_reserved=0`,
+`id_in_name=0`).
+
+`catalog_files` is **idempotent on path** — re-cataloging after a re-scan updates
+rows instead of duplicating them, so it is safe to re-run as source changes.
+
+**Helpers**: `catalog_files`
 
 ---
 
@@ -95,26 +112,26 @@ Verify prerequisites:
 **Action**: Identify and register all functions in each file.
 
 **Steps**:
-1. For each registered file, parse function definitions
-2. Use language-appropriate patterns (same patterns as watchdog `analyzers.py`):
-   - Python: `def function_name(`
-   - JavaScript/TypeScript: `function name(`, `const name = (`, arrow functions
-   - Rust: `fn name(`
-   - Go: `func name(`
-   - Java: access modifier + return type + name
-3. For each function, identify:
-   - **Name**: function identifier
-   - **Parameters**: parameter list (types if available)
-   - **Return type**: if typed language or type hints present
-   - **Purity assessment**:
-     - `pure`: No side effects detected, deterministic based on visible logic
-     - `side_effects`: Contains I/O, mutations, or external calls not wrapped
-     - `uncertain`: Cannot determine from static analysis alone
-   - **Purpose**: infer from name and docstring (if present)
-4. Use `reserve_function` and `finalize_function` helpers to register
-5. Flag impure functions with a note — informational, not a blocker
+1. Signatures already came back from `scan_source_tree` — **do not re-parse the
+   files**
+2. **Enrich before writing.** Extraction seeds `purpose` from the first line of the
+   docstring, so functions without docstrings arrive with `purpose: null`. Fill
+   those in. Null purposes make functions invisible to future lookup and reduce the
+   database to a name index — which defeats the point of cataloging.
+3. Call `catalog_functions(functions=[{name, file_id, purpose, parameters, returns}, ...])`
+4. Call `catalog_types(types=[{name, file_id, definition, description}, ...])` for
+   extracted type definitions (dataclasses, Enum, TypedDict, NamedTuple, Protocol)
+5. The `is_effect` flag on each function is a **hint read from declared intent** —
+   the `_effect_` naming convention (prefix or suffix) and the `Effect:` docstring
+   marker. It deliberately does not inspect function bodies: guessing purity from
+   call sites produces false confidence. Treat impurity as informational, never a
+   blocker.
 
-**Helpers**: `reserve_function`, `finalize_function`
+**Do NOT use `reserve_function`/`finalize_function` or `reserve_type`/`finalize_type`**
+for existing code — same reasoning as `catalog_files` above. Both catalog tools are
+idempotent on `(file_id, name)`.
+
+**Helpers**: `catalog_functions`, `catalog_types`
 
 ---
 
@@ -126,10 +143,17 @@ Verify prerequisites:
 1. For each function, identify which other project functions it calls
 2. For each file, identify which other project files it imports from
 3. Identify external library dependencies per file
-4. Create interaction entries via `create_interaction` helper
-5. Build a dependency understanding for the project
+4. Record dependencies via `add_interactions` (batch) — tuples of
+   `(source_function_id, target_function_id, interaction_type, description)`
+5. Link types to the functions that use them via `add_types_functions`
+6. Assign files to modules via `add_files_to_module` and to flows via
+   `add_file_flows` — a cataloged file with no flow is architecturally disconnected
 
-**Helpers**: `create_interaction`
+**Helpers**: `add_interactions`, `add_types_functions`, `add_files_to_module`,
+`add_file_flows`
+
+> The catalog tools stop at registration on purpose. Everything past that point is
+> the ordinary batch surface, unchanged — cataloged rows are not special.
 
 ---
 
@@ -189,7 +213,11 @@ Catalog should **not abort** on individual file failures. Log errors, skip probl
 
 ### Calls
 
-- **Helpers**: `reserve_file`, `finalize_file`, `reserve_function`, `finalize_function`, `create_interaction`, `create_theme`, `create_flow`, `project_notes_log`
+- **Catalog helpers** (single-phase, for existing code): `scan_source_tree`,
+  `catalog_files`, `catalog_functions`, `catalog_types`
+- **Linking helpers** (shared with normal authoring): `add_interactions`,
+  `add_types_functions`, `add_files_to_module`, `add_file_flows`
+- **Structure helpers**: `add_theme`, `add_flow`, `add_note`
 
 ### Flows To
 

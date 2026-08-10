@@ -1,0 +1,119 @@
+{
+  "helpers": [
+    {
+      "name": "create_project_backup",
+      "file_path": "helpers/orchestrators/backup.py",
+      "parameters": [],
+      "purpose": "Create a backup of .aimfp-project/ right now, ignoring any threshold. Zips everything except backups/ and watchdog/, adds a generated backup_summary.md, and rotates old archives per the backup_count setting. The on-demand counterpart to the automatic inactivity check — call this when aimfp_run reports a scheduled backup due, or before any risky operation.",
+      "error_handling": "Returns error if the zip cannot be written (permissions, disk space). Rotation failures are reported but do not fail the backup itself.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Backup created. Report the backup_name and where it was written so the user knows a restore point exists.",
+        "Rotation is automatic: only backup_count archives are kept (default 3), oldest deleted first. If this backup matters long-term, tell the user to copy it out of .aimfp-project/backups/ before it rotates away.",
+        "Backups exclude backups/ and watchdog/ by design, and capture project.db, user_preferences.db, user_directives.db (Case 2), and ProjectBlueprint.md — not your source code, which git covers."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_backup_restore",
+          "execution_context": "execute_backup",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Create the backup archive on demand"
+        }
+      ]
+    },
+    {
+      "name": "list_project_backups",
+      "file_path": "helpers/orchestrators/restore.py",
+      "parameters": [],
+      "purpose": "List available backup archives, newest first, with size, modification time, and which targets each one actually contains. Read-only. Call BEFORE restore_project_backup: a backup only holds databases that existed when it was taken, so an older archive may not carry every target you want.",
+      "error_handling": "Returns an empty list when no backups directory exists. An unreadable or corrupt archive is reported per-entry in its 'unreadable' field rather than failing the whole listing.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Present the archives to the user with their dates before restoring anything — restore replaces live state, so the user picks which point to return to, not the AI.",
+        "Check the 'restorable' field on the archive you intend to use. Requesting a target it does not contain is skipped, not an error, so verify before assuming a restore was complete.",
+        "An entry with a non-null 'unreadable' value is a corrupt archive — do not offer it as a restore point."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_backup_restore",
+          "execution_context": "load_backup",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Show available restore points before any restore"
+        }
+      ]
+    },
+    {
+      "name": "restore_project_backup",
+      "file_path": "helpers/orchestrators/restore.py",
+      "parameters": [
+        {
+          "name": "backup_name",
+          "type": "string",
+          "required": false,
+          "description": "Archive to restore from (e.g. 'aimfp-backup-2026-08-09.zip'). Defaults to the most recent. Get valid names from list_project_backups."
+        },
+        {
+          "name": "databases",
+          "type": "array",
+          "required": false,
+          "description": "Which members to restore: any of 'project', 'user_preferences', 'user_directives', 'blueprint', or 'all'. Accepts a list or comma-separated string. Defaults to everything the archive contains. Be specific — restoring everything to fix one corrupt database silently rolls back the others."
+        }
+      ],
+      "purpose": "Restore selected databases from a backup archive, side-by-side rather than in place. Every requested member is extracted to a temporary file FIRST; only once all extractions succeed is anything live touched. The current file is then moved into backups/ as 'replaced-<timestamp>-<filename>' and the restored copy moved into position. Nothing is ever deleted, so the displaced state remains recoverable.",
+      "error_handling": "Aborts before touching any live file if extraction fails, leaving the project exactly as it was. Returns error when no backups exist, the named archive is missing or corrupt, an unknown target is requested, or the archive contains none of the requested targets. Requested targets absent from the archive are reported in 'skipped' rather than failing.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "DESTRUCTIVE TO CURRENT STATE — confirm with the user BEFORE calling this, naming which backup and which databases. Restore is usually run when something has already gone wrong; replacing the wrong database makes it worse.",
+        "The replaced files were moved to backups/ as 'replaced-<timestamp>-<filename>', not deleted. Report those paths — they are the way back if this restore was the wrong call.",
+        "Review 'skipped': any target listed there was NOT restored because the archive did not contain it. Do not report a partial restore as complete.",
+        "Restored project.db means your cached understanding of tasks, milestones, and tracked files is now stale. Call aimfp_status() before continuing any work.",
+        "Restoring never touches source code — only .aimfp-project/ state. If the code and the restored tracking database now disagree, the watchdog will surface it on the next session; reconcile before trusting the index."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_backup_restore",
+          "execution_context": "load_backup",
+          "sequence_order": 2,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Restore selected databases from the chosen archive"
+        }
+      ]
+    },
+    {
+      "name": "check_scheduled_backup_due",
+      "file_path": "helpers/orchestrators/backup.py",
+      "parameters": [],
+      "purpose": "Check whether a scheduled backup is overdue, measured from the LAST BACKUP. Distinct from the inactivity rule (backup_duration), which measures time since the last project change and therefore only ever fires on dormant projects — an actively developed project would otherwise never be backed up. Governed by backup_interval_days; 0 disables scheduling. Called automatically by aimfp_run(is_new_session=true); available standalone for hosts that want the check on demand.",
+      "error_handling": "Never raises. Returns scheduled=false when backup_interval_days is 0 or unreadable. Reports due=true with last_backup=null when scheduling is on but no backup has ever been taken.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "If due is true: PROMPT THE USER to create a backup — do not create one silently. Say how many days have passed and name the last backup. Call create_project_backup only once they agree.",
+        "If last_backup is null while scheduled is true, this project has never been backed up. Say so plainly rather than reporting a day count.",
+        "The user can change the cadence with update_user_setting('backup_interval_days', <days>), or set it to 0 to stop these prompts."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_backup_restore",
+          "execution_context": "perform_backup",
+          "sequence_order": 1,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Decide whether a scheduled backup is due before offering one"
+        }
+      ]
+    }
+  ]
+}

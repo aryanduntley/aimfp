@@ -18,9 +18,25 @@
 tests/
 *_test.py
 test_*.py
-*.test.js
-*.test.ts
-*.spec.ts
 
-# Generated rollup bundle output (not source — re-flagged every session)
-packages/host/extension/
+# AIMFP self-tracking: source_directory is src/aimfp, so dev/, docs/, build/,
+# dist/ and tests/ already fall outside the watched tree. Listed defensively.
+dev/
+docs/
+examples/
+documentation/
+aimfp-plugin/
+
+# Shipped reference/template content — data, not tracked source
+src/aimfp/reference/
+src/aimfp/templates/
+src/aimfp/database/schemas/
+src/aimfp/database/initialization/
+
+# Generated databases and their SQLite sidecars. aimfp_core.db is rebuilt from
+# dev/ JSON and ships as package data; mcp_runtime.db is runtime state. Neither is
+# source, and without these the watchdog re-flags them as untracked every session.
+src/aimfp/database/aimfp_core.db
+src/aimfp/database/mcp_runtime.db
+*.db-wal
+*.db-shm

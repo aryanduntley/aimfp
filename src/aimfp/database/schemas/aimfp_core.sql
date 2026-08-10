@@ -209,7 +209,36 @@ CREATE TABLE IF NOT EXISTS expected_schema_versions (
 
 INSERT OR REPLACE INTO expected_schema_versions (db_name, expected_version, minimum_version) VALUES
     ('project', '1.11', '1.0'),
-    ('user_preferences', '1.2', '1.0'),
+    ('user_preferences', '1.3', '1.0'),
     ('user_directives', '1.2', '1.0');
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '2.2');
+-- ===============================================================
+-- SYSTEM NOTICES
+-- One-time announcements from a release to the AI, so a change that
+-- alters behavior or introduces a setting can explain itself once per
+-- project instead of relying on the user reading a changelog.
+--
+-- Delivery is at-most-once per project: aimfp_run surfaces notices that
+-- have no acknowledgement row in user_preferences.acknowledged_notices,
+-- and the AI acknowledges after acting. Content ships here (read-only);
+-- the record of what was already seen is per-project.
+--
+-- Attach a notice to a migration by setting applies_to_db +
+-- applies_from_version, so it fires only once that database has reached
+-- the version the change landed in. Leave both NULL to fire everywhere.
+-- ===============================================================
+
+CREATE TABLE IF NOT EXISTS system_notices (
+    notice_key TEXT PRIMARY KEY,                -- Stable id, e.g. 'backup_interval_intro'
+    title TEXT NOT NULL,                        -- One-line summary
+    message TEXT NOT NULL,                      -- What the AI should tell or ask the user
+    severity TEXT DEFAULT 'info'                -- 'info', 'warning'
+        CHECK (severity IN ('info', 'warning')),
+    action_required BOOLEAN DEFAULT 0,          -- TRUE: AI must prompt. FALSE: inform only.
+    applies_to_db TEXT,                         -- 'project' | 'user_preferences' | 'user_directives' | NULL for all
+    applies_from_version TEXT,                  -- Fire only once applies_to_db is at/after this version
+    introduced_in TEXT,                         -- Package version that added the notice (informational)
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '2.3');

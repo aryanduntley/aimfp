@@ -120,6 +120,24 @@ FUNCTION_PATTERNS: Final[dict[str, str]] = {
 }
 
 
+# Maps file extension to the FUNCTION_PATTERNS key for that language. Kept beside
+# the pattern registry so the two never drift: every value here must be a key above.
+EXTENSION_LANGUAGES: Final[dict[str, str]] = {
+    '.py': 'python',
+    '.pyi': 'python',
+    '.js': 'javascript',
+    '.mjs': 'javascript',
+    '.cjs': 'javascript',
+    '.jsx': 'javascript',
+    '.ts': 'typescript',
+    '.tsx': 'typescript',
+    '.mts': 'typescript',
+    '.rs': 'rust',
+    '.go': 'go',
+    '.java': 'java',
+}
+
+
 # ============================================================================
 # Reminder Type Constants
 # ============================================================================
@@ -256,6 +274,24 @@ def get_function_pattern(language: str) -> Optional[Pattern[str]]:
     if raw is None:
         return None
     return re.compile(raw, re.MULTILINE)
+
+
+def detect_language(file_path: str) -> Optional[str]:
+    """
+    Pure: Resolve a file path to its FUNCTION_PATTERNS language key by extension.
+
+    Per-file detection, unlike the project-wide `primary_language` the watchdog
+    reads from infrastructure — a polyglot repo needs the extension to decide.
+
+    Args:
+        file_path: File path or name (only the extension is inspected)
+
+    Returns:
+        Language key present in FUNCTION_PATTERNS, or None for unrecognized
+        extensions
+    """
+    _, ext = os.path.splitext(file_path)
+    return EXTENSION_LANGUAGES.get(ext.lower())
 
 
 def should_exclude(
