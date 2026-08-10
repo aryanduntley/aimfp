@@ -14,6 +14,7 @@
 - [Database Architecture](#database-architecture)
 - [How It Works](#how-it-works)
 - [Getting Started](#getting-started)
+- [Platform Support](#platform-support)
 - [Directives System](#directives-system)
 - [Project Lifecycle](#project-lifecycle)
 - [Example Workflow](#example-workflow)
@@ -414,7 +415,14 @@ Directives follow a **trunk → branches → fallback** pattern:
 
 ### Prerequisites
 
-- **Python 3.11+** (required for type hint syntax used throughout)
+- **Python 3.11+** (required for type hint syntax used throughout; developed and tested through 3.14)
+- **Linux** — see [Platform Support](#platform-support) below
+
+### Platform Support
+
+AIMFP is developed and tested on **Linux only**. There is no platform-conditional code anywhere in the codebase, so Windows and macOS support is **unbuilt rather than untested** — it has never been attempted, and making it work would be real porting effort, not a compatibility pass.
+
+The core of the server is portable in principle (pure-stdlib JSON-RPC over stdio, SQLite, `pathlib`), so parts of it may happen to run elsewhere. Nothing about that is verified or supported. If you run AIMFP on another platform, you're on your own — bug reports are welcome, but Linux is the only environment the project targets.
 
 ### Installation
 
@@ -915,7 +923,7 @@ AI: ✅ Preference learned: project_file_write
 
 ### Directive Reference
 
-All directive documentation is shipped with the package at **[src/aimfp/reference/directives/](src/aimfp/reference/directives/)** — 129 MD files covering every directive. Each file includes: purpose, when to apply, complete workflows (trunk → branches), compliant/non-compliant examples, edge cases, related directives, helper functions used, and database operations.
+All directive documentation is shipped with the package at **[src/aimfp/reference/directives/](src/aimfp/reference/directives/)** — 131 MD files covering every directive. Each file includes: purpose, when to apply, complete workflows (trunk → branches), compliant/non-compliant examples, edge cases, related directives, helper functions used, and database operations.
 
 ### Database Schemas
 
