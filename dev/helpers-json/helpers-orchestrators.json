@@ -69,7 +69,7 @@
         }
       ],
       "purpose": "Phase 1 mechanical setup orchestrator for project initialization. Atomically creates directories, databases with schemas, and templates. No deep logic - pure mechanical operations.",
-      "error_handling": "Return detailed error if: already initialized, directory permissions denied, database creation failed. Clean up partial initialization on error (delete .aimfp-project/ if incomplete).",
+      "error_handling": "Return detailed error if: already initialized, directory permissions denied, database creation failed. Clean up partial initialization on error, removing only what this init created: the whole .aimfp-project/ if init created it, otherwise just the created databases/blueprint/backups dir (pre-existing files such as backups survive).",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
@@ -77,28 +77,28 @@
         "Phase 1 complete. AI must now execute Phase 2: scan for OOP patterns (if existing code), detect infrastructure (language, build tool, source directory), and prompt user for project name/purpose/goals. IMPORTANT: The project table is EMPTY after Phase 1. AI must call create_project(name, purpose, goals, status, version) as the FIRST step of Phase 2 to insert the project row. Do NOT call update_project before create_project — there is no row to update yet.",
         "Phase 2 ordering: (1) create_project — must complete first, (2) update_source_directory + update infrastructure entries — can run in parallel after create_project succeeds, (3) populate ProjectBlueprint.md. Do NOT batch create_project with infrastructure updates in one parallel call.",
         "Empty infrastructure entries created: project_root (populated), source_directory, primary_language, build_tool, package_manager, test_framework, runtime_version, main_branch. AI must detect and populate these using update_project_entry(table='infrastructure', id=N, data={'value': '...'}) — only the 'value' field should be updated (not 'description' or 'details'). Call get_all_infrastructure() first to see current IDs and values.",
-        "ProjectBlueprint.md is a template with placeholders. AI must populate with real project data after user interaction.",
+        "ProjectBlueprint.md is a template with placeholders. AI must populate with real project data after user interaction — unless it is listed in data.files_already_present, in which case it predates this init and was NOT overwritten: read it and confirm it with the user before relying on or replacing it.",
         "Git Repository Status: check data.git_status — 'created' means .git was initialized during Phase 1, 'pre_existing' means repository already existed, 'git_unavailable' means git command not found or failed. If 'created' or 'pre_existing', the git_init directive must be executed during project_discovery to complete intelligent Git setup (gitignore, initial commit, hash storage, branch detection). If 'git_unavailable', inform user that version control is unavailable and suggest installing git.",
         "After Phase 2 population complete: route to project_discovery directive. Discovery handles: git_init directive (intelligent Git setup if git available), collaborative blueprint refinement, infrastructure confirmation, state database creation (via create_state_database helper once source_directory is confirmed), theme/flow definition, completion path with milestones.",
         "Do NOT create state database during init — source_directory is not yet confirmed. State DB creation happens during project_discovery Branch 3 (map_infrastructure) after source_directory is confirmed with user.",
-        ".watchdogignore created at project root."
+        "Check data.files_already_present: init never overwrites existing files, so anything listed there (commonly .watchdogignore or ProjectBlueprint.md) was left as found and may be stale or belong to another project. Read each one and reconcile it with this project before proceeding. Only data.files_created were freshly written from templates."
       ],
       "implementation_notes": [
         "PHASE 1 ONLY - Mechanical setup with no intelligence",
-        "Step 1: Check if already initialized (error if .aimfp-project/project.db exists)",
+        "Step 1: Check if already initialized (error if .aimfp-project/project.db exists). Then snapshot which init artifacts already exist on disk — drives both the report and failure cleanup",
         "Step 2: Create directories: .aimfp-project/, .aimfp-project/backups/",
         "Step 2.5: Check for .git directory. If missing and git available, run 'git init' (subprocess, non-blocking, 10s timeout). Store result as git_status: 'created' (new repo), 'pre_existing' (already had .git), or 'git_unavailable' (git not found or failed). Initialization continues regardless of git outcome.",
-        "Step 3: Copy ProjectBlueprint_template.md to .aimfp-project/ProjectBlueprint.md",
+        "Step 3: Copy ProjectBlueprint_template.md to .aimfp-project/ProjectBlueprint.md only if absent (a surviving blueprint is never overwritten); the init evolution note says which case occurred",
         "Step 4: Initialize project.db: load schemas/project.sql, execute, then execute initialization/standard_infrastructure.sql (8 empty entries), then call update_project_root() to populate project_root value",
         "Step 5: Initialize user_preferences.db: load schemas/user_preferences.sql, execute, INSERT default tracking_settings (all disabled), load initialization/standard_user_settings.sql (backup defaults)",
         "Step 6: Create .gitkeep files for empty directories",
         "Step 6.5: Write .watchdogignore to project root from DEFAULT_WATCHDOGIGNORE_CONTENT (watchdog/config.py). Idempotent — skip if it already exists.",
         "Step 7: Verify all created files exist (inline check, no helper call)",
         "Step 8: Return success object",
-        "RETURN STRUCTURE: {success: bool, project_root: str, aimfp_dir: str, files_created: ['.aimfp-project/', 'project.db', 'user_preferences.db', 'ProjectBlueprint.md', '.watchdogignore'], tables_created: {project_db: [...], user_prefs_db: [...]}, infrastructure_entries: 8, git_status: 'created'|'pre_existing'|'git_unavailable', next_phase: 'AI populates infrastructure and blueprint'}",
+        "RETURN STRUCTURE: {success: bool, project_root: str, aimfp_dir: str, files_created: [labels written by this init], files_already_present: [labels found in place and left untouched], tables_created: {project_db: [...], user_prefs_db: [...]}, infrastructure_entries: 8, git_status: 'created'|'pre_existing'|'skipped'|'git_unavailable', next_phase: 'AI populates infrastructure and blueprint'}. Labels: '.aimfp-project/', '.aimfp-project/backups/', '.aimfp-project/project.db', '.aimfp-project/user_preferences.db', '.aimfp-project/ProjectBlueprint.md', '.watchdogignore'",
         "State database is NOT created during init. It is created during project_discovery (Branch 3: map_infrastructure) via create_state_database() helper after source_directory is confirmed with user.",
         "State DB reference: SQL schema at src/aimfp/database/initialization/state_db.sql, template at src/aimfp/templates/state_db/state_operations.py, helper at helpers/project/state_db.py",
-        "ERROR CLEANUP: If any step fails after Step 2, delete .aimfp-project/ directory entirely (shutil.rmtree). Partial initialization is worse than no initialization.",
+        "ERROR CLEANUP: If any step fails after Step 1, remove only what this init created (pure cleanup_targets_for_failed_init): all of .aimfp-project/ if init created the directory, otherwise just the created backups dir/.gitkeep/project.db/user_preferences.db/ProjectBlueprint.md. Partial initialization is worse than no initialization, but pre-existing files (e.g. backups beside a lost project.db) must survive.",
         "ERROR RETURN: {success: false, error: str, failed_step: int, cleanup_performed: bool}",
         "All operations are direct file/DB operations - no external helper calls"
       ],

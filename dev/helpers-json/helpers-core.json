@@ -281,7 +281,7 @@
           "description": "Directive category filter (e.g., 'purity', 'error_handling', 'task_management')"
         }
       ],
-      "purpose": "Find directives by type, category, or keyword when you know the domain but not the exact directive name. Multi-word input is split into words; a row matches if ANY word prefix-matches (\"disk space free\" finds get_free_disk_space). Rows matching more words rank first. Punctuation is ignored, so no FTS syntax is needed or honored. Keyword results are ordered by name/description relevance.",
+      "purpose": "Find directives by type, category, or keyword when you know the domain but not the exact directive name. Multi-word input is split into words; a row matches if ANY word prefix-matches (\"disk space free\" finds get_free_disk_space). Rows matching more words rank first. Punctuation is ignored, so no FTS syntax is needed or honored. Common stopwords (the, of, and, ...) are ignored unless the query is nothing but stopwords. Keyword results are ordered by name/description relevance.",
       "error_handling": "Returns empty array if no matches found",
       "is_tool": true,
       "is_sub_helper": false,

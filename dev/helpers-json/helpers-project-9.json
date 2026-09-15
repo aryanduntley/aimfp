@@ -842,7 +842,7 @@
           "description": "Cap each note's content at this many characters (default 300; 0 = full content)"
         }
       ],
-      "purpose": "Search past decisions and context by keyword. Multi-word input is split into words; a row matches if ANY word prefix-matches (\"disk space free\" finds get_free_disk_space). Rows matching more words rank first. Punctuation is ignored, so no FTS syntax is needed or honored. Returns capped previews by default; read a note in full with get_notes_comprehensive(note_id=X).",
+      "purpose": "Search past decisions and context by keyword. Multi-word input is split into words; a row matches if ANY word prefix-matches (\"disk space free\" finds get_free_disk_space). Rows matching more words rank first. Punctuation is ignored, so no FTS syntax is needed or honored. Common stopwords (the, of, and, ...) are ignored unless the query is nothing but stopwords. Returns capped previews by default; read a note in full with get_notes_comprehensive(note_id=X).",
       "error_handling": "Returns error for invalid filters, limit < 1, or preview_chars < 0. Empty list when nothing matches",
       "is_tool": true,
       "is_sub_helper": false,

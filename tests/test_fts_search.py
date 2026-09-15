@@ -15,6 +15,8 @@ from aimfp.helpers.shared.fts_query import (
     tokenize_search_terms,
     build_fts_match_expression,
     build_like_clause,
+    validate_result_limit,
+    cap_results,
 )
 from aimfp.helpers.project.functions_1 import search_functions
 from aimfp.helpers.project.types_1 import search_types
@@ -84,6 +86,26 @@ class TestBuilder:
         assert tokenize_search_terms("what's") == ("what",)
         assert tokenize_search_terms("x") == ("x",)
 
+    def test_drops_stopwords(self):
+        assert tokenize_search_terms("the hash of a file") == ("hash", "file")
+
+    def test_stopwords_kept_when_nothing_else(self):
+        assert tokenize_search_terms("the") == ("the",)
+        assert tokenize_search_terms("to a") == ("to",)
+
+    def test_code_words_are_not_stopwords(self):
+        assert tokenize_search_terms("get all not new") == ("get", "all", "not", "new")
+
+    def test_validate_result_limit(self):
+        assert validate_result_limit(None) is None
+        assert validate_result_limit(1) is None
+        assert "Invalid limit" in validate_result_limit(0)
+
+    def test_cap_results_reports_total(self):
+        assert cap_results([1, 2, 3], 2) == ((1, 2), 3)
+        assert cap_results([1, 2, 3], None) == ((1, 2, 3), 3)
+        assert cap_results([], 5) == ((), 0)
+
     def test_empty_and_symbol_only(self):
         assert tokenize_search_terms("") == ()
         assert tokenize_search_terms("--- ''") == ()
@@ -141,6 +163,36 @@ class TestSearchHelpers:
         r = search_notes("hash digest", project_root=project_root)
         assert r.success, r.error
         assert len(r.notes) == 2
+
+    def test_functions_limit_caps_and_reports_total(self, project_root):
+        r = search_functions("disk hash", limit=1, project_root=project_root)
+        assert r.success, r.error
+        assert len(r.functions) == 1
+        assert r.total_count == 3
+
+    def test_functions_stopword_does_not_flood(self, project_root):
+        # "the" appears in get_free_disk_space's purpose ("on the volume"); as a
+        # stopword it must not pull that row in alongside the real "digest" match
+        r = search_functions("the digest", project_root=project_root)
+        assert r.success, r.error
+        assert [f.name for f in r.functions] == ["hash_file_contents"]
+        assert r.total_count == 1
+
+    def test_functions_invalid_limit(self, project_root):
+        r = search_functions("disk", limit=0, project_root=project_root)
+        assert not r.success and "Invalid limit" in r.error
+
+    def test_types_limit_and_total(self, project_root):
+        r = search_types("disk", limit=5, project_root=project_root)
+        assert r.success, r.error
+        assert r.total_count == 1 and len(r.types) == 1
+        assert not search_types("disk", limit=0, project_root=project_root).success
+
+    def test_modules_limit_and_total(self, project_root):
+        r = search_modules("disk", limit=5, project_root=project_root)
+        assert r.success, r.error
+        assert r.total_count == 1 and len(r.modules) == 1
+        assert not search_modules("disk", limit=0, project_root=project_root).success
 
     def test_like_fallback_is_per_term(self, project_root):
         conn = sqlite3.connect(os.path.join(project_root, ".aimfp-project", "project.db"))

@@ -31,7 +31,7 @@ from typing import Optional, List, Tuple
 
 from ..utils import get_return_statements
 from ..shared.slugs import mint_slug
-from ..shared.fts_query import tokenize_search_terms, build_fts_match_expression, build_like_clause
+from ..shared.fts_query import tokenize_search_terms, build_fts_match_expression, build_like_clause, validate_result_limit
 
 # Import common project utilities (DRY principle)
 from ._common import (
@@ -633,8 +633,9 @@ def shape_note_results(
 
 def _validate_result_shaping(limit: Optional[int], preview_chars: Optional[int]) -> Optional[str]:
     """Pure: Return an error message for invalid limit/preview_chars, else None."""
-    if limit is not None and limit < 1:
-        return f"Invalid limit: {limit}. Must be >= 1"
+    limit_error = validate_result_limit(limit)
+    if limit_error:
+        return limit_error
     if preview_chars is not None and preview_chars < 0:
         return f"Invalid preview_chars: {preview_chars}. Must be >= 0 (0 = full content)"
     return None

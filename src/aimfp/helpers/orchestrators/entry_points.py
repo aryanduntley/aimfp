@@ -110,6 +110,7 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
             project_root: str,
             aimfp_dir: str,
             files_created: tuple,
+            files_already_present: tuple,
             tables_created: {project_db: tuple, user_prefs_db: tuple},
             infrastructure_entries: int,
             next_phase: str
@@ -128,7 +129,23 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
     prefs_db_path = get_user_preferences_db_path(project_root)
     blueprint_dest = os.path.join(aimfp_dir, BLUEPRINT_FILENAME)
     backups_dir = os.path.join(aimfp_dir, BACKUPS_DIR_NAME)
+    gitkeep_path = os.path.join(backups_dir, ".gitkeep")
     step = 0
+    pre_existing: frozenset = frozenset()
+
+    from ...watchdog.config import (
+        get_watchdogignore_path,
+        DEFAULT_WATCHDOGIGNORE_CONTENT,
+    )
+    watchdogignore_path = get_watchdogignore_path(project_root)
+    artifacts = (
+        (f'{AIMFP_PROJECT_DIR}/', aimfp_dir),
+        (f'{AIMFP_PROJECT_DIR}/{BACKUPS_DIR_NAME}/', backups_dir),
+        (f'{AIMFP_PROJECT_DIR}/{PROJECT_DB_NAME}', project_db_path),
+        (f'{AIMFP_PROJECT_DIR}/{USER_PREFERENCES_DB_NAME}', prefs_db_path),
+        (f'{AIMFP_PROJECT_DIR}/{BLUEPRINT_FILENAME}', blueprint_dest),
+        ('.watchdogignore', watchdogignore_path),
+    )
 
     try:
         # Step 1: Check if already initialized
@@ -146,6 +163,12 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
                 },
                 error="Project already initialized",
             )
+
+        # Snapshot what already exists so the report and failure cleanup only
+        # ever claim (or remove) what this init actually wrote.
+        pre_existing = _effect_snapshot_existing_paths(
+            tuple(path for _, path in artifacts) + (gitkeep_path,)
+        )
 
         # Step 2: Create directories
         step = 2
@@ -181,7 +204,9 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
             raise FileNotFoundError(
                 f"ProjectBlueprint template not found: {template_path}"
             )
-        shutil.copy2(template_path, blueprint_dest)
+        blueprint_pre_existing = blueprint_dest in pre_existing
+        if not blueprint_pre_existing:
+            shutil.copy2(template_path, blueprint_dest)
 
         # Step 4: Initialize project.db
         step = 4
@@ -211,7 +236,10 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
             conn.execute(
                 "INSERT INTO notes (content, note_type, source, directive_name, severity) "
                 "VALUES (?, 'evolution', 'directive', 'aimfp_init', 'info')",
-                ("ProjectBlueprint.md created at init. Needs to be populated with project "
+                ("ProjectBlueprint.md pre-existed at init and was left untouched. Review it "
+                 "against the project with the user before relying on it."
+                 if blueprint_pre_existing else
+                 "ProjectBlueprint.md created at init. Needs to be populated with project "
                  "blueprint data by AI after discussing details of the project with user.",)
             )
             conn.commit()
@@ -269,18 +297,12 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
 
         # Step 6: Create .gitkeep files
         step = 6
-        gitkeep_path = os.path.join(backups_dir, ".gitkeep")
         if not os.path.exists(gitkeep_path):
             with open(gitkeep_path, 'w') as f:
                 pass
 
         # Step 6.5: Create .watchdogignore template at project root (user-editable,
         # gitignore-style patterns for files/dirs the watchdog should skip).
-        from ...watchdog.config import (
-            get_watchdogignore_path,
-            DEFAULT_WATCHDOGIGNORE_CONTENT,
-        )
-        watchdogignore_path = get_watchdogignore_path(project_root)
         if not os.path.exists(watchdogignore_path):
             with open(watchdogignore_path, 'w') as f:
                 f.write(DEFAULT_WATCHDOGIGNORE_CONTENT)
@@ -299,14 +321,7 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
             set_project_root(project_root)
 
         # Step 9: Return success
-        files_created = (
-            f'{AIMFP_PROJECT_DIR}/',
-            f'{AIMFP_PROJECT_DIR}/{BACKUPS_DIR_NAME}/',
-            f'{AIMFP_PROJECT_DIR}/{PROJECT_DB_NAME}',
-            f'{AIMFP_PROJECT_DIR}/{USER_PREFERENCES_DB_NAME}',
-            f'{AIMFP_PROJECT_DIR}/{BLUEPRINT_FILENAME}',
-            '.watchdogignore',
-        )
+        files_created, files_already_present = partition_init_artifacts(artifacts, pre_existing)
 
         # Auto-bundle init supportive context for discovery phase
         supportive_context_init = _get_supportive_context_safe('init')
@@ -318,6 +333,7 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
                 'project_root': project_root,
                 'aimfp_dir': aimfp_dir,
                 'files_created': files_created,
+                'files_already_present': files_already_present,
                 'tables_created': {
                     'project_db': project_tables,
                     'user_prefs_db': prefs_tables,
@@ -331,20 +347,13 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
         )
 
     except Exception as e:
-        # Cleanup: if we got past step 2, remove the directory
-        cleanup_performed = False
-        if step > 2 and os.path.isdir(aimfp_dir):
-            try:
-                shutil.rmtree(aimfp_dir)
-                cleanup_performed = True
-            except OSError:
-                pass
-        elif step == 2 and os.path.isdir(aimfp_dir):
-            try:
-                shutil.rmtree(aimfp_dir)
-                cleanup_performed = True
-            except OSError:
-                pass
+        # Cleanup: once past step 1, remove only what this init created
+        cleanup_performed = step >= 2 and _effect_remove_created_init_paths(
+            cleanup_targets_for_failed_init(
+                aimfp_dir, (backups_dir, gitkeep_path, project_db_path, prefs_db_path, blueprint_dest),
+                pre_existing,
+            )
+        )
 
         return Result(
             success=False,
@@ -356,6 +365,74 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
             },
             error=str(e),
         )
+
+
+def partition_init_artifacts(
+    artifacts: Tuple[Tuple[str, str], ...],
+    pre_existing: frozenset,
+) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+    """
+    Pure: Split init artifacts into those this init created and those already present.
+
+    Args:
+        artifacts: (report_label, absolute_path) pairs in report order
+        pre_existing: Absolute paths that existed before init wrote anything
+
+    Returns:
+        (files_created, files_already_present) — tuples of report labels
+    """
+    created = tuple(label for label, path in artifacts if path not in pre_existing)
+    present = tuple(label for label, path in artifacts if path in pre_existing)
+    return created, present
+
+
+def cleanup_targets_for_failed_init(
+    aimfp_dir: str,
+    inner_paths: Tuple[str, ...],
+    pre_existing: frozenset,
+) -> Tuple[str, ...]:
+    """
+    Pure: Decide what to delete after a failed init without touching prior files.
+
+    When init created .aimfp-project/ itself, the whole directory goes. When the
+    directory already existed (e.g. a lost project.db beside surviving backups),
+    only the inner paths init created are removed.
+
+    Args:
+        aimfp_dir: Absolute path to .aimfp-project/
+        inner_paths: Absolute paths init may write inside aimfp_dir
+        pre_existing: Absolute paths that existed before init wrote anything
+
+    Returns:
+        Absolute paths to remove (files or directories)
+    """
+    if aimfp_dir not in pre_existing:
+        return (aimfp_dir,)
+    return tuple(path for path in inner_paths if path not in pre_existing)
+
+
+def _effect_snapshot_existing_paths(paths: Tuple[str, ...]) -> frozenset:
+    """Effect: Return the subset of paths that currently exist on disk."""
+    return frozenset(path for path in paths if os.path.exists(path))
+
+
+def _effect_remove_path(path: str) -> bool:
+    """Effect: Delete one file or directory tree; True if something was removed."""
+    try:
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+            return True
+        if os.path.exists(path):
+            os.remove(path)
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def _effect_remove_created_init_paths(paths: Tuple[str, ...]) -> bool:
+    """Effect: Delete every given path (all attempted); True if anything was removed."""
+    return any(tuple(_effect_remove_path(path) for path in paths))
 
 
 def _get_template_path() -> str:

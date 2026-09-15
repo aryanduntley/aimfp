@@ -24,7 +24,10 @@ from typing import Optional, List, Tuple, Dict, Any
 # Import global utilities
 from ..utils import get_return_statements
 from ..shared.slugs import mint_slug
-from ..shared.fts_query import tokenize_search_terms, build_fts_match_expression, build_like_clause
+from ..shared.fts_query import (
+    tokenize_search_terms, build_fts_match_expression, build_like_clause,
+    DEFAULT_SEARCH_LIMIT, validate_result_limit, cap_results,
+)
 
 # Import update_file_timestamp from files_2
 from ._common import _check_file_exists, _check_type_exists, _create_deletion_note, get_cached_project_root, _open_project_connection
@@ -113,6 +116,7 @@ class TypeQueryResult:
     """Result of type lookup that may return multiple matches (e.g. by name)."""
     success: bool
     types: Tuple[TypeRecord, ...] = ()
+    total_count: int = 0
     error: Optional[str] = None
     return_statements: Tuple[str, ...] = ()
 
@@ -1237,6 +1241,7 @@ def search_types(
     search_string: str,
     include_details: bool = True,
     details_only: bool = False,
+    limit: Optional[int] = DEFAULT_SEARCH_LIMIT,
     project_root: Optional[str] = None
 ) -> TypeQueryResult:
     """
@@ -1244,14 +1249,17 @@ def search_types(
 
     The search text is split into words; a type matches when ANY word
     prefix-matches its name or description, ranked so types matching more
-    words come first. Punctuation is ignored. Falls back to per-word LIKE if
-    the FTS5 table is not available (pre-migration databases).
+    words come first. Punctuation and stopwords are ignored. Falls back to
+    per-word LIKE if the FTS5 table is not available (pre-migration databases).
 
     Args:
         search_string: Free-text search (one or more words)
+        include_details: If False, omit definition_json/description/links
+        details_only: If True, return only id/name + definition_json/description/links
+        limit: Maximum types returned, best matches first (default 20; None = all)
 
     Returns:
-        TypeQueryResult with matching type records
+        TypeQueryResult with matching type records; total_count is the match count before limit
 
     Example:
         >>> result = search_types("optional")
@@ -1260,6 +1268,10 @@ def search_types(
         >>> [t.name for t in result.types]
         ['Maybe_id_7']
     """
+    limit_error = validate_result_limit(limit)
+    if limit_error:
+        return TypeQueryResult(success=False, error=limit_error)
+
     terms = tokenize_search_terms(search_string)
     if not terms:
         return TypeQueryResult(
@@ -1295,7 +1307,7 @@ def search_types(
                 like_params
             )
 
-        rows = cursor.fetchall()
+        rows, total_count = cap_results(cursor.fetchall(), limit)
         type_records = tuple(
             row_to_type_record(row, include_details=include_details, details_only=details_only)
             for row in rows
@@ -1304,6 +1316,7 @@ def search_types(
         return TypeQueryResult(
             success=True,
             types=type_records,
+            total_count=total_count,
             return_statements=get_return_statements("search_types")
         )
 
@@ -1368,6 +1381,7 @@ def get_type_by_name(
         return TypeQueryResult(
             success=True,
             types=type_records,
+            total_count=len(type_records),
             return_statements=get_return_statements("get_type_by_name")
         )
 

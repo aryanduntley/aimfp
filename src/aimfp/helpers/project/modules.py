@@ -39,7 +39,10 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
 from ..utils import get_return_statements
-from ..shared.fts_query import tokenize_search_terms, build_fts_match_expression, build_like_clause
+from ..shared.fts_query import (
+    tokenize_search_terms, build_fts_match_expression, build_like_clause,
+    DEFAULT_SEARCH_LIMIT, validate_result_limit, cap_results,
+)
 from ._common import (
     _open_project_connection,
     get_cached_project_root,
@@ -119,6 +122,7 @@ class ModulesQueryResult:
     """Result of modules list operation."""
     success: bool
     modules: Tuple[ModuleRecord, ...] = ()
+    total_count: int = 0
     error: Optional[str] = None
     return_statements: Tuple[str, ...] = ()
 
@@ -653,6 +657,7 @@ def get_all_modules(project_root: Optional[str] = None) -> ModulesQueryResult:
         return ModulesQueryResult(
             success=True,
             modules=modules,
+            total_count=len(modules),
             return_statements=get_return_statements("get_all_modules"),
         )
 
@@ -1081,7 +1086,11 @@ def get_unassigned_files(project_root: Optional[str] = None) -> UnassignedFilesR
         conn.close()
 
 
-def search_modules(search_string: str, project_root: Optional[str] = None) -> ModulesQueryResult:
+def search_modules(
+    search_string: str,
+    limit: Optional[int] = DEFAULT_SEARCH_LIMIT,
+    project_root: Optional[str] = None,
+) -> ModulesQueryResult:
     """
     Search modules by name, purpose, or description.
 
@@ -1089,23 +1098,29 @@ def search_modules(search_string: str, project_root: Optional[str] = None) -> Mo
 
     Args:
         search_string: Search term
+        limit: Maximum modules returned, best matches first (default 20; None = all)
 
     Returns:
-        ModulesQueryResult with matching modules
+        ModulesQueryResult with matching modules; total_count is the match count before limit
     """
     if not search_string or not search_string.strip():
         return ModulesQueryResult(success=False, error="Search string is required")
+
+    limit_error = validate_result_limit(limit)
+    if limit_error:
+        return ModulesQueryResult(success=False, error=limit_error)
 
     project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
-        rows = _search_modules_effect(conn, search_string.strip())
+        rows, total_count = cap_results(_search_modules_effect(conn, search_string.strip()), limit)
         modules = tuple(row_to_module_record(row) for row in rows)
 
         return ModulesQueryResult(
             success=True,
             modules=modules,
+            total_count=total_count,
             return_statements=get_return_statements("search_modules"),
         )
 

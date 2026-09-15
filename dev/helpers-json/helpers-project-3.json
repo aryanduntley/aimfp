@@ -676,19 +676,29 @@
           "required": false,
           "default": false,
           "description": "If true, return only id/name + purpose/parameters/returns"
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "required": false,
+          "default": 20,
+          "description": "Maximum functions returned, best matches first (default 20)"
         }
       ],
-      "purpose": "Search tracked functions by name or purpose with relevance ranking. Multi-word input is split into words; a row matches if ANY word prefix-matches (\"disk space free\" finds get_free_disk_space). Rows matching more words rank first. Punctuation is ignored, so no FTS syntax is needed or honored.",
-      "error_handling": "Returns empty list when nothing matches or input has no word characters. Falls back to per-word LIKE if the FTS5 table is missing",
+      "purpose": "Search tracked functions by name or purpose with relevance ranking. Multi-word input is split into words; a row matches if ANY word prefix-matches (\"disk space free\" finds get_free_disk_space). Rows matching more words rank first. Punctuation is ignored, so no FTS syntax is needed or honored. Common stopwords (the, of, and, ...) are ignored unless the query is nothing but stopwords. Results are capped by limit; total_count reports all matches.",
+      "error_handling": "Returns error if limit < 1. Returns empty list when nothing matches or input has no word characters. Falls back to per-word LIKE if the FTS5 table is missing",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "If total_count exceeds the functions returned, add more specific words to the search or raise limit."
+      ],
       "target_database": "project",
       "used_by_directives": [],
       "implementation_notes": [
         "Terms built by helpers/shared/fts_query.py: tokenize_search_terms -> build_fts_match_expression ('\"disk\"* OR \"space\"*')",
         "Ranked by bm25(functions_fts, 5.0, 1.0) \u2014 name matches weigh more than purpose matches",
-        "Fallback: build_like_clause per term when functions_fts is missing (pre-migration databases)"
+        "Fallback: build_like_clause per term when functions_fts is missing (pre-migration databases)",
+        "Returns: {functions[], total_count} \u2014 total_count is the match count before limit"
       ]
     }
   ],

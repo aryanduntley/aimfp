@@ -22,7 +22,10 @@ from typing import Optional, List, Tuple, Dict, Any
 
 from ..utils import get_return_statements
 from ..shared.slugs import mint_slug
-from ..shared.fts_query import tokenize_search_terms, build_fts_match_expression, build_like_clause
+from ..shared.fts_query import (
+    tokenize_search_terms, build_fts_match_expression, build_like_clause,
+    DEFAULT_SEARCH_LIMIT, validate_result_limit, cap_results,
+)
 
 # Import common project utilities (DRY principle)
 from ._common import _open_connection, _check_file_exists, get_cached_project_root, _open_project_connection
@@ -94,6 +97,7 @@ class FunctionQueryResult:
     """Result of function lookup that may return multiple matches (e.g. by name)."""
     success: bool
     functions: Tuple[FunctionRecord, ...] = ()
+    total_count: int = 0
     error: Optional[str] = None
     return_statements: Tuple[str, ...] = ()
 
@@ -858,6 +862,7 @@ def search_functions(
     search_string: str,
     include_details: bool = True,
     details_only: bool = False,
+    limit: Optional[int] = DEFAULT_SEARCH_LIMIT,
     project_root: Optional[str] = None
 ) -> FunctionQueryResult:
     """
@@ -865,14 +870,17 @@ def search_functions(
 
     The search text is split into words; a function matches when ANY word
     prefix-matches its name or purpose, ranked so functions matching more
-    words come first. Punctuation is ignored. Falls back to per-word LIKE if
-    the FTS5 table is not available (pre-migration databases).
+    words come first. Punctuation and stopwords are ignored. Falls back to
+    per-word LIKE if the FTS5 table is not available (pre-migration databases).
 
     Args:
         search_string: Free-text search (one or more words)
+        include_details: If False, omit purpose/parameters/returns
+        details_only: If True, return only id/name + purpose/parameters/returns
+        limit: Maximum functions returned, best matches first (default 20; None = all)
 
     Returns:
-        FunctionQueryResult with matching function records
+        FunctionQueryResult with matching function records; total_count is the match count before limit
 
     Example:
         >>> result = search_functions("calculate")
@@ -881,6 +889,10 @@ def search_functions(
         >>> [f.name for f in result.functions]
         ['calculate_sum_id_42', 'calculate_total_id_55']
     """
+    limit_error = validate_result_limit(limit)
+    if limit_error:
+        return FunctionQueryResult(success=False, error=limit_error)
+
     terms = tokenize_search_terms(search_string)
     if not terms:
         return FunctionQueryResult(
@@ -916,7 +928,7 @@ def search_functions(
                 like_params
             )
 
-        rows = cursor.fetchall()
+        rows, total_count = cap_results(cursor.fetchall(), limit)
         function_records = tuple(
             row_to_function_record(row, include_details=include_details, details_only=details_only)
             for row in rows
@@ -925,6 +937,7 @@ def search_functions(
         return FunctionQueryResult(
             success=True,
             functions=function_records,
+            total_count=total_count,
             return_statements=get_return_statements("search_functions")
         )
 
@@ -984,6 +997,7 @@ def get_function_by_name(
         return FunctionQueryResult(
             success=True,
             functions=function_records,
+            total_count=len(function_records),
             return_statements=get_return_statements("get_function_by_name")
         )
 
