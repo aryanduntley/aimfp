@@ -19,7 +19,7 @@ Pure read — never mutates. Run on main BEFORE spawning workers.
 
 import subprocess
 import sqlite3
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from ..utils import (
     Result,
@@ -33,7 +33,12 @@ from ._common import _HIERARCHY_TABLES, _table_has_column, PROJECT_DB_REL_PATH
 
 # Running-schema version the package expects (kept in step with project.sql's
 # schema_version seed). A recorded version below this means a migration is pending.
-EXPECTED_SCHEMA_VERSION = "1.11"
+EXPECTED_SCHEMA_VERSION = "1.12"
+
+
+def version_tuple(version: str) -> Tuple[int, ...]:
+    """Pure: '1.12' -> (1, 12), so versions compare numerically ('1.9' < '1.12')."""
+    return tuple(int(part) for part in version.split(".") if part.isdigit())
 
 
 def _count_missing_keys(conn: sqlite3.Connection) -> Dict[str, int]:
@@ -115,7 +120,7 @@ def verify_fanout_ready() -> Result:
             "project.db has uncommitted changes — commit it on main BEFORE spawning workers "
             "so every worktree clone shares the same base."
         )
-    if schema_version not in (EXPECTED_SCHEMA_VERSION, "unknown") and schema_version < EXPECTED_SCHEMA_VERSION:
+    if schema_version not in (EXPECTED_SCHEMA_VERSION, "unknown") and version_tuple(schema_version) < version_tuple(EXPECTED_SCHEMA_VERSION):
         blockers.append(
             f"Schema version {schema_version} < expected {EXPECTED_SCHEMA_VERSION} — a migration "
             f"is pending. Open the project once to migrate, then re-check."

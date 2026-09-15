@@ -107,7 +107,8 @@ def get_from_user_custom(
 
         return QueryResult(
             success=True,
-            rows=rows
+            rows=rows,
+            return_statements=get_return_statements("get_from_user_custom")
         )
 
     except Exception as e:
@@ -173,7 +174,8 @@ def get_from_user_custom_where(
 
         return QueryResult(
             success=True,
-            rows=rows
+            rows=rows,
+            return_statements=get_return_statements("get_from_user_custom_where")
         )
 
     except Exception as e:
@@ -228,7 +230,8 @@ def query_user_custom(
 
         return QueryResult(
             success=True,
-            rows=rows
+            rows=rows,
+            return_statements=get_return_statements("query_user_custom")
         )
 
     except Exception as e:
@@ -379,7 +382,8 @@ def update_user_custom_entry(
         return MutationResult(
             success=True,
             id=record_id,
-            message=f"Entry updated in {table}"
+            message=f"Entry updated in {table}",
+            return_statements=get_return_statements("update_user_custom_entry")
         )
 
     except sqlite3.IntegrityError as e:
@@ -443,7 +447,8 @@ def delete_user_custom_entry(
         return MutationResult(
             success=True,
             id=record_id,
-            message=f"Entry deleted from {table}"
+            message=f"Entry deleted from {table}",
+            return_statements=get_return_statements("delete_user_custom_entry")
         )
 
     except Exception as e:

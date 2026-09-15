@@ -102,6 +102,7 @@ class ProjectResult:
     success: bool
     project: Optional[ProjectRecord] = None
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,7 @@ class BlueprintChangeResult:
     changed: bool = False
     method: Optional[str] = None  # 'git' or 'filesystem'
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -574,7 +576,8 @@ def get_project(project_root: Optional[str] = None) -> ProjectResult:
 
         return ProjectResult(
             success=True,
-            project=project
+            project=project,
+            return_statements=get_return_statements("get_project")
         )
 
     except Exception as e:
@@ -684,7 +687,8 @@ def blueprint_has_changed(blueprint_path: str, project_root: Optional[str] = Non
             return BlueprintChangeResult(
                 success=True,
                 changed=True,
-                method='git'
+                method='git',
+                return_statements=get_return_statements("blueprint_has_changed")
             )
 
         # Fallback to filesystem timestamp method
@@ -698,7 +702,8 @@ def blueprint_has_changed(blueprint_path: str, project_root: Optional[str] = Non
                     return BlueprintChangeResult(
                         success=True,
                         changed=True,
-                        method='filesystem'
+                        method='filesystem',
+                        return_statements=get_return_statements("blueprint_has_changed")
                     )
             except (ValueError, AttributeError):
                 pass
@@ -706,7 +711,8 @@ def blueprint_has_changed(blueprint_path: str, project_root: Optional[str] = Non
         return BlueprintChangeResult(
             success=True,
             changed=False,
-            method='git'
+            method='git',
+            return_statements=get_return_statements("blueprint_has_changed")
         )
 
     except Exception as e:
@@ -736,7 +742,8 @@ def get_infrastructure_by_type(type: str, project_root: Optional[str] = None) ->
 
         return InfrastructureResult(
             success=True,
-            infrastructure=infrastructure
+            infrastructure=infrastructure,
+            return_statements=get_return_statements("get_infrastructure_by_type")
         )
 
     except Exception as e:
@@ -958,7 +965,8 @@ def get_project_root(project_root: Optional[str] = None) -> SourceDirResult:
 
         return SourceDirResult(
             success=True,
-            data=project_root
+            data=project_root,
+            return_statements=get_return_statements("get_project_root")
         )
 
     except Exception as e:

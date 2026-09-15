@@ -4,11 +4,36 @@
       "name": "add_module",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "name", "type": "string", "required": true, "description": "Module name (e.g., 'wallet_connection', 'validation')"},
-        {"name": "path", "type": "string", "required": true, "description": "Directory path relative to source root (e.g., 'src/wallet_connection/')"},
-        {"name": "description", "type": "string", "required": false, "description": "What this module does"},
-        {"name": "purpose", "type": "string", "required": false, "description": "Domain concern this module owns (one sentence)"},
-        {"name": "external_dependencies", "type": "array", "required": false, "description": "Libraries/services this module wraps (e.g., ['walletconnect', 'stripe'])"}
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "description": "Module name (e.g., 'wallet_connection', 'validation')"
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Directory path relative to source root (e.g., 'src/wallet_connection/')"
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false,
+          "description": "What this module does"
+        },
+        {
+          "name": "purpose",
+          "type": "string",
+          "required": false,
+          "description": "Domain concern this module owns (one sentence)"
+        },
+        {
+          "name": "external_dependencies",
+          "type": "array",
+          "required": false,
+          "description": "Libraries/services this module wraps (e.g., ['walletconnect', 'stripe'])"
+        }
       ],
       "purpose": "Create a new module (reusable code boundary). A module maps to a directory. Files are assigned explicitly via add_file_to_module. Use external_dependencies to record wrapped libraries.",
       "error_handling": "Returns error on duplicate name or path",
@@ -22,19 +47,11 @@
       "used_by_directives": [
         {
           "directive_name": "project_module_check",
-          "execution_context": "create_new_module",
+          "execution_context": "create_module",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
           "description": "Create module entry when AI determines code should be organized as a reusable module"
-        },
-        {
-          "directive_name": "project_file_write",
-          "execution_context": "module_gate_create",
-          "sequence_order": 5,
-          "is_required": false,
-          "parameters_mapping": {},
-          "description": "Create module if file_write determines new domain logic needs module organization"
         }
       ]
     },
@@ -42,7 +59,12 @@
       "name": "get_module_by_name",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "name", "type": "string", "required": true, "description": "Module name to look up"}
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "description": "Module name to look up"
+        }
       ],
       "purpose": "Get module by name. Returns module record with path, purpose, and external_dependencies.",
       "error_handling": "Returns None if not found",
@@ -53,7 +75,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_module_check",
-          "execution_context": "lookup_existing_module",
+          "execution_context": "search_and_assign_module",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -65,7 +87,12 @@
       "name": "get_module_by_path",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "path", "type": "string", "required": true, "description": "Directory path to look up"}
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
+          "description": "Directory path to look up"
+        }
       ],
       "purpose": "Get module by directory path.",
       "error_handling": "Returns None if not found",
@@ -91,7 +118,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_module_check",
-          "execution_context": "list_all_modules",
+          "execution_context": "search_and_assign_module",
           "sequence_order": 1,
           "is_required": false,
           "parameters_mapping": {},
@@ -99,7 +126,7 @@
         },
         {
           "directive_name": "aimfp_status",
-          "execution_context": "show_module_overview",
+          "execution_context": "generate_status_report",
           "sequence_order": 8,
           "is_required": false,
           "parameters_mapping": {},
@@ -111,12 +138,42 @@
       "name": "update_module",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "module_id", "type": "integer", "required": true, "description": "Module ID to update"},
-        {"name": "name", "type": "string", "required": false, "description": "New name"},
-        {"name": "path", "type": "string", "required": false, "description": "New path"},
-        {"name": "description", "type": "string", "required": false, "description": "New description"},
-        {"name": "purpose", "type": "string", "required": false, "description": "New purpose"},
-        {"name": "external_dependencies", "type": "array", "required": false, "description": "New dependencies list"}
+        {
+          "name": "module_id",
+          "type": "integer",
+          "required": true,
+          "description": "Module ID to update"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": false,
+          "description": "New name"
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": false,
+          "description": "New path"
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false,
+          "description": "New description"
+        },
+        {
+          "name": "purpose",
+          "type": "string",
+          "required": false,
+          "description": "New purpose"
+        },
+        {
+          "name": "external_dependencies",
+          "type": "array",
+          "required": false,
+          "description": "New dependencies list"
+        }
       ],
       "purpose": "Update module metadata. Only non-None fields are updated.",
       "error_handling": "Returns error if module not found or integrity violation",
@@ -130,7 +187,12 @@
       "name": "delete_module",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "module_id", "type": "integer", "required": true, "description": "Module ID to delete"}
+        {
+          "name": "module_id",
+          "type": "integer",
+          "required": true,
+          "description": "Module ID to delete"
+        }
       ],
       "purpose": "Delete a module. CASCADE removes module_files junction entries. Files themselves are NOT deleted.",
       "error_handling": "Returns error if module not found. Creates audit note on deletion.",
@@ -144,8 +206,18 @@
       "name": "add_file_to_module",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "file_id", "type": "integer", "required": true, "description": "File ID to assign"},
-        {"name": "module_id", "type": "integer", "required": true, "description": "Module ID to assign to"}
+        {
+          "name": "file_id",
+          "type": "integer",
+          "required": true,
+          "description": "File ID to assign"
+        },
+        {
+          "name": "module_id",
+          "type": "integer",
+          "required": true,
+          "description": "Module ID to assign to"
+        }
       ],
       "purpose": "Assign a file to a module. Creates module_files junction entry. Same pattern as add_file_to_flow.",
       "error_handling": "Returns error if file or module not found, or if already assigned",
@@ -158,20 +230,12 @@
       "target_database": "project",
       "used_by_directives": [
         {
-          "directive_name": "project_reserve_finalize",
-          "execution_context": "module_assignment_after_finalize",
+          "directive_name": "project_module_check",
+          "execution_context": "search_and_assign_module",
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {},
           "description": "After finalizing a file, assign it to its module"
-        },
-        {
-          "directive_name": "project_file_write",
-          "execution_context": "module_assignment",
-          "sequence_order": 6,
-          "is_required": false,
-          "parameters_mapping": {},
-          "description": "Assign written file to its module after finalization"
         }
       ]
     },
@@ -179,8 +243,18 @@
       "name": "remove_file_from_module",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "file_id", "type": "integer", "required": true, "description": "File ID to remove"},
-        {"name": "module_id", "type": "integer", "required": true, "description": "Module ID to remove from"}
+        {
+          "name": "file_id",
+          "type": "integer",
+          "required": true,
+          "description": "File ID to remove"
+        },
+        {
+          "name": "module_id",
+          "type": "integer",
+          "required": true,
+          "description": "Module ID to remove from"
+        }
       ],
       "purpose": "Remove a file from a module. Deletes module_files junction entry. File itself is not deleted.",
       "error_handling": "Returns error on failure",
@@ -194,7 +268,12 @@
       "name": "get_module_files",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "module_id", "type": "integer", "required": true, "description": "Module ID"}
+        {
+          "name": "module_id",
+          "type": "integer",
+          "required": true,
+          "description": "Module ID"
+        }
       ],
       "purpose": "Get all files assigned to a module via module_files junction table.",
       "error_handling": "Returns error if module not found",
@@ -205,7 +284,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_module_check",
-          "execution_context": "inspect_module_contents",
+          "execution_context": "search_and_assign_module",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
@@ -217,7 +296,12 @@
       "name": "get_module_functions",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "module_id", "type": "integer", "required": true, "description": "Module ID"}
+        {
+          "name": "module_id",
+          "type": "integer",
+          "required": true,
+          "description": "Module ID"
+        }
       ],
       "purpose": "Get all functions in module files. Joins through module_files junction to files to functions.",
       "error_handling": "Returns error if module not found",
@@ -231,7 +315,12 @@
       "name": "get_module_types",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "module_id", "type": "integer", "required": true, "description": "Module ID"}
+        {
+          "name": "module_id",
+          "type": "integer",
+          "required": true,
+          "description": "Module ID"
+        }
       ],
       "purpose": "Get all types in module files. Joins through module_files junction to files to types.",
       "error_handling": "Returns error if module not found",
@@ -245,7 +334,12 @@
       "name": "get_module_dependencies",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "module_id", "type": "integer", "required": true, "description": "Module ID"}
+        {
+          "name": "module_id",
+          "type": "integer",
+          "required": true,
+          "description": "Module ID"
+        }
       ],
       "purpose": "Get cross-module dependencies. Finds interactions where a function in this module calls a function in a different module via module_files junction. Returns aggregated counts per target module.",
       "error_handling": "Returns error if module not found",
@@ -259,7 +353,12 @@
       "name": "get_module_for_file",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "file_id", "type": "integer", "required": true, "description": "File ID to look up"}
+        {
+          "name": "file_id",
+          "type": "integer",
+          "required": true,
+          "description": "File ID to look up"
+        }
       ],
       "purpose": "Find which module a file belongs to. Reverse lookup via module_files junction table.",
       "error_handling": "Returns None if file is not in any module. Returns error if file not found.",
@@ -272,16 +371,8 @@
       "target_database": "project",
       "used_by_directives": [
         {
-          "directive_name": "project_file_write",
-          "execution_context": "check_file_module_membership",
-          "sequence_order": 4,
-          "is_required": false,
-          "parameters_mapping": {},
-          "description": "Check if file being written belongs to a module for proper organization"
-        },
-        {
-          "directive_name": "project_reserve_finalize",
-          "execution_context": "module_assignment_check",
+          "directive_name": "project_module_check",
+          "execution_context": "evaluate_module_candidacy",
           "sequence_order": 2,
           "is_required": false,
           "parameters_mapping": {},
@@ -304,7 +395,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_status",
-          "execution_context": "module_gap_check",
+          "execution_context": "generate_status_report",
           "sequence_order": 9,
           "is_required": false,
           "parameters_mapping": {},
@@ -316,9 +407,14 @@
       "name": "search_modules",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "search_string", "type": "string", "required": true, "description": "Search term"}
+        {
+          "name": "search_string",
+          "type": "string",
+          "required": true,
+          "description": "Free-text search over module name, purpose, and description, one or more words"
+        }
       ],
-      "purpose": "Search modules by name, purpose, or description. Uses FTS5 ranked search with LIKE fallback.",
+      "purpose": "Search modules by name, purpose, or description with relevance ranking. Multi-word input is split into words; a row matches if ANY word prefix-matches (\"disk space free\" finds get_free_disk_space). Rows matching more words rank first. Punctuation is ignored, so no FTS syntax is needed or honored.",
       "error_handling": "Returns error if search string empty",
       "is_tool": true,
       "is_sub_helper": false,
@@ -330,19 +426,11 @@
       "used_by_directives": [
         {
           "directive_name": "project_module_check",
-          "execution_context": "search_existing_modules",
+          "execution_context": "search_and_assign_module",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
           "description": "Search for existing modules that might already cover the domain logic being written"
-        },
-        {
-          "directive_name": "project_file_write",
-          "execution_context": "module_gate_search",
-          "sequence_order": 4,
-          "is_required": false,
-          "parameters_mapping": {},
-          "description": "Search for modules during file_write module gate"
         }
       ]
     },
@@ -350,7 +438,12 @@
       "name": "add_files_to_module",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "links", "type": "array", "required": true, "description": "List of [file_id, module_id] tuples to assign"}
+        {
+          "name": "links",
+          "type": "array",
+          "required": true,
+          "description": "List of [file_id, module_id] tuples to assign"
+        }
       ],
       "purpose": "Batch assign multiple files to modules. More efficient than multiple add_file_to_module calls. Skips duplicates silently, fails fast on missing entities.",
       "error_handling": "Returns error on empty list or missing file/module IDs. Skips existing assignments with skipped_count.",
@@ -363,8 +456,8 @@
       "target_database": "project",
       "used_by_directives": [
         {
-          "directive_name": "project_reserve_finalize",
-          "execution_context": "batch_module_assignment_after_finalize",
+          "directive_name": "project_module_check",
+          "execution_context": "search_and_assign_module",
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {},
@@ -376,7 +469,12 @@
       "name": "remove_files_from_module",
       "file_path": "helpers/project/modules.py",
       "parameters": [
-        {"name": "links", "type": "array", "required": true, "description": "List of [file_id, module_id] tuples to remove"}
+        {
+          "name": "links",
+          "type": "array",
+          "required": true,
+          "description": "List of [file_id, module_id] tuples to remove"
+        }
       ],
       "purpose": "Batch remove multiple files from modules. More efficient than multiple remove_file_from_module calls. Skips non-existent entries, reports modules left empty.",
       "error_handling": "Returns error on empty list or missing module IDs. Reports emptied modules in empty_modules field.",

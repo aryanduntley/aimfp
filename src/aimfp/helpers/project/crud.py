@@ -44,6 +44,7 @@ class QueryResult:
     success: bool
     records: Tuple[Dict[str, Any], ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -277,7 +278,8 @@ def get_from_project(table: str, id_array: List[int], project_root: Optional[str
 
         return QueryResult(
             success=True,
-            records=records
+            records=records,
+            return_statements=get_return_statements("get_from_project")
         )
 
     except Exception as e:
@@ -316,7 +318,8 @@ def get_from_project_where(
 
         return QueryResult(
             success=True,
-            records=records
+            records=records,
+            return_statements=get_return_statements("get_from_project_where")
         )
 
     except Exception as e:
@@ -347,7 +350,8 @@ def query_project(table: str, query: str, project_root: Optional[str] = None) ->
 
         return QueryResult(
             success=True,
-            records=records
+            records=records,
+            return_statements=get_return_statements("query_project")
         )
 
     except Exception as e:

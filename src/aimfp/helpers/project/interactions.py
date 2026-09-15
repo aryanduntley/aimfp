@@ -87,6 +87,7 @@ class InteractionQueryResult:
     success: bool
     interactions: Tuple[InteractionRecord, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -822,6 +823,7 @@ def get_interactions_by_function(
         return InteractionQueryResult(
             success=True,
             interactions=records,
+            return_statements=get_return_statements("get_interactions_by_function")
         )
 
     except Exception as e:
@@ -869,6 +871,7 @@ def get_interactions_by_file(
         return InteractionQueryResult(
             success=True,
             interactions=records,
+            return_statements=get_return_statements("get_interactions_by_file")
         )
 
     except Exception as e:

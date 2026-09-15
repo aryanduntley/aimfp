@@ -43,6 +43,7 @@ class TablesResult:
     success: bool
     tables: Tuple[str, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ class FieldsResult:
     success: bool
     fields: Tuple[FieldInfo, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,7 @@ class SchemaResult:
     success: bool
     schema: Dict[str, Tuple[FieldInfo, ...]] = None
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,7 @@ class JsonParametersResult:
     success: bool
     parameters: Dict[str, str] = None
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 # ============================================================================
@@ -136,7 +140,8 @@ def get_project_tables(project_root: Optional[str] = None) -> TablesResult:
 
         return TablesResult(
             success=True,
-            tables=tables
+            tables=tables,
+            return_statements=get_return_statements("get_project_tables")
         )
 
     except Exception as e:
@@ -176,7 +181,8 @@ def get_project_fields(table: str, project_root: Optional[str] = None) -> Fields
 
         return FieldsResult(
             success=True,
-            fields=fields
+            fields=fields,
+            return_statements=get_return_statements("get_project_fields")
         )
 
     except Exception as e:
@@ -211,7 +217,8 @@ def get_project_schema(project_root: Optional[str] = None) -> SchemaResult:
 
         return SchemaResult(
             success=True,
-            schema=schema
+            schema=schema,
+            return_statements=get_return_statements("get_project_schema")
         )
 
     except Exception as e:
@@ -260,7 +267,8 @@ def get_project_json_parameters(table: str, project_root: Optional[str] = None) 
 
         return JsonParametersResult(
             success=True,
-            parameters=parameters
+            parameters=parameters,
+            return_statements=get_return_statements("get_project_json_parameters")
         )
 
     except Exception as e:

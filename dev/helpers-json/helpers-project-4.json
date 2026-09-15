@@ -195,19 +195,11 @@
         },
         {
           "directive_name": "project_file_write",
-          "execution_context": "finalize_after_write",
+          "execution_context": "finalize_reservations",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
           "description": "Finalize type reservations after successful code generation"
-        },
-        {
-          "directive_name": "project_update_db",
-          "execution_context": "finalize_new_types",
-          "sequence_order": 2,
-          "is_required": true,
-          "parameters_mapping": {},
-          "description": "Finalize type reservations when updating database with new type metadata"
         }
       ]
     },
@@ -298,14 +290,6 @@
       "target_database": "project",
       "used_by_directives": [
         {
-          "directive_name": "project_update_db",
-          "execution_context": "update_types_table",
-          "sequence_order": 1,
-          "is_required": true,
-          "parameters_mapping": {},
-          "description": "Update type metadata after code generation - synchronizes type definitions and ADT structures"
-        },
-        {
           "directive_name": "project_dependency_sync",
           "execution_context": "update_dependency_entry",
           "sequence_order": 6,
@@ -350,7 +334,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -379,7 +363,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_file_delete",
-          "execution_context": "delete_file_and_db_records",
+          "execution_context": "dependencies_exist_cleanup_loop",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
@@ -418,7 +402,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "DB-FIRST: Use this lookup BEFORE reading source files. Type definitions (definition_json, description) in the DB provide the full type shape \u2014 often eliminating the need to read the file. Only read source files when the DB doesn't have what you need."
+        "No match: try search_types with descriptive words before concluding the type does not exist."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -476,7 +460,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_update_db",
-          "execution_context": "add_type_function_relationships",
+          "execution_context": "update_functions_table",
           "sequence_order": 5,
           "is_required": true,
           "parameters_mapping": {},
@@ -558,7 +542,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -620,7 +604,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_update_db",
-          "execution_context": "add_function_interactions",
+          "execution_context": "update_interactions_table",
           "sequence_order": 4,
           "is_required": true,
           "parameters_mapping": {},
@@ -656,7 +640,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_update_db",
-          "execution_context": "add_function_interactions",
+          "execution_context": "update_interactions_table",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
@@ -763,7 +747,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -800,7 +784,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "DB-FIRST: Use this to trace dependency graphs BEFORE reading source files. Shows what a function calls (source) and what calls it (target) \u2014 often answers investigation questions without reading code."
+        "The graph holds only interactions recorded via add_interactions \u2014 before a risky change, confirm callers in source if the list looks incomplete. Missing edges you find are tracking gaps: record them with add_interactions."
       ],
       "implementation_notes": [
         "Returns: {success, interactions: [{id, source_function_id, source_function_name, source_file_name, source_file_path, target_function_id, target_function_name, target_file_name, target_file_path, interaction_type, description, created_at, updated_at}, ...]}",
@@ -813,7 +797,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_dependency_map",
-          "execution_context": "trace_dependency_graph",
+          "execution_context": "generate_dependency_graph",
           "sequence_order": 2,
           "is_required": false,
           "parameters_mapping": {},
@@ -838,7 +822,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "DB-FIRST: Use this to understand a file's dependencies BEFORE reading it. Shows all function relationships involving this file \u2014 often answers 'how is this file connected?' without reading source code."
+        "The graph holds only interactions recorded via add_interactions \u2014 if a known dependency is missing, it is a tracking gap: record it with add_interactions."
       ],
       "implementation_notes": [
         "Returns: {success, interactions: [{id, source_function_id, source_function_name, source_file_name, source_file_path, target_function_id, target_function_name, target_file_name, target_file_path, interaction_type, description, created_at, updated_at}, ...]}",
@@ -851,7 +835,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_dependency_map",
-          "execution_context": "trace_file_dependencies",
+          "execution_context": "generate_dependency_graph",
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {},
@@ -868,7 +852,7 @@
           "type": "string",
           "required": true,
           "default": null,
-          "description": "Search string for type name or description (FTS5 full-text search)"
+          "description": "Free-text search over type name and description, one or more words"
         },
         {
           "name": "include_details",
@@ -885,16 +869,17 @@
           "description": "If true, return only id/name + definition_json/description/links"
         }
       ],
-      "purpose": "Search tracked types by name or description using FTS5 full-text search with relevance ranking.",
-      "error_handling": "Falls back to LIKE search if FTS5 not available",
+      "purpose": "Search tracked types by name or description with relevance ranking. Multi-word input is split into words; a row matches if ANY word prefix-matches (\"disk space free\" finds get_free_disk_space). Rows matching more words rank first. Punctuation is ignored, so no FTS syntax is needed or honored.",
+      "error_handling": "Returns empty list when nothing matches or input has no word characters. Falls back to per-word LIKE if the FTS5 table is missing",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [],
       "target_database": "project",
       "used_by_directives": [],
       "implementation_notes": [
-        "Uses FTS5 MATCH for relevance-ranked results",
-        "Falls back to LIKE for pre-migration databases"
+        "Terms built by helpers/shared/fts_query.py (quoted, OR-joined prefix terms)",
+        "Ranked by bm25(types_fts, 5.0, 1.0) \u2014 name matches weigh more than description matches",
+        "Fallback: build_like_clause per term when types_fts is missing (pre-migration databases)"
       ]
     }
   ],
@@ -906,6 +891,6 @@
     "first_helper": "reserve_type",
     "last_helper": "get_interactions_by_file",
     "status": "return_statements complete - 10 helpers enhanced",
-    "last_updated": "2026-03-09"
+    "last_updated": "2026-09-14"
   }
 }

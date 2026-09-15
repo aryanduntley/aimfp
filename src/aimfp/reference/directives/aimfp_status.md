@@ -486,7 +486,7 @@ Errors (24h): 0
 - **`get_project_status(project_root, type="summary")`** — In-session helper. Retrieves work hierarchy data with counts, records, and nested tree in a single pass. Returns priority-based current focus (sidequest → subtask → task). Use this when AI needs fresh state mid-session (e.g., after context compression, after completing work items).
   - Returns: `{counts{}, completion_paths[], milestones[], tasks[], subtasks[], sidequests[], blocked_items[], tree{}}`
 
-- **`get_task_context(task_id)`** — Retrieves complete context for resuming a specific task, including associated items, flows, files, and functions. Auto-detects task_type from task_id.
+- **`get_task_context(task_id)`** — Retrieves complete context for resuming a specific task, including associated items, flows, files, and functions. Files are the ones linked to the task (and its subtasks) in `task_files` — linked automatically when tracked while the item is in_progress, or explicitly via `link_files_to_task`. Auto-detects task_type from task_id.
 
 **Note**: Project detection and initialization routing (checking for `.aimfp-project/`, `.git/.aimfp/` backup, prompting user) is AI decision logic, not a helper function. See "Project Not Initialized" section above.
 

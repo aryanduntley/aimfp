@@ -207,7 +207,9 @@ AIMFP works with Python, JavaScript, TypeScript, Rust, Go, and more. FP directiv
 - `project`: High-level metadata (name, purpose, goals, status, user_directives_status, last_known_git_hash)
 - `files`, `functions`, `interactions`: Code structure tracking
 - `themes`, `flows`: Organizational groupings
-- `completion_path`, `milestones`, `tasks`, `subtasks`, `sidequests`: Hierarchical roadmap
+- `completion_path`, `milestones`, `tasks`, `subtasks`, `sidequests`, `items`: Hierarchical roadmap
+- `task_files`: Files worked on for each task/subtask/sidequest — linked automatically while the item is in progress
+- `modules`, `module_files`, `file_flows`: Reusable code boundaries and file-to-flow assignments
 - `notes`: Runtime logging with optional directive context (source, severity, directive_name)
 - `types`: Algebraic data types (ADTs)
 - `infrastructure`: Project setup (language, packages, testing)
@@ -956,26 +958,35 @@ dev/
 ├── helpers-json/                 # Helper function definitions (source of truth)
 │   ├── helpers-core.json         # Core/directive helpers
 │   ├── helpers-orchestrators.json # Entry point and status helpers
-│   ├── helpers-project-*.json    # Project management helpers (9 files)
+│   ├── helpers-project-*.json    # Project management helpers (9 numbered files)
+│   ├── helpers-project-modules.json    # Module helpers
+│   ├── helpers-project-task-files.json # Task-file link helpers
+│   ├── helpers-catalog.json      # Existing-codebase adoption helpers
+│   ├── helpers-changeset.json    # Semantic changeset merge helpers
+│   ├── helpers-backup.json       # Backup helpers
+│   ├── helpers-notices.json      # One-time release notice helpers
 │   ├── helpers-settings.json     # User preference helpers
 │   ├── helpers-user-custom.json  # User directive helpers
 │   ├── helpers-git.json          # Git operation helpers
 │   └── helpers-index.json        # Shared/global helpers
+├── notices-json/notices.json     # One-time release notices (synced into aimfp_core.db)
 ├── sync-directives.py            # Imports JSON → aimfp_core.db
+├── bump-version.py               # Syncs the package version across the files below
 └── logs/                         # Development logs
 ```
 
-**Dev workflow**: Modify JSON files in `dev/` → run `sync-directives.py` to rebuild `aimfp_core.db` → test → release. End users only interact with the pre-populated `aimfp_core.db`, never the JSON files directly.
+**Dev workflow**: Modify JSON files in `dev/` → delete `src/aimfp/database/aimfp_core.db` and run `sync-directives.py` to rebuild it → test → release. End users only interact with the pre-populated `aimfp_core.db`, never the JSON files directly.
 
 ### Version Locations
 
-**All three must be kept in sync when bumping versions:**
+**All four must be kept in sync when bumping versions** (`python3 dev/bump-version.py` does this):
 
 | File | Variable | Purpose |
 |------|----------|---------|
 | `pyproject.toml` | `version = "X.Y.Z"` | Package version (PyPI, pip install) |
 | `src/aimfp/__init__.py` | `__version__ = "X.Y.Z"` | Runtime version (`import aimfp; aimfp.__version__`) |
 | `src/aimfp/mcp_server/server.py` | `SERVER_VERSION = "X.Y.Z"` | MCP `initialize` handshake response (`serverInfo.version`) |
+| `.claude-plugin/plugin.json` | `"version": "X.Y.Z"` | Claude Code plugin version |
 
 ---
 

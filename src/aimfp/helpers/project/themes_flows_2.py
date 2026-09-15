@@ -102,6 +102,7 @@ class FlowsQueryResult:
     success: bool
     flows: Tuple[FlowRecord, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,7 @@ class ThemesQueryResult:
     success: bool
     themes: Tuple[ThemeRecord, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,7 @@ class FilesQueryResult:
     success: bool
     files: Tuple[FileRecord, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -749,7 +752,8 @@ def get_flows_for_theme(
 
         return FlowsQueryResult(
             success=True,
-            flows=flow_records
+            flows=flow_records,
+            return_statements=get_return_statements("get_flows_for_theme")
         )
 
     except Exception as e:
@@ -793,7 +797,8 @@ def get_themes_for_flow(
 
         return ThemesQueryResult(
             success=True,
-            themes=theme_records
+            themes=theme_records,
+            return_statements=get_return_statements("get_themes_for_flow")
         )
 
     except Exception as e:
@@ -837,7 +842,8 @@ def get_files_by_flow(
 
         return FilesQueryResult(
             success=True,
-            files=file_records
+            files=file_records,
+            return_statements=get_return_statements("get_files_by_flow")
         )
 
     except Exception as e:
@@ -881,7 +887,8 @@ def get_flows_for_file(
 
         return FlowsQueryResult(
             success=True,
-            flows=flow_records
+            flows=flow_records,
+            return_statements=get_return_statements("get_flows_for_file")
         )
 
     except Exception as e:

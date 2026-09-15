@@ -30,14 +30,6 @@
           "is_required": true,
           "parameters_mapping": {},
           "description": "Check if theme exists before mapping file - validates theme name from file metadata"
-        },
-        {
-          "directive_name": "aimfp_init",
-          "execution_context": "create_project_structure",
-          "sequence_order": 3,
-          "is_required": false,
-          "parameters_mapping": {},
-          "description": "Check if default themes already exist during initialization - prevents duplicates"
         }
       ]
     },
@@ -71,14 +63,6 @@
           "is_required": true,
           "parameters_mapping": {},
           "description": "Check if flow exists before mapping file - validates flow name from file metadata"
-        },
-        {
-          "directive_name": "aimfp_init",
-          "execution_context": "create_project_structure",
-          "sequence_order": 4,
-          "is_required": false,
-          "parameters_mapping": {},
-          "description": "Check if default flows already exist during initialization - prevents duplicates"
         }
       ]
     },
@@ -99,7 +83,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_blueprint_read",
-          "execution_context": "database_fallback",
+          "execution_context": "check_database_fallback",
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {},
@@ -140,7 +124,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_blueprint_read",
-          "execution_context": "database_fallback",
+          "execution_context": "check_database_fallback",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
@@ -185,7 +169,7 @@
         {
           "name": "ai_generated",
           "type": "boolean",
-          "required": true,
+          "required": false,
           "default": true,
           "description": "True if AI-generated, False if user-created"
         },
@@ -210,16 +194,8 @@
       "target_database": "project",
       "used_by_directives": [
         {
-          "directive_name": "aimfp_init",
-          "execution_context": "create_project_structure",
-          "sequence_order": 5,
-          "is_required": true,
-          "parameters_mapping": {},
-          "description": "Create initial project themes during initialization - populates themes from blueprint prompts"
-        },
-        {
           "directive_name": "project_theme_flow_mapping",
-          "execution_context": "new_theme_created",
+          "execution_context": "update_flow_themes",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
@@ -319,7 +295,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -358,7 +334,7 @@
         {
           "name": "ai_generated",
           "type": "boolean",
-          "required": true,
+          "required": false,
           "default": true,
           "description": "True if AI-generated"
         },
@@ -385,16 +361,8 @@
       "target_database": "project",
       "used_by_directives": [
         {
-          "directive_name": "aimfp_init",
-          "execution_context": "create_project_structure",
-          "sequence_order": 6,
-          "is_required": true,
-          "parameters_mapping": {},
-          "description": "Create initial project flows during initialization - populates flows from blueprint prompts"
-        },
-        {
           "directive_name": "project_theme_flow_mapping",
-          "execution_context": "new_flow_created",
+          "execution_context": "update_flow_themes",
           "sequence_order": 4,
           "is_required": true,
           "parameters_mapping": {},
@@ -528,7 +496,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -560,7 +528,7 @@
     "first_helper": "get_theme_by_name",
     "last_helper": "delete_flow",
     "status": "return_statements complete - 1 helper enhanced",
-    "last_updated": "2026-01-02",
+    "last_updated": "2026-09-14",
     "notes": "delete_flow includes comprehensive validation for tasks/sidequests flow_ids JSON arrays"
   }
 }

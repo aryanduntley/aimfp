@@ -205,6 +205,13 @@ def _collect_references(conn, idx: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     for r in _safe_rows(conn, "SELECT * FROM flow_themes"):
         put({"kind": "flow_theme", "flow": fl.get(r["flow_id"]), "theme": th.get(r["theme_id"])})
 
+    # task_files: polymorphic work-item endpoint (reference_table + slug key), absent pre-v1.12
+    for r in _safe_rows(conn, "SELECT * FROM task_files"):
+        rt = r["reference_table"]
+        put({"kind": "task_file", "reference_table": rt,
+             "work_item": idx.get(rt, {}).get("id2key", {}).get(r["reference_id"]),
+             "file": fi.get(r["file_id"])})
+
     return refs
 
 

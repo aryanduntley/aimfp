@@ -1,6 +1,15 @@
 -- project.db Schema
--- Version: 1.11
+-- Version: 1.12
 -- Purpose: Track project-specific data, including files, functions, themes, flows, and completion paths
+-- Changelog v1.12:
+--   - Added task_files junction: links a task/subtask/sidequest (polymorphic reference_table +
+--     reference_id, same pattern as items) to the files worked on for it
+--   - Populated automatically when files, functions, or types are reserved/finalized/cataloged/updated
+--     while a work item is in_progress, and explicitly via link_files_to_task
+--   - Purpose: get_task_context/get_task_files previously derived files from flows (and, through a
+--     column that never existed on items, returned none at all). Flows are architectural groupings;
+--     they cannot say which files a task actually touched
+--   - file_id cascades on file delete; delete_*_task_files triggers clean up on work-item delete
 -- Changelog v1.11:
 --   - Added stable `entity_key` column to functions and types (Stage 2 of semantic changeset merge)
 --   - entity_key is a nullable UNIQUE identity minted at reservation (format: <fn|ty>-<name>-<uuid8>)
@@ -321,6 +330,16 @@ CREATE TABLE IF NOT EXISTS modules (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Task-Files Junction: Files worked on for a task/subtask/sidequest (polymorphic, like items)
+CREATE TABLE IF NOT EXISTS task_files (
+    reference_table TEXT NOT NULL CHECK (reference_table IN ('tasks', 'subtasks', 'sidequests')),
+    reference_id INTEGER NOT NULL,
+    file_id INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (reference_table, reference_id, file_id),
+    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+
 -- Module-Files Junction: Explicit file-to-module assignment (same pattern as file_flows)
 CREATE TABLE IF NOT EXISTS module_files (
     module_id INTEGER NOT NULL,
@@ -511,10 +530,33 @@ BEGIN
     DELETE FROM items WHERE reference_table='sidequests' AND reference_id=OLD.id;
 END;
 
+-- Triggers for task_files cleanup (polymorphic orphan prevention)
+CREATE TRIGGER IF NOT EXISTS delete_task_task_files
+AFTER DELETE ON tasks
+FOR EACH ROW
+BEGIN
+    DELETE FROM task_files WHERE reference_table='tasks' AND reference_id=OLD.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS delete_subtask_task_files
+AFTER DELETE ON subtasks
+FOR EACH ROW
+BEGIN
+    DELETE FROM task_files WHERE reference_table='subtasks' AND reference_id=OLD.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS delete_sidequest_task_files
+AFTER DELETE ON sidequests
+FOR EACH ROW
+BEGIN
+    DELETE FROM task_files WHERE reference_table='sidequests' AND reference_id=OLD.id;
+END;
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_modules_path ON modules(path);
 CREATE INDEX IF NOT EXISTS idx_modules_name ON modules(name);
 CREATE INDEX IF NOT EXISTS idx_module_files_file ON module_files(file_id);
+CREATE INDEX IF NOT EXISTS idx_task_files_file ON task_files(file_id);
 CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 CREATE INDEX IF NOT EXISTS idx_functions_file_id ON functions(file_id);
 CREATE INDEX IF NOT EXISTS idx_completion_path_order ON completion_path(order_index);
@@ -632,4 +674,4 @@ CREATE TABLE IF NOT EXISTS schema_version (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.11');
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.12');

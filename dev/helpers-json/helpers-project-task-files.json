@@ -1,0 +1,92 @@
+{
+  "helpers": [
+    {
+      "name": "link_files_to_task",
+      "file_path": "helpers/project/task_files.py",
+      "parameters": [
+        {
+          "name": "task_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "ID of the task, subtask, or sidequest"
+        },
+        {
+          "name": "file_ids",
+          "type": "array",
+          "required": true,
+          "default": null,
+          "description": "File IDs to link"
+        },
+        {
+          "name": "task_type",
+          "type": "string",
+          "required": false,
+          "default": "task",
+          "description": "'task', 'subtask', or 'sidequest' (default 'task')"
+        }
+      ],
+      "purpose": "Link files to a task, subtask, or sidequest (task_files junction) so get_task_context and get_task_files return them. Files are linked automatically when reserved, finalized, cataloged, or updated (and when their functions/types are finalized, cataloged, or updated) while a work item is in_progress — the most recent in_progress sidequest, else subtask, else task. Use this for files worked on before the item was in_progress, or to correct a link.",
+      "error_handling": "Returns error if file_ids is empty, task_type is invalid, the work item does not exist, or any file ID is not found. Existing links are skipped, not errors.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Verify with get_task_context(task_id, task_type) that files[] now lists every file this work touched."
+      ],
+      "implementation_notes": [
+        "Returns: {success, reference_table, reference_id, added_count, skipped_count}",
+        "INSERT OR IGNORE into task_files (reference_table, reference_id, file_id)",
+        "Auto-linking helpers share link_files_to_current_focus_effect in the same module; it is best-effort and never fails the tracking call"
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_task_complete",
+          "execution_context": "mark_complete_and_items",
+          "sequence_order": 0,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Before completion: link any files worked on outside the in_progress window so the get_task_context gate sees them"
+        }
+      ]
+    },
+    {
+      "name": "unlink_files_from_task",
+      "file_path": "helpers/project/task_files.py",
+      "parameters": [
+        {
+          "name": "task_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "ID of the task, subtask, or sidequest"
+        },
+        {
+          "name": "file_ids",
+          "type": "array",
+          "required": true,
+          "default": null,
+          "description": "File IDs to unlink"
+        },
+        {
+          "name": "task_type",
+          "type": "string",
+          "required": false,
+          "default": "task",
+          "description": "'task', 'subtask', or 'sidequest' (default 'task')"
+        }
+      ],
+      "purpose": "Remove file links from a task, subtask, or sidequest — e.g. a file auto-linked to the wrong in_progress item. Does not touch the files.",
+      "error_handling": "Returns error if file_ids is empty, task_type is invalid, or the work item does not exist. Links that do not exist are counted as skipped.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "If the file belongs to a different work item, link it there with link_files_to_task."
+      ],
+      "implementation_notes": [
+        "Returns: {success, reference_table, reference_id, removed_count, skipped_count}"
+      ],
+      "target_database": "project"
+    }
+  ]
+}

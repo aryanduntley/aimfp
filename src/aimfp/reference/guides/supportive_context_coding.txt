@@ -9,6 +9,8 @@ Load via: get_supportive_context(variant='coding')
   → add interactions → add types_functions
 
   Batch helpers: reserve_files, finalize_files, add_file_flows, add_interactions, add_types_functions.
+  Task files: tracking a file (or its functions/types) links it to the in_progress sidequest > subtask > task.
+  Work done before the item was in_progress → link_files_to_task(task_id, file_ids, task_type).
   Skip ID naming for: __init__.py, .db, pyproject.toml, setup.py, conftest.py.
   Private functions (_underscore): do NOT reserve or track.
 

@@ -2774,6 +2774,11 @@
           "if": "task_valid_for_completion",
           "then": "mark_complete_and_items",
           "details": {
+            "verify_task_files": "get_task_context(task_id) — files[] must list every file worked on for this task; link any missing (e.g. work done before the task was in_progress) via link_files_to_task(task_id, file_ids)",
+            "use_helpers": [
+              "get_task_context",
+              "link_files_to_task"
+            ],
             "update_task_status": "completed",
             "mark_all_items_complete": true,
             "log_completion_time": true

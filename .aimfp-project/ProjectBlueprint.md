@@ -1,8 +1,8 @@
 # AIMFP - Project Blueprint
 
-**Version**: 1.47.0
+**Version**: 1.48.1 (next release bumps; see §5 Release)
 **Status**: Released on PyPI — active development & refinement
-**Last Updated**: 2026-08-09
+**Last Updated**: 2026-09-14
 **AIMFP Compliance**: Strict
 **Self-Tracked**: Yes — AIMFP tracks its own source (see §10)
 
@@ -222,6 +222,23 @@ from `helper_functions.parameters` in `aimfp_core.db`. A parameter added in Pyth
 but not in the JSON is invisible to the AI, and every call fails with a `TypeError`.
 Code and spec are not independently editable.
 
+**What the JSON must match** (the JSON is the dev source of truth for the DB). Synced
+fields: `name`, `file_path`, `parameters`, `purpose`, `error_handling`, `is_tool`,
+`is_sub_helper`, `return_statements`, `target_database`, and `used_by_directives`
+(→ `directive_helpers`). `implementation_notes` and `metadata` are *not* stored.
+- **Parameters mirror the Python signature**: `required` iff the code has no default;
+  `default` equals the code default. Embedding-only kwargs (`project_root`,
+  `aimfp_run.start_watchdog`, `aimfp_init.init_git`) stay out of the JSON on purpose.
+- **Every tool calls `get_return_statements("<tool>")`** and its result dataclass has
+  `return_statements: Tuple[str, ...] = ()` — even with no JSON statements, because
+  user custom return statements ride the same call. The server injects nothing.
+  Statements are *post-call* guidance; never "use this tool before X".
+- **`used_by_directives.execution_context` names a real workflow step** (`trunk`,
+  `then`, `step`, or string `fallback`), or `self_implementation`/`self_invocation`.
+  Rewriting a directive workflow means updating those mappings in the same change.
+- Enforced by `tests/mcp_server/test_return_statements.py` and
+  `tests/mcp_server/test_directive_helper_contexts.py`.
+
 **Signature changes**: `system_prompt.txt` (and its identical twin
 `sys-prompt/aimfp_system_prompt.txt`) carries no call signatures by design — it
 defers to `get_supportive_context(variant)`. Signatures live in
@@ -230,7 +247,7 @@ variants (core, coding, case2, init). A tool signature change means grepping all
 
 **Release**: `python3 dev/bump-version.py` syncs the package version across
 `pyproject.toml`, `src/aimfp/__init__.py`, `src/aimfp/mcp_server/server.py`
-(`SERVER_VERSION`), and `manifest.json`. It reports schema versions but deliberately
+(`SERVER_VERSION`), and `.claude-plugin/plugin.json`. It reports schema versions but deliberately
 never rewrites them. Then `rm -rf build dist src/*.egg-info && python3 -m build`,
 and publish on a `v*` tag via the trusted-publisher workflow.
 
@@ -250,6 +267,15 @@ and publish on a `v*` tag via the trusted-publisher workflow.
   but never rewrites them.
 - **Four supportive-context variants.** Nearly shipped an incomplete fix once by
   checking only one. Grep all four.
+- **svamanas embeds AIMFP in-process.** Its only seam is
+  `svamanas/src/svamanas/brains/code.py`; it relies on the embedding hooks (optional
+  `project_root` on public `helpers/project/*` functions, `_resolve_fs_path`,
+  `aimfp_init(init_git=)`, `aimfp_run(start_watchdog=)`, `watchdog.start_watcher/stop_watcher`,
+  `build_status_bundle`, `check_pending_migrations`, `check_backup_due`,
+  `check_and_run_backup`). Added result fields are harmless (it passes results through
+  `asdict`); signature changes need a svamanas update. Check with
+  `tests/test_embedding_hooks.py` plus svamanas `tests/test_code_brain_unit.py`. The
+  hook write-up lives in `docs/` (gitignored) — this bullet is the durable record.
 - **`docs/` and `CLAUDE.md` are gitignored.** Anything that must survive a fresh
   clone belongs in `.aimfp-project/`, `README.md`, or the databases.
 
@@ -409,14 +435,35 @@ project.
 - **Linux-only** — no platform-conditional code exists anywhere in the codebase.
   Windows/macOS support is unbuilt, not merely untested; porting would be real work.
 - **Version sync** — `pyproject.toml`, `src/aimfp/__init__.py`,
-  `src/aimfp/mcp_server/server.py`, and `manifest.json` must all match
-  (currently `1.47.0`)
+  `src/aimfp/mcp_server/server.py`, and `.claude-plugin/plugin.json` must all match
+  (currently `1.48.1`)
 
 ---
 
 ## 12. Evolution History
 
-### Self-tracking port — 2026-08-09 (current)
+### Dogfooding fixes from an external project — 2026-09-14 (current)
+
+- **Trigger**: an AI using AIMFP in another project fell back to raw sqlite3 four times.
+- **Search** (`helpers/shared/fts_query.py`): free text is tokenized, quoted, and
+  OR-joined as prefix terms with bm25 ranking (name columns weighted) for
+  `search_functions/types/modules/notes/directives`. Previously multi-word queries were
+  an implicit AND and punctuation silently fell back to a whole-phrase LIKE;
+  `search_directives`' keyword query was structurally invalid and never used FTS.
+- **Notes**: `get_notes_comprehensive(note_id=…)`; `search_notes` returns capped
+  previews (limit 20, 300 chars) with `total_count` / `content_truncated`.
+- **Task files** (project.db **schema 1.12**): new polymorphic `task_files` junction.
+  Tracking helpers auto-link files to the current in_progress sidequest > subtask >
+  task; `link_files_to_task` / `unlink_files_from_task` for earlier work.
+  `get_task_context` previously returned no files for *any* task (it read a
+  non-existent `items.file_id`). Changesets carry a `task_file` edge kind.
+- **Return statements**: 80 of 277 tools never fetched them; all now do.
+- **JSON ↔ code resync**: 29 parameter specs corrected; 154 stale
+  `execution_context` labels remapped to real workflow steps.
+- **Rationale**: same as the port — real use by another project surfaces what
+  self-tracking alone does not.
+
+### Self-tracking port — 2026-08-09
 
 - **Change**: AIMFP became a tracked AIMFP project. `.aimfp-project/` created,
   blueprint moved here as the committed authoritative copy, 9 themes / 8 flows /

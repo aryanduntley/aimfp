@@ -29,6 +29,16 @@
       "applies_to_db": "user_preferences",
       "applies_from_version": "1.3",
       "introduced_in": "1.48.0"
+    },
+    {
+      "notice_key": "task_files_intro",
+      "title": "Tasks now remember the files worked on for them",
+      "message": "This project's database was upgraded to schema 1.12, which adds task-to-file links.\n\nUntil now get_task_context and get_task_files returned no files for any task (they looked files up through flows, via a column that never existed). Now, whenever you reserve, finalize, catalog, or update a file — or finalize, catalog, or update its functions or types — while a task, subtask, or sidequest is in_progress, that file is linked to it automatically.\n\nExisting tasks have no links yet. TELL THE USER this briefly, and for any task currently in_progress, link the files already worked on with link_files_to_task(task_id, file_ids, task_type) so its context is complete. Completed tasks can stay unlinked.",
+      "severity": "info",
+      "action_required": false,
+      "applies_to_db": "project",
+      "applies_from_version": "1.12",
+      "introduced_in": "1.49.0"
     }
   ]
 }

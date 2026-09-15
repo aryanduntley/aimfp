@@ -288,6 +288,7 @@ def acknowledge_notice(
         return Result(
             success=True,
             data={'notice_key': notice_key, 'outcome': outcome},
+            return_statements=get_return_statements("acknowledge_notice")
         )
 
     except sqlite3.OperationalError as exc:

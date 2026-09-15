@@ -44,6 +44,7 @@ from ._common import (
 )
 
 from ..utils import Result
+from ..shared.fts_query import tokenize_search_terms, build_fts_match_expression, build_like_clause
 
 
 # ============================================================================
@@ -493,52 +494,49 @@ def search_directives(
                 conditions.append("d.type = ?")
                 params.append(type)
 
-            # Keyword search: try FTS5 first, fall back to LIKE
-            if keyword:
-                try:
-                    # FTS5 path: match against directives_fts, also check intent_keywords
-                    fts_query = f"""
-                        SELECT DISTINCT d.* FROM directives d
-                        {joins}
-                        LEFT JOIN directives_intent_keywords dik ON d.id = dik.directive_id
-                        LEFT JOIN intent_keywords ik ON dik.keyword_id = ik.id
-                        LEFT JOIN directives_fts ON d.id = directives_fts.rowid
-                        WHERE (directives_fts MATCH ? OR ik.keyword LIKE ?)
-                    """
-                    if conditions:
-                        fts_query += " AND " + " AND ".join(conditions)
-                    fts_query += " ORDER BY d.type, d.name"
-
-                    keyword_pattern = f"%{keyword}%"
-                    cursor = conn.execute(fts_query, tuple([keyword, keyword_pattern] + params))
-                    rows = cursor.fetchall()
-                except sqlite3.OperationalError:
-                    # Fallback: LIKE search for pre-migration databases
-                    joins += """
-                        LEFT JOIN directives_intent_keywords dik ON d.id = dik.directive_id
-                        LEFT JOIN intent_keywords ik ON dik.keyword_id = ik.id
-                    """
-                    keyword_pattern = f"%{keyword}%"
-                    conditions.append(
-                        "(d.name LIKE ? OR d.description LIKE ? OR ik.keyword LIKE ?)"
-                    )
-                    params.extend([keyword_pattern, keyword_pattern, keyword_pattern])
-
-                    query = f"SELECT DISTINCT d.* FROM directives d{joins}"
-                    if conditions:
-                        query += " WHERE " + " AND ".join(conditions)
-                    query += " ORDER BY d.type, d.name"
-
-                    cursor = conn.execute(query, tuple(params))
-                    rows = cursor.fetchall()
+            # Keyword search: OR-joined FTS5 terms over name/description, plus
+            # intent keywords; per-term LIKE when the FTS5 table is missing
+            terms = tokenize_search_terms(keyword) if keyword else ()
+            if keyword and not terms:
+                rows = []
             else:
-                query = f"SELECT DISTINCT d.* FROM directives d{joins}"
-                if conditions:
-                    query += " WHERE " + " AND ".join(conditions)
-                query += " ORDER BY d.type, d.name"
+                keyword_sql, keyword_params = "", ()
+                if terms:
+                    ik_sql, ik_params = build_like_clause(('ik.keyword',), terms)
+                    ik_subquery = (
+                        "d.id IN (SELECT dik.directive_id FROM directives_intent_keywords dik "
+                        f"JOIN intent_keywords ik ON dik.keyword_id = ik.id WHERE {ik_sql})"
+                    )
+                    keyword_sql = (
+                        "(d.id IN (SELECT rowid FROM directives_fts WHERE directives_fts MATCH ?) "
+                        f"OR {ik_subquery})"
+                    )
+                    keyword_params = (build_fts_match_expression(terms), *ik_params)
 
-                cursor = conn.execute(query, tuple(params))
-                rows = cursor.fetchall()
+                def _run(kw_sql: str, kw_params: tuple, ranked: bool) -> list:
+                    # Ranked: order by bm25 relevance of name/description, keyword-only hits last
+                    rank_join, rank_params, order = "", (), "d.type, d.name"
+                    if ranked:
+                        rank_join = (
+                            " LEFT JOIN (SELECT rowid AS fts_id, bm25(directives_fts, 10.0, 1.0) AS fts_rank FROM directives_fts "
+                            "WHERE directives_fts MATCH ?) fr ON fr.fts_id = d.id"
+                        )
+                        rank_params = (build_fts_match_expression(terms),)
+                        order = "fr.fts_rank IS NULL, fr.fts_rank, d.type, d.name"
+                    all_conditions = conditions + ([kw_sql] if kw_sql else [])
+                    query = f"SELECT DISTINCT d.* FROM directives d{joins}{rank_join}"
+                    if all_conditions:
+                        query += " WHERE " + " AND ".join(all_conditions)
+                    query += f" ORDER BY {order}"
+                    return conn.execute(query, (*rank_params, *params, *kw_params)).fetchall()
+
+                try:
+                    rows = _run(keyword_sql, keyword_params, ranked=bool(terms))
+                except sqlite3.OperationalError:
+                    if not terms:
+                        raise
+                    like_sql, like_params = build_like_clause(('d.name', 'd.description'), terms)
+                    rows = _run(f"({like_sql} OR {ik_subquery})", (*like_params, *ik_params), ranked=False)
 
             directives = tuple(row_to_directive(row) for row in rows)
             return_statements = get_return_statements("search_directives")

@@ -309,11 +309,11 @@ def test_ud_schema_version_matches_core_expected():
         shutil.rmtree(tmp_dir)
 
 
-def test_core_schema_version_is_2_2():
+def test_core_schema_version_matches_schema_file():
     from aimfp.helpers.orchestrators._common import get_core_db_path
     from aimfp.helpers.orchestrators.migration import _get_db_version
     core_path = get_core_db_path()
-    assert _get_db_version(core_path) == '2.2'
+    assert _get_db_version(core_path) == _schema_file_version("aimfp_core.sql")
 
 
 def test_core_has_expected_schema_versions_table():

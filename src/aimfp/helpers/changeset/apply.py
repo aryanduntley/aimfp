@@ -68,7 +68,8 @@ _PLAIN_COLS: Dict[str, Dict[str, str]] = {
 # Inbound-dependent (table, fk_column) per kind, for safe-delete checks.
 _DEPENDENTS: Dict[str, List[Tuple[str, str]]] = {
     "files": [("functions", "file_id"), ("types", "file_id"),
-              ("module_files", "file_id"), ("file_flows", "file_id")],
+              ("module_files", "file_id"), ("file_flows", "file_id"),
+              ("task_files", "file_id")],
     "functions": [("interactions", "source_function_id"), ("interactions", "target_function_id"),
                   ("types_functions", "function_id")],
     "types": [("types_functions", "type_id")],
@@ -311,10 +312,14 @@ def _has_dependents(conn, kind, row_id) -> bool:
         except sqlite3.OperationalError:
             pass
     if kind in ("tasks", "subtasks", "sidequests"):
-        if conn.execute(
-            "SELECT 1 FROM items WHERE reference_table = ? AND reference_id = ? LIMIT 1",
-            (kind, row_id)).fetchone():
-            return True
+        for table in ("items", "task_files"):
+            try:
+                if conn.execute(
+                    f"SELECT 1 FROM {table} WHERE reference_table = ? AND reference_id = ? LIMIT 1",
+                    (kind, row_id)).fetchone():
+                    return True
+            except sqlite3.OperationalError:
+                pass
     return False
 
 
@@ -371,6 +376,15 @@ def _edge_ids(resolver: _Resolver, ref: Dict[str, Any]):
         if fl is None or th is None:
             return None, "flow_theme endpoint not found"
         return ("flow_themes", {"flow_id": fl, "theme_id": th}, None)
+    if k == "task_file":
+        rt = ref.get("reference_table")
+        if rt not in ("tasks", "subtasks", "sidequests"):
+            return None, f"task_file has invalid reference_table: {rt}"
+        wi = resolver.get(rt, ref.get("work_item"))
+        fi = resolver.get("files", ref.get("file"))
+        if wi is None or fi is None:
+            return None, "task_file endpoint not found"
+        return ("task_files", {"reference_table": rt, "reference_id": wi, "file_id": fi}, None)
     return None, f"unknown edge kind: {k}"
 
 

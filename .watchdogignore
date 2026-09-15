@@ -40,3 +40,4 @@ src/aimfp/database/aimfp_core.db
 src/aimfp/database/mcp_runtime.db
 *.db-wal
 *.db-shm
+*.db-journal

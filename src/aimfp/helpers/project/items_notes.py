@@ -26,11 +26,12 @@ Helpers in this file:
 """
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, List, Tuple
 
 from ..utils import get_return_statements
 from ..shared.slugs import mint_slug
+from ..shared.fts_query import tokenize_search_terms, build_fts_match_expression, build_like_clause
 
 # Import common project utilities (DRY principle)
 from ._common import (
@@ -90,6 +91,7 @@ class NoteRecord:
     send_with_directive: bool
     created_at: str
     updated_at: str
+    content_truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,7 @@ class ItemQueryResult:
     success: bool
     items: Tuple[ItemRecord, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -160,7 +163,9 @@ class NoteQueryResult:
     """Result of note query operation."""
     success: bool
     notes: Tuple[NoteRecord, ...] = ()
+    total_count: int = 0
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 # ============================================================================
@@ -583,8 +588,61 @@ def _insert_note(
     return cursor.lastrowid
 
 
+def _row_to_note_record(row: sqlite3.Row) -> NoteRecord:
+    """Pure: Map a notes row to an immutable NoteRecord."""
+    return NoteRecord(
+        id=row['id'],
+        content=row['content'],
+        note_type=row['note_type'],
+        reference_table=row['reference_table'],
+        reference_id=row['reference_id'],
+        source=row['source'],
+        directive_name=row['directive_name'],
+        severity=row['severity'],
+        send_with_directive=bool(row['send_with_directive']) if 'send_with_directive' in row.keys() else False,
+        created_at=row['created_at'],
+        updated_at=row['updated_at']
+    )
+
+
+def shape_note_results(
+    notes: Tuple[NoteRecord, ...],
+    limit: Optional[int],
+    preview_chars: Optional[int],
+) -> Tuple[NoteRecord, ...]:
+    """
+    Pure: Cap a note result set and shorten each note's content to a preview.
+
+    Args:
+        notes: Notes in result order
+        limit: Maximum notes to keep (None = all)
+        preview_chars: Maximum content characters per note (None or 0 = full content)
+
+    Returns:
+        Tuple of notes; shortened ones carry content_truncated=True
+    """
+    capped = notes if limit is None else notes[:limit]
+    if not preview_chars:
+        return capped
+    return tuple(
+        replace(n, content=n.content[:preview_chars].rstrip() + "…", content_truncated=True)
+        if len(n.content) > preview_chars else n
+        for n in capped
+    )
+
+
+def _validate_result_shaping(limit: Optional[int], preview_chars: Optional[int]) -> Optional[str]:
+    """Pure: Return an error message for invalid limit/preview_chars, else None."""
+    if limit is not None and limit < 1:
+        return f"Invalid limit: {limit}. Must be >= 1"
+    if preview_chars is not None and preview_chars < 0:
+        return f"Invalid preview_chars: {preview_chars}. Must be >= 0 (0 = full content)"
+    return None
+
+
 def _query_notes_comprehensive(
     conn: sqlite3.Connection,
+    note_id: Optional[int],
     note_type: Optional[str],
     reference_table: Optional[str],
     reference_id: Optional[int],
@@ -598,6 +656,7 @@ def _query_notes_comprehensive(
 
     Args:
         conn: Database connection
+        note_id: Optional note ID filter
         note_type: Optional note type filter
         reference_table: Optional reference table filter
         reference_id: Optional reference ID filter
@@ -611,6 +670,10 @@ def _query_notes_comprehensive(
     # Build dynamic query
     where_clauses = []
     values = []
+
+    if note_id is not None:
+        where_clauses.append("id = ?")
+        values.append(note_id)
 
     if note_type is not None:
         where_clauses.append("note_type = ?")
@@ -648,23 +711,7 @@ def _query_notes_comprehensive(
     query += " ORDER BY created_at DESC"
 
     cursor = conn.execute(query, values)
-    rows = cursor.fetchall()
-    return tuple(
-        NoteRecord(
-            id=row['id'],
-            content=row['content'],
-            note_type=row['note_type'],
-            reference_table=row['reference_table'],
-            reference_id=row['reference_id'],
-            source=row['source'],
-            directive_name=row['directive_name'],
-            severity=row['severity'],
-            send_with_directive=bool(row['send_with_directive']) if 'send_with_directive' in row.keys() else False,
-            created_at=row['created_at'],
-            updated_at=row['updated_at']
-        )
-        for row in rows
-    )
+    return tuple(_row_to_note_record(row) for row in cursor.fetchall())
 
 
 def _search_notes(
@@ -733,6 +780,10 @@ def _search_notes(
 
     filter_sql = (" AND " + " AND ".join(filter_clauses)) if filter_clauses else ""
 
+    terms = tokenize_search_terms(search_string)
+    if not terms:
+        return ()
+
     try:
         # FTS5 path: relevance-ranked results
         query = f"""
@@ -741,31 +792,14 @@ def _search_notes(
             WHERE notes_fts MATCH ?{filter_sql}
             ORDER BY notes_fts.rank
         """
-        cursor = conn.execute(query, [search_string] + filter_values)
+        cursor = conn.execute(query, [build_fts_match_expression(terms)] + filter_values)
     except sqlite3.OperationalError:
-        # Fallback: LIKE search for pre-migration databases
-        like_clause = "n.content LIKE ?"
-        like_value = f"%{search_string}%"
-        query = f"SELECT n.* FROM notes n WHERE {like_clause}{filter_sql} ORDER BY n.created_at DESC"
-        cursor = conn.execute(query, [like_value] + filter_values)
+        # Fallback: per-term LIKE search for pre-migration databases
+        like_sql, like_params = build_like_clause(('n.content',), terms)
+        query = f"SELECT n.* FROM notes n WHERE {like_sql}{filter_sql} ORDER BY n.created_at DESC"
+        cursor = conn.execute(query, list(like_params) + filter_values)
 
-    rows = cursor.fetchall()
-    return tuple(
-        NoteRecord(
-            id=row['id'],
-            content=row['content'],
-            note_type=row['note_type'],
-            reference_table=row['reference_table'],
-            reference_id=row['reference_id'],
-            source=row['source'],
-            directive_name=row['directive_name'],
-            severity=row['severity'],
-            send_with_directive=bool(row['send_with_directive']) if 'send_with_directive' in row.keys() else False,
-            created_at=row['created_at'],
-            updated_at=row['updated_at']
-        )
-        for row in rows
-    )
+    return tuple(_row_to_note_record(row) for row in cursor.fetchall())
 
 
 def _update_note_fields(
@@ -890,7 +924,8 @@ def get_items_for_task(
 
         return ItemQueryResult(
             success=True,
-            items=items
+            items=items,
+            return_statements=get_return_statements("get_items_for_task")
         )
 
     except Exception as e:
@@ -932,7 +967,8 @@ def get_items_for_subtask(
 
         return ItemQueryResult(
             success=True,
-            items=items
+            items=items,
+            return_statements=get_return_statements("get_items_for_subtask")
         )
 
     except Exception as e:
@@ -974,7 +1010,8 @@ def get_items_for_sidequest(
 
         return ItemQueryResult(
             success=True,
-            items=items
+            items=items,
+            return_statements=get_return_statements("get_items_for_sidequest")
         )
 
     except Exception as e:
@@ -1020,7 +1057,8 @@ def get_incomplete_items(
 
         return ItemQueryResult(
             success=True,
-            items=items
+            items=items,
+            return_statements=get_return_statements("get_incomplete_items")
         )
 
     except Exception as e:
@@ -1581,6 +1619,7 @@ def add_note(
 
 
 def get_notes_comprehensive(
+    note_id: Optional[int] = None,
     note_type: Optional[str] = None,
     reference_table: Optional[str] = None,
     reference_id: Optional[int] = None,
@@ -1588,22 +1627,32 @@ def get_notes_comprehensive(
     severity: Optional[str] = None,
     directive_name: Optional[str] = None,
     exclude_note_types: Optional[list] = None,
+    limit: Optional[int] = None,
+    preview_chars: Optional[int] = None,
     project_root: Optional[str] = None
 ) -> NoteQueryResult:
     """
     Advanced note search with filters.
 
     Args:
+        note_id: Optional exact note ID (returns that one note, full content by default)
         note_type: Optional filter by note_type
         reference_table: Optional filter by reference table
         reference_id: Optional filter by reference ID
         source: Optional filter by source ('ai', 'user', 'directive')
         severity: Optional filter by severity ('info', 'warning', 'error')
         directive_name: Optional filter by directive name
+        exclude_note_types: Optional note types to exclude
+        limit: Optional maximum number of notes (newest first)
+        preview_chars: Optional per-note content cap (None or 0 = full content)
 
     Returns:
-        NoteQueryResult with filtered notes
+        NoteQueryResult with filtered notes; total_count is the match count before limit
     """
+    shaping_error = _validate_result_shaping(limit, preview_chars)
+    if shaping_error:
+        return NoteQueryResult(success=False, error=shaping_error)
+
     # Validate filters if provided
     if note_type is not None and not _validate_note_type(note_type):
         return NoteQueryResult(
@@ -1628,14 +1677,22 @@ def get_notes_comprehensive(
 
     try:
         notes = _query_notes_comprehensive(
-            conn, note_type, reference_table, reference_id, source, severity, directive_name,
+            conn, note_id, note_type, reference_table, reference_id, source, severity, directive_name,
             exclude_note_types
         )
         conn.close()
 
+        if note_id is not None and not notes:
+            return NoteQueryResult(
+                success=False,
+                error=f"Note {note_id} not found (or excluded by the other filters)"
+            )
+
         return NoteQueryResult(
             success=True,
-            notes=notes
+            notes=shape_note_results(notes, limit, preview_chars),
+            total_count=len(notes),
+            return_statements=get_return_statements("get_notes_comprehensive")
         )
 
     except Exception as e:
@@ -1655,23 +1712,37 @@ def search_notes(
     severity: Optional[str] = None,
     directive_name: Optional[str] = None,
     exclude_note_types: Optional[list] = None,
+    limit: Optional[int] = 20,
+    preview_chars: Optional[int] = 300,
     project_root: Optional[str] = None
 ) -> NoteQueryResult:
     """
     Search note content with optional filters.
 
+    The search text is split into words; a note matches when ANY word
+    prefix-matches its content, ranked so notes matching more words come
+    first. Results are capped and previewed by default — fetch a note's full
+    content with get_notes_comprehensive(note_id=X).
+
     Args:
-        search_string: Search string for note content
+        search_string: Free-text search (one or more words)
         note_type: Optional filter by note_type
         reference_table: Optional filter by reference table
         reference_id: Optional filter by reference ID
         source: Optional filter by source
         severity: Optional filter by severity
         directive_name: Optional filter by directive name
+        exclude_note_types: Optional note types to exclude
+        limit: Maximum notes returned, best matches first (default 20; None = all)
+        preview_chars: Per-note content cap (default 300; None or 0 = full content)
 
     Returns:
-        NoteQueryResult with matching notes
+        NoteQueryResult with matching notes; total_count is the match count before limit
     """
+    shaping_error = _validate_result_shaping(limit, preview_chars)
+    if shaping_error:
+        return NoteQueryResult(success=False, error=shaping_error)
+
     # Validate filters if provided
     if note_type is not None and not _validate_note_type(note_type):
         return NoteQueryResult(
@@ -1703,7 +1774,9 @@ def search_notes(
 
         return NoteQueryResult(
             success=True,
-            notes=notes
+            notes=shape_note_results(notes, limit, preview_chars),
+            total_count=len(notes),
+            return_statements=get_return_statements("search_notes")
         )
 
     except Exception as e:

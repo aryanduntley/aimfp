@@ -403,6 +403,13 @@
           "required": false,
           "default": true,
           "description": "Whether preference is active"
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Optional note on what this preference does, stored with it in directive_preferences"
         }
       ],
       "purpose": "Add/update user preference for directive",
@@ -486,7 +493,7 @@
       "used_by_directives": [
         {
           "directive_name": "user_preferences_update",
-          "execution_context": "update_existing_preference",
+          "execution_context": "update_or_insert",
           "sequence_order": 2,
           "is_required": false,
           "parameters_mapping": {
@@ -520,7 +527,8 @@
       "error_handling": "Returns null if setting_key not found",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [
+      "return_statements": [],
+      "implementation_notes": [
         "Returns: {setting_key, setting_value, description, scope} or null if not found"
       ],
       "target_database": "user_preferences",
@@ -646,7 +654,7 @@
         },
         {
           "directive_name": "tracking_toggle",
-          "execution_context": "show_current_status",
+          "execution_context": "check_current_status",
           "sequence_order": 2,
           "is_required": false,
           "parameters_mapping": {},
@@ -713,7 +721,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_run",
-          "execution_context": "new_session_startup",
+          "execution_context": "bundle_session_startup_data",
           "sequence_order": 2,
           "is_required": false,
           "parameters_mapping": {},
@@ -925,7 +933,7 @@
       "used_by_directives": [
         {
           "directive_name": "user_preferences_update",
-          "execution_context": "set_custom_return_statement",
+          "execution_context": "offer_custom_return_statement",
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {
@@ -1009,7 +1017,7 @@
     "unmapped_helpers": 17,
     "note": "All helpers implemented in src/aimfp/helpers/user_preferences/. Distribution: validation.py (1), schema.py (4), crud.py (6), management.py (15). 9 helpers mapped to user preference directives, 17 are generic AI query tools. Includes 1 sub-helper (get_custom_return_statements).",
     "total_mappings": 13,
-    "last_updated": "2026-02-06",
+    "last_updated": "2026-09-14",
     "changes": [
       "2026-02-06: Added set_custom_return_statement (tool), delete_custom_return_statement (tool), get_custom_return_statements (sub-helper). Custom return statements feature.",
       "2026-01-27: Removed apply_preferences_to_context, update_user_preferences. Added update_directive_preference, add_user_setting, update_user_setting.",

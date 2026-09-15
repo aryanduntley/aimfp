@@ -419,7 +419,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -474,14 +474,14 @@
         {
           "name": "status",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "active",
           "description": "'active', 'paused', 'completed', 'abandoned'"
         },
         {
           "name": "version",
           "type": "integer",
-          "required": true,
+          "required": false,
           "default": 1,
           "description": "Tracks idea evolution (starts at 1)"
         },
@@ -502,7 +502,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_init",
-          "execution_context": "create_project_structure",
+          "execution_context": "detect_and_prompt_metadata",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
@@ -529,7 +529,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_blueprint_read",
-          "execution_context": "database_fallback",
+          "execution_context": "check_database_fallback",
           "sequence_order": 1,
           "is_required": false,
           "parameters_mapping": {},
@@ -710,7 +710,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_blueprint_read",
-          "execution_context": "parse_complete",
+          "execution_context": "read_blueprint_file",
           "sequence_order": 2,
           "is_required": false,
           "parameters_mapping": {},
@@ -753,7 +753,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_init",
-          "execution_context": "create_project_structure",
+          "execution_context": "detect_and_prompt_metadata",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -761,7 +761,7 @@
         },
         {
           "directive_name": "project_blueprint_read",
-          "execution_context": "database_fallback",
+          "execution_context": "check_database_fallback",
           "sequence_order": 2,
           "is_required": false,
           "parameters_mapping": {},
@@ -787,16 +787,8 @@
       "target_database": "project",
       "used_by_directives": [
         {
-          "directive_name": "aimfp_init",
-          "execution_context": "state_db_initialization",
-          "sequence_order": 9.5,
-          "is_required": true,
-          "parameters_mapping": {},
-          "description": "Retrieve source directory before creating state database infrastructure in Step 9.5"
-        },
-        {
           "directive_name": "project_file_write",
-          "execution_context": "determine_file_location",
+          "execution_context": "reserve_before_write",
           "sequence_order": 1,
           "is_required": false,
           "parameters_mapping": {},
@@ -857,7 +849,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_run",
-          "execution_context": "session_bundle",
+          "execution_context": "bundle_session_startup_data",
           "sequence_order": 5,
           "is_required": true,
           "parameters_mapping": {},
@@ -865,7 +857,7 @@
         },
         {
           "directive_name": "aimfp_status",
-          "execution_context": "load_infrastructure",
+          "execution_context": "load_infrastructure_context",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
@@ -920,7 +912,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_init",
-          "execution_context": "populate_project_root",
+          "execution_context": "phase_1_mechanical_setup",
           "sequence_order": 5,
           "is_required": true,
           "parameters_mapping": {},
@@ -943,6 +935,6 @@
     "first_helper": "project_allowed_check_constraints",
     "last_helper": "get_all_infrastructure",
     "status": "UPDATED - added 5 helpers: state database infrastructure (4) + infrastructure query (1)",
-    "last_updated": "2026-01-18"
+    "last_updated": "2026-09-14"
   }
 }

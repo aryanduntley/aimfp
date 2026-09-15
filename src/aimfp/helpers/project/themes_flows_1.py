@@ -678,14 +678,16 @@ def get_theme_by_name(
         if row is None:
             return ThemeQueryResult(
                 success=True,
-                theme=None
+                theme=None,
+                return_statements=get_return_statements("get_theme_by_name")
             )
 
         theme_record = row_to_theme_record(row)
 
         return ThemeQueryResult(
             success=True,
-            theme=theme_record
+            theme=theme_record,
+            return_statements=get_return_statements("get_theme_by_name")
         )
 
     except Exception as e:
@@ -729,14 +731,16 @@ def get_flow_by_name(
         if row is None:
             return FlowQueryResult(
                 success=True,
-                flow=None
+                flow=None,
+                return_statements=get_return_statements("get_flow_by_name")
             )
 
         flow_record = row_to_flow_record(row)
 
         return FlowQueryResult(
             success=True,
-            flow=flow_record
+            flow=flow_record,
+            return_statements=get_return_statements("get_flow_by_name")
         )
 
     except Exception as e:
@@ -774,7 +778,8 @@ def get_all_themes(project_root: Optional[str] = None) -> ThemesQueryResult:
 
         return ThemesQueryResult(
             success=True,
-            themes=theme_records
+            themes=theme_records,
+            return_statements=get_return_statements("get_all_themes")
         )
 
     except Exception as e:
@@ -812,7 +817,8 @@ def get_all_flows(project_root: Optional[str] = None) -> FlowsQueryResult:
 
         return FlowsQueryResult(
             success=True,
-            flows=flow_records
+            flows=flow_records,
+            return_statements=get_return_statements("get_all_flows")
         )
 
     except Exception as e:

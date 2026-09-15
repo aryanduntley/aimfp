@@ -23,6 +23,7 @@ from typing import Optional, List, Tuple
 from ..utils import get_return_statements
 
 # Import common project utilities (DRY principle)
+from .task_files import link_files_to_current_focus_effect
 from ._common import (
     _open_connection,
     _check_file_exists,
@@ -53,6 +54,7 @@ class ChangeDetectionResult:
     changed: Optional[bool] = None
     method: Optional[str] = None  # 'git' or 'filesystem'
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -483,6 +485,7 @@ def update_file(
 
         # Effect: execute update
         _update_file_effect(conn, sql, params)
+        link_files_to_current_focus_effect(conn, (file_id,))
 
         # Success - fetch return statements from core database
         return_statements = get_return_statements("update_file")
@@ -562,7 +565,8 @@ def file_has_changed(
             return ChangeDetectionResult(
                 success=True,
                 changed=changed,
-                method="git"
+                method="git",
+                return_statements=get_return_statements("file_has_changed")
             )
 
         # Fall back to filesystem timestamp comparison
@@ -588,7 +592,8 @@ def file_has_changed(
         return ChangeDetectionResult(
             success=True,
             changed=changed,
-            method="filesystem"
+            method="filesystem",
+            return_statements=get_return_statements("file_has_changed")
         )
 
     except Exception as e:
@@ -635,8 +640,9 @@ def update_file_timestamp(
                 error=f"File with ID {file_id} not found"
             )
 
-        # Effect: update timestamp
+        # Effect: update timestamp, and link the file to the work item in progress
         _update_timestamp_effect(conn, file_id)
+        link_files_to_current_focus_effect(conn, (file_id,))
 
         return TimestampUpdateResult(success=True)
 

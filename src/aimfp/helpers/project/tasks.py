@@ -34,6 +34,7 @@ from ..utils import get_return_statements
 from ..shared.slugs import mint_slug
 
 # Import common project utilities (DRY principle)
+from .task_files import WorkItemRef, query_task_file_rows
 from ._common import (
     _open_connection,
     get_cached_project_root,
@@ -120,6 +121,7 @@ class MilestoneQueryResult:
     success: bool
     milestones: Tuple[MilestoneRecord, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -128,6 +130,7 @@ class TaskQueryResult:
     success: bool
     tasks: Tuple[TaskRecord, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -136,6 +139,7 @@ class FlowIdsResult:
     success: bool
     flow_ids: Tuple[int, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -144,6 +148,7 @@ class FilesResult:
     success: bool
     files: Tuple[FileRecord, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 # ============================================================================
@@ -599,43 +604,6 @@ def _query_task_flow_ids(
     return json.loads(row['flow_ids'])
 
 
-def _query_files_by_flow_ids(
-    conn: sqlite3.Connection,
-    flow_ids: List[int]
-) -> Tuple[FileRecord, ...]:
-    """
-    Effect: Query files by flow IDs.
-
-    Args:
-        conn: Database connection
-        flow_ids: List of flow IDs
-
-    Returns:
-        Tuple of file records
-    """
-    if not flow_ids:
-        return ()
-
-    # Build query with placeholders
-    placeholders = ','.join('?' * len(flow_ids))
-    query = f"""
-        SELECT DISTINCT f.id, f.name, f.path, f.language
-        FROM files f
-        JOIN file_flows ff ON f.id = ff.file_id
-        WHERE ff.flow_id IN ({placeholders})
-    """
-
-    cursor = conn.execute(query, flow_ids)
-    rows = cursor.fetchall()
-    return tuple(
-        FileRecord(
-            id=row['id'],
-            name=row['name'],
-            path=row['path'],
-            language=row['language']
-        )
-        for row in rows
-    )
 
 
 def _update_task_fields(
@@ -799,7 +767,8 @@ def get_milestones_by_path(
 
         return MilestoneQueryResult(
             success=True,
-            milestones=milestones
+            milestones=milestones,
+            return_statements=get_return_statements("get_milestones_by_path")
         )
 
     except Exception as e:
@@ -839,7 +808,8 @@ def get_milestones_by_status(
 
         return MilestoneQueryResult(
             success=True,
-            milestones=milestones
+            milestones=milestones,
+            return_statements=get_return_statements("get_milestones_by_status")
         )
 
     except Exception as e:
@@ -866,7 +836,8 @@ def get_incomplete_milestones(project_root: Optional[str] = None) -> MilestoneQu
 
         return MilestoneQueryResult(
             success=True,
-            milestones=milestones
+            milestones=milestones,
+            return_statements=get_return_statements("get_incomplete_milestones")
         )
 
     except Exception as e:
@@ -1117,7 +1088,8 @@ def get_incomplete_tasks_by_milestone(
 
         return TaskQueryResult(
             success=True,
-            tasks=tasks
+            tasks=tasks,
+            return_statements=get_return_statements("get_incomplete_tasks_by_milestone")
         )
 
     except Exception as e:
@@ -1144,7 +1116,8 @@ def get_incomplete_tasks(project_root: Optional[str] = None) -> TaskQueryResult:
 
         return TaskQueryResult(
             success=True,
-            tasks=tasks
+            tasks=tasks,
+            return_statements=get_return_statements("get_incomplete_tasks")
         )
 
     except Exception as e:
@@ -1177,7 +1150,8 @@ def get_tasks_by_milestone(
 
         return TaskQueryResult(
             success=True,
-            tasks=tasks
+            tasks=tasks,
+            return_statements=get_return_statements("get_tasks_by_milestone")
         )
 
     except Exception as e:
@@ -1236,7 +1210,8 @@ def get_tasks_comprehensive(
 
         return TaskQueryResult(
             success=True,
-            tasks=tasks
+            tasks=tasks,
+            return_statements=get_return_statements("get_tasks_comprehensive")
         )
 
     except Exception as e:
@@ -1278,7 +1253,8 @@ def get_task_flows(
 
         return FlowIdsResult(
             success=True,
-            flow_ids=tuple(flow_ids) if flow_ids is not None else ()
+            flow_ids=tuple(flow_ids) if flow_ids is not None else (),
+            return_statements=get_return_statements("get_task_flows")
         )
 
     except Exception as e:
@@ -1294,13 +1270,16 @@ def get_task_files(
     project_root: Optional[str] = None
 ) -> FilesResult:
     """
-    Get all files related to task via flows (orchestrator).
+    Get the files worked on for a task, including files linked to its subtasks.
+
+    Reads the task_files junction, which tracking helpers populate while the task
+    (or one of its subtasks) is in_progress, and link_files_to_task populates explicitly.
 
     Args:
         task_id: Task ID
 
     Returns:
-        FilesResult with related files
+        FilesResult with linked files, in link order
     """
     project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
@@ -1314,23 +1293,17 @@ def get_task_files(
                 error=f"Task ID {task_id} not found"
             )
 
-        # Query flow IDs for task
-        flow_ids = _query_task_flow_ids(conn, task_id)
-
-        if flow_ids is None or not flow_ids:
-            conn.close()
-            return FilesResult(
-                success=True,
-                files=()
-            )
-
-        # Query files by flow IDs
-        files = _query_files_by_flow_ids(conn, flow_ids)
+        rows = query_task_file_rows(conn, WorkItemRef('tasks', task_id), include_subtasks=True)
+        files = tuple(
+            FileRecord(id=row['id'], name=row['name'], path=row['path'], language=row['language'])
+            for row in rows
+        )
         conn.close()
 
         return FilesResult(
             success=True,
-            files=files
+            files=files,
+            return_statements=get_return_statements("get_task_files")
         )
 
     except Exception as e:

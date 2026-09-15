@@ -397,7 +397,8 @@ def get_user_setting(
         if row is None:
             return UserSettingResult(
                 success=True,
-                setting=None
+                setting=None,
+                return_statements=get_return_statements("get_user_setting")
             )
 
         setting = UserSetting(
@@ -409,7 +410,8 @@ def get_user_setting(
 
         return UserSettingResult(
             success=True,
-            setting=setting
+            setting=setting,
+            return_statements=get_return_statements("get_user_setting")
         )
 
     except Exception as e:

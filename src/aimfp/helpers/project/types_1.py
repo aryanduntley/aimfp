@@ -24,6 +24,7 @@ from typing import Optional, List, Tuple, Dict, Any
 # Import global utilities
 from ..utils import get_return_statements
 from ..shared.slugs import mint_slug
+from ..shared.fts_query import tokenize_search_terms, build_fts_match_expression, build_like_clause
 
 # Import update_file_timestamp from files_2
 from ._common import _check_file_exists, _check_type_exists, _create_deletion_note, get_cached_project_root, _open_project_connection
@@ -113,6 +114,7 @@ class TypeQueryResult:
     success: bool
     types: Tuple[TypeRecord, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1240,11 +1242,13 @@ def search_types(
     """
     Search types by name or description using FTS5 full-text search.
 
-    Returns relevance-ranked results. Falls back to LIKE if FTS5
-    table is not available (pre-migration databases).
+    The search text is split into words; a type matches when ANY word
+    prefix-matches its name or description, ranked so types matching more
+    words come first. Punctuation is ignored. Falls back to per-word LIKE if
+    the FTS5 table is not available (pre-migration databases).
 
     Args:
-        search_string: Search string for type name or description
+        search_string: Free-text search (one or more words)
 
     Returns:
         TypeQueryResult with matching type records
@@ -1256,6 +1260,14 @@ def search_types(
         >>> [t.name for t in result.types]
         ['Maybe_id_7']
     """
+    terms = tokenize_search_terms(search_string)
+    if not terms:
+        return TypeQueryResult(
+            success=True,
+            types=(),
+            return_statements=get_return_statements("search_types"),
+        )
+
     project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
@@ -1268,19 +1280,19 @@ def search_types(
                 JOIN types_fts ON t.id = types_fts.rowid
                 LEFT JOIN files fi ON t.file_id = fi.id
                 WHERE types_fts MATCH ?
-                ORDER BY types_fts.rank""",
-                (search_string,)
+                ORDER BY bm25(types_fts, 5.0, 1.0)""",
+                (build_fts_match_expression(terms),)
             )
         except sqlite3.OperationalError:
-            # Fallback: LIKE search
-            like_pattern = f"%{search_string}%"
+            # Fallback: per-term LIKE search (FTS5 table missing)
+            like_sql, like_params = build_like_clause(('t.name', 't.description'), terms)
             cursor = conn.execute(
-                """SELECT t.*, fi.name AS file_name, fi.path AS file_path
+                f"""SELECT t.*, fi.name AS file_name, fi.path AS file_path
                 FROM types t
                 LEFT JOIN files fi ON t.file_id = fi.id
-                WHERE t.name LIKE ? OR t.description LIKE ?
+                WHERE {like_sql}
                 ORDER BY t.name""",
-                (like_pattern, like_pattern)
+                like_params
             )
 
         rows = cursor.fetchall()
@@ -1291,7 +1303,8 @@ def search_types(
 
         return TypeQueryResult(
             success=True,
-            types=type_records
+            types=type_records,
+            return_statements=get_return_statements("search_types")
         )
 
     except Exception as e:
@@ -1342,7 +1355,8 @@ def get_type_by_name(
         if not rows:
             return TypeQueryResult(
                 success=False,
-                error=f"No types found with name: {type_name}"
+                error=f"No types found with name: {type_name}",
+                return_statements=get_return_statements("get_type_by_name")
             )
 
         # Pure: convert rows to records
@@ -1353,7 +1367,8 @@ def get_type_by_name(
 
         return TypeQueryResult(
             success=True,
-            types=type_records
+            types=type_records,
+            return_statements=get_return_statements("get_type_by_name")
         )
 
     except Exception as e:

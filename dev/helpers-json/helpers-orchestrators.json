@@ -167,7 +167,7 @@
         },
         {
           "directive_name": "aimfp_run",
-          "execution_context": "get_status_when_requested",
+          "execution_context": "bundle_session_startup_data",
           "sequence_order": 2,
           "is_required": false,
           "parameters_mapping": {},
@@ -219,7 +219,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_status",
-          "execution_context": "retrieve_work_hierarchy",
+          "execution_context": "build_priority_status_tree",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -260,7 +260,7 @@
           "description": "Include note history for task"
         }
       ],
-      "purpose": "Get complete context for resuming work on a specific task/subtask/sidequest. Single call retrieves item + associated items + flows + files + functions + optionally interactions and notes. Uses cached project root internally.",
+      "purpose": "Get complete context for resuming work on a specific task/subtask/sidequest. Single call retrieves item + associated items + linked files + their functions and modules + flows + optionally interactions and notes. Files are linked automatically when reserved, finalized, cataloged, or updated (and when their functions/types are finalized, cataloged, or updated) while a work item is in_progress — the most recent in_progress sidequest, else subtask, else task. A task's context includes its subtasks' files. Uses cached project root internally.",
       "error_handling": "Returns error if task not found or project.db not accessible.",
       "is_tool": true,
       "is_sub_helper": false,
@@ -268,25 +268,26 @@
         "Task context loaded. AI should review items to determine where to resume.",
         "If task is blocked: check blocked_by field and resolve blockers first.",
         "BEFORE RESUMING WORK: Review the flows[] in the returned context — they describe the intended architecture and user-facing behavior. Use the returned functions[] data (purpose, parameters, returns) as your lookup index BEFORE reading source files.",
-        "MODULES: Review modules[] to see which code boundaries the task touches. If multiple modules appear, consider cross-module impacts via get_module_dependencies()."
+        "MODULES: Review modules[] to see which code boundaries the task touches. If multiple modules appear, consider cross-module impacts via get_module_dependencies().",
+        "If files[] is empty but work was done on this item (e.g. before it was in_progress): link the files with link_files_to_task(task_id, file_ids, task_type), then re-check."
       ],
       "implementation_notes": [
         "Returns: {task_item{}, task_type, items[], flows[], files[], functions[], modules[] (distinct modules owning task files), interactions[]?, notes[]?}",
         "If task_type omitted: searches tasks, subtasks, sidequests tables by task_id and auto-detects type",
         "Uses get_cached_project_root() — no project_root parameter needed",
         "Gets associated items from items table (polymorphic: reference_table + reference_id)",
-        "Gets flows linked to task's items via file_flows",
-        "Gets files from file_flows for those flows",
+        "Gets files from task_files (polymorphic: reference_table + reference_id); for task_type='task' also its subtasks' files",
+        "Gets flows: the item's own flow_ids, then flows of the linked files via file_flows",
         "Gets functions for those files",
         "If include_interactions=true: gets interactions for those functions",
         "If include_history=true: gets notes for this task",
-        "Optimized for session resumption - all context in one call"
+        "Optimized for session resumption - everything needed to continue work in one call"
       ],
       "target_database": "project",
       "used_by_directives": [
         {
           "directive_name": "project_auto_resume",
-          "execution_context": "load_task_context",
+          "execution_context": "resume_from_checkpoint",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {
@@ -295,6 +296,14 @@
             "include_history": "true"
           },
           "description": "Load complete task context for resuming interrupted work - retrieves task details, associated flows, files, functions, interactions, and note history in single optimized query"
+        },
+        {
+          "directive_name": "project_task_complete",
+          "execution_context": "mark_complete_and_items",
+          "sequence_order": 0,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Completion gate: confirm files[] lists every file worked on for the task before marking it complete"
         }
       ]
     },
@@ -534,7 +543,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_dependency_map",
-          "execution_context": "map_flow_dependencies",
+          "execution_context": "generate_dependency_graph",
           "sequence_order": 6,
           "is_required": true,
           "parameters_mapping": {
@@ -612,7 +621,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_end",
-          "execution_context": "session_termination_audit",
+          "execution_context": "self_invocation",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {
@@ -641,7 +650,7 @@
     "file": "helpers-orchestrators.json",
     "count": 14,
     "status": "updated 2026-01-31 - moved get_supportive_context to helpers-index.json (not an orchestrator)",
-    "last_updated": "2026-01-31",
+    "last_updated": "2026-09-14",
     "changes": [
       "Removed get_status_tree: tree logic folded into get_project_status",
       "Removed get_project_context: redundant with existing helpers (get_from_project, get_all_infrastructure, get_project_status)",

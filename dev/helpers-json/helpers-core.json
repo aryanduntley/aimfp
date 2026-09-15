@@ -217,7 +217,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_help",
-          "execution_context": "user_requests_help",
+          "execution_context": "call_helper",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {
@@ -247,7 +247,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_run",
-          "execution_context": "load_directive_library",
+          "execution_context": "bundle_session_startup_data",
           "sequence_order": 1,
           "is_required": false,
           "parameters_mapping": {},
@@ -264,7 +264,7 @@
           "type": "string",
           "required": false,
           "default": null,
-          "description": "Keyword to search in directive names, descriptions, and intent_keywords"
+          "description": "Free-text search over directive names, descriptions, and intent keywords, one or more words (e.g. 'task decomposition')"
         },
         {
           "name": "type",
@@ -281,7 +281,7 @@
           "description": "Directive category filter (e.g., 'purity', 'error_handling', 'task_management')"
         }
       ],
-      "purpose": "Find directives by type, category, or keyword when you know the domain but not the exact directive name.",
+      "purpose": "Find directives by type, category, or keyword when you know the domain but not the exact directive name. Multi-word input is split into words; a row matches if ANY word prefix-matches (\"disk space free\" finds get_free_disk_space). Rows matching more words rank first. Punctuation is ignored, so no FTS syntax is needed or honored. Keyword results are ordered by name/description relevance.",
       "error_handling": "Returns empty array if no matches found",
       "is_tool": true,
       "is_sub_helper": false,
@@ -297,7 +297,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_help",
-          "execution_context": "user_requests_help",
+          "execution_context": "suggest_similar",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {
@@ -323,7 +323,7 @@
           "name": "threshold",
           "type": "float",
           "required": false,
-          "default": "0.7",
+          "default": 0.7,
           "description": "Confidence threshold"
         }
       ],
@@ -362,7 +362,7 @@
           "name": "match_mode",
           "type": "string",
           "required": false,
-          "default": null,
+          "default": "any",
           "description": "\"any\" for OR logic, \"all\" for AND logic"
         }
       ],
@@ -389,14 +389,14 @@
           "name": "match_mode",
           "type": "string",
           "required": false,
-          "default": null,
+          "default": "any",
           "description": "\"any\" for OR logic, \"all\" for AND logic"
         },
         {
           "name": "include_keyword_matches",
           "type": "boolean",
           "required": false,
-          "default": null,
+          "default": false,
           "description": "Include which keywords matched"
         }
       ],
@@ -424,7 +424,7 @@
         },
         {
           "directive_name": "aimfp_help",
-          "execution_context": "user_requests_help",
+          "execution_context": "show_available_directives",
           "sequence_order": 2,
           "is_required": false,
           "parameters_mapping": {
@@ -456,7 +456,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_help",
-          "execution_context": "user_requests_help",
+          "execution_context": "display_to_user",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {
@@ -479,7 +479,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_help",
-          "execution_context": "user_requests_help",
+          "execution_context": "show_available_directives",
           "sequence_order": 5,
           "is_required": false,
           "parameters_mapping": {},
@@ -500,7 +500,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_help",
-          "execution_context": "user_requests_help",
+          "execution_context": "show_available_directives",
           "sequence_order": 6,
           "is_required": false,
           "parameters_mapping": {},
@@ -584,13 +584,13 @@
       "is_sub_helper": false,
       "return_statements": [
         "Route to the returned target directive. For task/subtask/sidequest completion, target is typically aimfp_status which then routes to project_progression for next task creation. For milestone completion, target is aimfp_status which routes to project_progression to open next milestone.",
-        "If project_task_complete: check if all tasks in milestone are done \u2014 if yes, trigger project_milestone_complete before routing to target."
+        "If project_task_complete: check if all tasks in milestone are done — if yes, trigger project_milestone_complete before routing to target."
       ],
       "target_database": "core",
       "used_by_directives": [
         {
           "directive_name": "project_task_complete",
-          "execution_context": "determine_next_directive",
+          "execution_context": "review_next_steps",
           "sequence_order": 10,
           "is_required": true,
           "parameters_mapping": {
@@ -600,7 +600,7 @@
         },
         {
           "directive_name": "project_subtask_complete",
-          "execution_context": "determine_next_directive",
+          "execution_context": "resume_parent_task",
           "sequence_order": 10,
           "is_required": true,
           "parameters_mapping": {
@@ -610,7 +610,7 @@
         },
         {
           "directive_name": "project_sidequest_complete",
-          "execution_context": "determine_next_directive",
+          "execution_context": "prompt_resume_work",
           "sequence_order": 10,
           "is_required": true,
           "parameters_mapping": {
@@ -620,7 +620,7 @@
         },
         {
           "directive_name": "project_milestone_complete",
-          "execution_context": "determine_next_directive",
+          "execution_context": "move_to_next_milestone",
           "sequence_order": 10,
           "is_required": true,
           "parameters_mapping": {
@@ -734,7 +734,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_help",
-          "execution_context": "user_requests_help",
+          "execution_context": "display_to_user",
           "sequence_order": 7,
           "is_required": false,
           "parameters_mapping": {
@@ -765,7 +765,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_help",
-          "execution_context": "user_requests_help",
+          "execution_context": "display_to_user",
           "sequence_order": 8,
           "is_required": false,
           "parameters_mapping": {
@@ -796,7 +796,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_help",
-          "execution_context": "user_requests_help",
+          "execution_context": "show_available_directives",
           "sequence_order": 9,
           "is_required": false,
           "parameters_mapping": {
@@ -819,7 +819,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_help",
-          "execution_context": "user_requests_help",
+          "execution_context": "show_available_directives",
           "sequence_order": 10,
           "is_required": false,
           "parameters_mapping": {},
@@ -852,7 +852,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_help",
-          "execution_context": "user_requests_help",
+          "execution_context": "show_available_directives",
           "sequence_order": 11,
           "is_required": false,
           "parameters_mapping": {
@@ -877,7 +877,7 @@
           "name": "include_md_content",
           "type": "boolean",
           "required": false,
-          "default": "false",
+          "default": false,
           "description": "Include full MD file content"
         }
       ],
@@ -894,7 +894,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_help",
-          "execution_context": "user_requests_help",
+          "execution_context": "show_available_directives",
           "sequence_order": 12,
           "is_required": false,
           "parameters_mapping": {
@@ -931,7 +931,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_run",
-          "execution_context": "new_session_startup",
+          "execution_context": "bundle_session_startup_data",
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {},
@@ -971,7 +971,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_run",
-          "execution_context": "new_session_startup",
+          "execution_context": "bundle_session_startup_data",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
@@ -1012,7 +1012,7 @@
           "description": "Filter by target directive name"
         }
       ],
-      "purpose": "General-purpose query for directive flows by category, type, or directive names. Complements navigation helpers (get_next_directives_from_status, etc.) which are specialized for workflow routing.",
+      "purpose": "General-purpose query for directive flows by category, type, or directive names. Complements the navigation helpers (get_flows_from_directive, get_flows_to_directive, get_wildcard_flows), which answer where a specific directive routes.",
       "error_handling": "Returns empty array if no flows match filters",
       "is_tool": true,
       "is_sub_helper": false,
@@ -1111,6 +1111,6 @@
       "directives_2.py": 9,
       "flows.py": 5
     },
-    "last_updated": "2026-03-09"
+    "last_updated": "2026-09-14"
   }
 }

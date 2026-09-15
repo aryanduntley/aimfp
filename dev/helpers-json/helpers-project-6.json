@@ -146,7 +146,7 @@
         {
           "name": "status",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "pending",
           "description": "'pending', 'in_progress', 'completed'"
         },
@@ -160,8 +160,8 @@
         {
           "name": "order_index",
           "type": "integer",
-          "required": true,
-          "default": null,
+          "required": false,
+          "default": 1,
           "description": "Order position (1, 2, 3...)"
         }
       ],
@@ -179,14 +179,6 @@
       ],
       "target_database": "project",
       "used_by_directives": [
-        {
-          "directive_name": "project_task_decomposition",
-          "execution_context": "decompose_request",
-          "sequence_order": 1,
-          "is_required": true,
-          "parameters_mapping": {},
-          "description": "Create completion path stages during user request decomposition - establishes project roadmap structure"
-        },
         {
           "directive_name": "project_add_path",
           "execution_context": "insert_completion_path",
@@ -214,7 +206,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_blueprint_read",
-          "execution_context": "database_fallback",
+          "execution_context": "check_database_fallback",
           "sequence_order": 5,
           "is_required": false,
           "parameters_mapping": {},
@@ -447,7 +439,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -608,19 +600,11 @@
       "used_by_directives": [
         {
           "directive_name": "project_theme_flow_mapping",
-          "execution_context": "update_file_flows",
+          "execution_context": "update_flow_themes",
           "sequence_order": 4,
           "is_required": true,
           "parameters_mapping": {},
           "description": "Link file to flow during theme-flow mapping — assigns files to architectural flows"
-        },
-        {
-          "directive_name": "project_file_write",
-          "execution_context": "update_file_flows",
-          "sequence_order": 5,
-          "is_required": true,
-          "parameters_mapping": {},
-          "description": "Link file to flow after writing — ensures all written files have flow assignments"
         }
       ]
     },
@@ -653,7 +637,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_theme_flow_mapping",
-          "execution_context": "update_file_flows",
+          "execution_context": "update_flow_themes",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
@@ -704,7 +688,7 @@
     "first_helper": "get_flows_for_theme",
     "last_helper": "add_file_flows",
     "status": "return_statements complete - 4 helpers enhanced",
-    "last_updated": "2026-03-09",
+    "last_updated": "2026-09-14",
     "notes": "Added add_file_to_flow and add_file_flows for file-flow junction table management"
   }
 }

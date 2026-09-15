@@ -81,7 +81,13 @@ def _resolve_target_files(conn, targets: Optional[List[str]]) -> Set[int]:
                            (module_name_to_id[t],)):
                 selected.add(r["file_id"])
             continue
-        # task/milestone slug -> flows -> files (best-effort)
+        # task/subtask/sidequest slug -> files linked in task_files (what it actually touched)
+        for tbl in ("tasks", "subtasks", "sidequests"):
+            for r in _safe(conn, f"SELECT tf.file_id FROM task_files tf JOIN {tbl} w "
+                                 f"ON tf.reference_table = '{tbl}' AND tf.reference_id = w.id "
+                                 f"WHERE w.slug = ?", (t,)):
+                selected.add(r["file_id"])
+        # task/milestone slug -> flows -> files (best-effort, covers not-yet-linked planned work)
         flow_ids: Set[int] = set()
         for tbl in ("tasks", "sidequests"):
             rows = _safe(conn, f"SELECT flow_ids FROM {tbl} WHERE slug = ?", (t,))

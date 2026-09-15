@@ -21,7 +21,7 @@
         {
           "name": "status",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "pending",
           "description": "'pending', 'in_progress', 'completed', 'blocked'"
         },
@@ -35,7 +35,7 @@
         {
           "name": "priority",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "high",
           "description": "'low', 'medium', 'high', 'critical'"
         }
@@ -51,7 +51,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_task_decomposition",
-          "execution_context": "decompose_request",
+          "execution_context": "create_subtask",
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {},
@@ -100,7 +100,7 @@
         },
         {
           "directive_name": "project_auto_resume",
-          "execution_context": "detect_unfinished_work",
+          "execution_context": "detect_incomplete_tasks",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
@@ -108,7 +108,7 @@
         },
         {
           "directive_name": "project_auto_summary",
-          "execution_context": "generate_summary",
+          "execution_context": "summarize_project_state",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
@@ -116,7 +116,7 @@
         },
         {
           "directive_name": "project_completion_check",
-          "execution_context": "check_completion_status",
+          "execution_context": "check_progress",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
@@ -273,7 +273,7 @@
         },
         {
           "directive_name": "project_metrics",
-          "execution_context": "calculate_task_distribution",
+          "execution_context": "gather_metrics",
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {},
@@ -337,6 +337,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
+        "If status='in_progress': tracked files now auto-link to this subtask instead of its parent task (get_task_context for the parent still includes them).",
         "If status changed: call add_note(note_type='task_context', reference_table='subtasks', reference_id=<subtask_id>) describing the change",
         "If status='completed': check get_incomplete_subtasks_by_task(task_id) — if empty, parent task can resume"
       ],
@@ -344,7 +345,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_task_update",
-          "execution_context": "update_subtask_status",
+          "execution_context": "update_task_status",
           "sequence_order": 2,
           "is_required": false,
           "parameters_mapping": {},
@@ -400,7 +401,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -484,7 +485,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_task_decomposition",
-          "execution_context": "decompose_request",
+          "execution_context": "create_sidequest",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
@@ -492,7 +493,7 @@
         },
         {
           "directive_name": "project_sidequest_create",
-          "execution_context": "create_sidequest_record",
+          "execution_context": "create_with_task_link",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
@@ -527,7 +528,7 @@
         },
         {
           "directive_name": "project_auto_resume",
-          "execution_context": "detect_unfinished_work",
+          "execution_context": "detect_incomplete_tasks",
           "sequence_order": 4,
           "is_required": true,
           "parameters_mapping": {},
@@ -535,7 +536,7 @@
         },
         {
           "directive_name": "project_auto_summary",
-          "execution_context": "generate_summary",
+          "execution_context": "summarize_project_state",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
@@ -543,7 +544,7 @@
         },
         {
           "directive_name": "project_completion_check",
-          "execution_context": "check_completion_status",
+          "execution_context": "check_progress",
           "sequence_order": 4,
           "is_required": true,
           "parameters_mapping": {},
@@ -626,7 +627,7 @@
         },
         {
           "directive_name": "project_metrics",
-          "execution_context": "calculate_task_distribution",
+          "execution_context": "gather_metrics",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
@@ -683,11 +684,13 @@
           "description": "Sidequest ID"
         }
       ],
-      "purpose": "Get all files related to sidequest via flows (orchestrator)",
-      "error_handling": "",
+      "purpose": "Get the files worked on for a sidequest (task_files junction). Files are linked automatically when reserved, finalized, cataloged, or updated (and when their functions/types are finalized, cataloged, or updated) while a work item is in_progress — the most recent in_progress sidequest, else subtask, else task.",
+      "error_handling": "Returns error if the sidequest is not found. Empty list when no files are linked.",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "If files[] is empty but work was done, link the files with link_files_to_task(sidequest_id, file_ids, task_type='sidequest')."
+      ],
       "target_database": "project",
       "used_by_directives": [
         {
@@ -700,8 +703,8 @@
         }
       ],
       "implementation_notes": [
-        "Returns: Array of file objects",
-        "Chains: retrieve sidequest flows → get file IDs from flows → retrieve file details"
+        "Returns: Array of file objects in link order",
+        "Reads task_files WHERE reference_table='sidequests'"
       ]
     },
     {
@@ -770,6 +773,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
+        "If status='in_progress': tracked files now auto-link to this sidequest instead of the paused task, until it leaves in_progress.",
         "If status changed: call add_note(note_type='task_context', reference_table='sidequests', reference_id=<sidequest_id>) describing the change",
         "If status='completed': paused task/subtask can now resume (check paused_task_id/paused_subtask_id)"
       ],
@@ -777,7 +781,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_task_update",
-          "execution_context": "update_sidequest_status",
+          "execution_context": "update_task_status",
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {},
@@ -833,7 +837,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -861,7 +865,7 @@
     "first_helper": "add_subtask",
     "last_helper": "delete_sidequest",
     "status": "return_statements complete - 2 helpers enhanced",
-    "last_updated": "2026-01-02",
+    "last_updated": "2026-09-14",
     "notes": "add_subtask and add_sidequest remind AI to create items for complete work tracking"
   }
 }

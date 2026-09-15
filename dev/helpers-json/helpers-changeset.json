@@ -47,7 +47,7 @@
         "changeset_id: stable handle cs-<branch>-<sha8(base+branch)>; the object is persisted at .aimfp-project/changesets/<changeset_id>.json",
         "summary: {entities:{kind:{add,modify,delete}}, references:{kind:{add,remove}}, touched_files[], touched_modules[], totals}",
         "entities[]: {kind, semantic_key, op:add|modify|delete, attributes?} — PKs stripped, FK parents re-expressed as semantic-key refs",
-        "references[]: {kind:interaction|type_usage|file_flow|module_file|flow_theme, op:add|remove, endpoints by semantic key}",
+        "references[]: {kind:interaction|type_usage|file_flow|module_file|flow_theme|task_file, op:add|remove, endpoints by semantic key; task_file carries reference_table + work_item slug key}",
         "Identity keys make rename/reparent/move show up cleanly as 'modify': hierarchy rows keyed by slug, functions/types keyed by entity_key (Stage 2). Falls back to natural (file,name) key only when entity_key is absent (un-backfilled rows), where rename/move still shows as delete+add",
         "flow_ids JSON arrays are translated from branch-local flow ints to flow names so the changeset stays integer-free",
         "Extracts committed DBs with: git -C <root> show <commit>:.aimfp-project/project.db"
@@ -79,7 +79,7 @@
         "add: insert+mint if absent; if present & identical -> applied no-op; if present & different -> conflict",
         "modify: 3-way per field — apply only fields main left unchanged-since-base; any divergence escalates the whole entity",
         "delete: first-class; only if unchanged-since-base AND no inbound dependents in main; else conflict",
-        "references (interaction/type_usage/file_flow/module_file/flow_theme): resolved to canonical IDs; add/remove; unresolved endpoint -> conflict",
+        "references (interaction/type_usage/file_flow/module_file/flow_theme/task_file): resolved to canonical IDs; add/remove; unresolved endpoint -> conflict",
         "Entities applied in dependency order (parents before children); deletes in reverse; references last",
         "Slug/natural keys are the merge identity; branch-local integer PKs are never trusted"
       ],

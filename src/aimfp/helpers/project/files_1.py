@@ -24,6 +24,7 @@ from typing import Any, Dict, Optional, List, Tuple, Union
 from ..utils import get_return_statements
 
 # Import common project utilities (DRY principle)
+from .task_files import link_files_to_current_focus_effect
 from ._common import (
     _open_connection,
     get_cached_project_root,
@@ -130,6 +131,7 @@ class FileQueryResult:
     success: bool
     file: Optional[FileRecord] = None
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -138,6 +140,7 @@ class FilesQueryResult:
     success: bool
     files: Tuple[FileRecord, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 # ============================================================================
@@ -420,6 +423,7 @@ def reserve_file(
 
         # Effect: reserve file with id_in_name flag
         reserved_id = _reserve_file_effect(conn, name, path, language, not skip_id_naming)
+        link_files_to_current_focus_effect(conn, (reserved_id,))
 
         # Success - fetch return statements from core database
         return_statements = get_return_statements("reserve_file")
@@ -496,6 +500,7 @@ def reserve_files(
 
         # Effect: reserve all files in transaction
         reserved_ids = _reserve_files_batch_effect(conn, files_with_id_in_name)
+        link_files_to_current_focus_effect(conn, reserved_ids)
 
         # Success - fetch return statements from core database
         return_statements = get_return_statements("reserve_files")
@@ -572,6 +577,7 @@ def finalize_file(
 
     try:
         _finalize_file_effect(conn, file_id, name, path, language)
+        link_files_to_current_focus_effect(conn, (file_id,))
 
         # Success - fetch return statements from core database
         return_statements = get_return_statements("finalize_file")
@@ -656,6 +662,7 @@ def finalize_files(
 
     try:
         _finalize_files_batch_effect(conn, finalizations)
+        link_files_to_current_focus_effect(conn, tuple(f[0] for f in finalizations))
 
         # Success - fetch return statements from core database
         return_statements = get_return_statements("finalize_files")
@@ -713,7 +720,8 @@ def get_file_by_name(
 
         return FilesQueryResult(
             success=True,
-            files=file_records
+            files=file_records,
+            return_statements=get_return_statements("get_file_by_name")
         )
 
     except Exception as e:
@@ -761,7 +769,8 @@ def get_file_by_path(
         if row is None:
             return FileQueryResult(
                 success=True,
-                file=None
+                file=None,
+                return_statements=get_return_statements("get_file_by_path")
             )
 
         # Pure: convert row to immutable record
@@ -769,7 +778,8 @@ def get_file_by_path(
 
         return FileQueryResult(
             success=True,
-            file=file_record
+            file=file_record,
+            return_statements=get_return_statements("get_file_by_path")
         )
 
     except Exception as e:

@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ..utils import get_return_statements, get_cached_project_root, _open_project_connection
 from ..shared.slugs import mint_slug
+from ..project.task_files import link_files_to_current_focus_effect
 
 
 # ============================================================================
@@ -306,6 +307,7 @@ def catalog_files(
             created += 1 if was_created else 0
 
         conn.commit()
+        link_files_to_current_focus_effect(conn, ids)
 
         return CatalogResult(
             success=True,
@@ -374,6 +376,7 @@ def catalog_functions(
             created += 1 if was_created else 0
 
         conn.commit()
+        link_files_to_current_focus_effect(conn, (int(r['file_id']) for r in records))
 
         return CatalogResult(
             success=True,
@@ -448,6 +451,9 @@ def catalog_types(
             created += 1 if was_created else 0
 
         conn.commit()
+        link_files_to_current_focus_effect(
+            conn, (int(r['file_id']) for r in records if r.get('file_id') is not None)
+        )
 
         return CatalogResult(
             success=True,

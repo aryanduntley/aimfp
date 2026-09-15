@@ -54,7 +54,7 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
     aimfp_run(is_new_session=false) → watchdog alerts only (at work checkpoints)
     aimfp_status() → fresh state. Call when you can't recall milestone + active task.
     get_supportive_context(variant) → reload reference material on demand.
-    Task completion gate: get_task_context(task_id) → verify every finalized file has tracked functions.
+    Task completion gate: get_task_context(task_id) → files[] lists files linked to the task; verify each has tracked functions.
     aimfp_end → audit, stop watchdog, log summary.
 
 2. USER REQUEST ROUTING
@@ -77,6 +77,7 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
 
   Before beginning any task/sidequest/user request:
     search_notes(search_string=<keywords>, exclude_note_types=['completed','obsolete'])
+  Returns capped previews → read a relevant one in full with get_notes_comprehensive(note_id=X).
   Empty = move on. Hits = review for decisions, deferred work, warnings.
   Handled notes → update_note(note_type='completed' or 'obsolete')
 

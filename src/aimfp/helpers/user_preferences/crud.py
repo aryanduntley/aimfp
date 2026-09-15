@@ -151,7 +151,8 @@ def get_from_settings(
 
         return QueryResult(
             success=True,
-            rows=rows
+            rows=rows,
+            return_statements=get_return_statements("get_from_settings")
         )
 
     except Exception as e:
@@ -217,7 +218,8 @@ def get_from_settings_where(
 
         return QueryResult(
             success=True,
-            rows=rows
+            rows=rows,
+            return_statements=get_return_statements("get_from_settings_where")
         )
 
     except Exception as e:
@@ -272,7 +274,8 @@ def query_settings(
 
         return QueryResult(
             success=True,
-            rows=rows
+            rows=rows,
+            return_statements=get_return_statements("query_settings")
         )
 
     except Exception as e:
@@ -338,7 +341,8 @@ def add_settings_entry(
         return MutationResult(
             success=True,
             id=new_id,
-            message=f"Entry added to {table}"
+            message=f"Entry added to {table}",
+            return_statements=get_return_statements("add_settings_entry")
         )
 
     except sqlite3.IntegrityError as e:
@@ -419,7 +423,8 @@ def update_settings_entry(
         return MutationResult(
             success=True,
             id=record_id,
-            message=f"Entry updated in {table}"
+            message=f"Entry updated in {table}",
+            return_statements=get_return_statements("update_settings_entry")
         )
 
     except sqlite3.IntegrityError as e:
@@ -483,7 +488,8 @@ def delete_settings_entry(
         return MutationResult(
             success=True,
             id=record_id,
-            message=f"Entry deleted from {table}"
+            message=f"Entry deleted from {table}",
+            return_statements=get_return_statements("delete_settings_entry")
         )
 
     except Exception as e:

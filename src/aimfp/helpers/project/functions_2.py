@@ -55,6 +55,7 @@ class FunctionsQueryResult:
     success: bool
     functions: Tuple[FunctionRecord, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -518,7 +519,8 @@ def get_functions_by_file(
 
         return FunctionsQueryResult(
             success=True,
-            functions=function_records
+            functions=function_records,
+            return_statements=get_return_statements("get_functions_by_file")
         )
 
     except Exception as e:

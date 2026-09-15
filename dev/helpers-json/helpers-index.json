@@ -12,16 +12,8 @@
       "target_database": "core",
       "used_by_directives": [
         {
-          "directive_name": "aimfp_help",
-          "execution_context": "show_database_info",
-          "sequence_order": 14,
-          "is_required": false,
-          "parameters_mapping": {},
-          "description": "Show available databases with metadata when user asks about infrastructure - lists aimfp_core.db, project.db, user_preferences.db, user_directives.db with status"
-        },
-        {
           "directive_name": "aimfp_status",
-          "execution_context": "check_infrastructure_status",
+          "execution_context": "load_infrastructure_context",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
@@ -60,7 +52,7 @@
       "used_by_directives": [
         {
           "directive_name": "aimfp_run",
-          "execution_context": "session_bundle_context",
+          "execution_context": "bundle_session_startup_data",
           "sequence_order": 6,
           "is_required": false,
           "parameters_mapping": {},
@@ -95,16 +87,7 @@
         "No database access — derives the list in memory; the AI performs the file write"
       ],
       "target_database": "no_db",
-      "used_by_directives": [
-        {
-          "directive_name": "aimfp_help",
-          "execution_context": "setup_claude_permissions",
-          "sequence_order": 15,
-          "is_required": false,
-          "parameters_mapping": {},
-          "description": "When the user asks how to set up AIMFP permissions or skip per-tool approval prompts, return the .claude/settings.local.json allowlist for the AI to write/merge"
-        }
-      ]
+      "used_by_directives": []
     },
     {
       "name": "get_system_prompt",
@@ -133,16 +116,7 @@
         "No database access — pure file read; the AI performs the file write"
       ],
       "target_database": "no_db",
-      "used_by_directives": [
-        {
-          "directive_name": "aimfp_help",
-          "execution_context": "provide_system_prompt",
-          "sequence_order": 16,
-          "is_required": false,
-          "parameters_mapping": {},
-          "description": "When the user asks the AI to add/install the AIMFP system prompt, return the prompt text + placement guidance for the AI to write (then offer permissions setup via the return statements)"
-        }
-      ]
+      "used_by_directives": []
     }
   ],
   "metadata": {
@@ -153,6 +127,6 @@
     "unmapped_helpers": 0,
     "note": "Global cross-database and system-level helpers. Not orchestrators — utility functions available to all categories.",
     "total_mappings": 5,
-    "last_updated": "2026-05-18"
+    "last_updated": "2026-09-14"
   }
 }

@@ -22,6 +22,7 @@ from typing import Optional, List, Tuple, Dict, Any
 
 from ..utils import get_return_statements
 from ..shared.slugs import mint_slug
+from ..shared.fts_query import tokenize_search_terms, build_fts_match_expression, build_like_clause
 
 # Import common project utilities (DRY principle)
 from ._common import _open_connection, _check_file_exists, get_cached_project_root, _open_project_connection
@@ -94,6 +95,7 @@ class FunctionQueryResult:
     success: bool
     functions: Tuple[FunctionRecord, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 # ============================================================================
@@ -861,11 +863,13 @@ def search_functions(
     """
     Search functions by name or purpose using FTS5 full-text search.
 
-    Returns relevance-ranked results. Falls back to LIKE if FTS5
-    table is not available (pre-migration databases).
+    The search text is split into words; a function matches when ANY word
+    prefix-matches its name or purpose, ranked so functions matching more
+    words come first. Punctuation is ignored. Falls back to per-word LIKE if
+    the FTS5 table is not available (pre-migration databases).
 
     Args:
-        search_string: Search string for function name or purpose
+        search_string: Free-text search (one or more words)
 
     Returns:
         FunctionQueryResult with matching function records
@@ -877,6 +881,14 @@ def search_functions(
         >>> [f.name for f in result.functions]
         ['calculate_sum_id_42', 'calculate_total_id_55']
     """
+    terms = tokenize_search_terms(search_string)
+    if not terms:
+        return FunctionQueryResult(
+            success=True,
+            functions=(),
+            return_statements=get_return_statements("search_functions"),
+        )
+
     project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
@@ -889,19 +901,19 @@ def search_functions(
                 JOIN functions_fts ON f.id = functions_fts.rowid
                 LEFT JOIN files fi ON f.file_id = fi.id
                 WHERE functions_fts MATCH ?
-                ORDER BY functions_fts.rank""",
-                (search_string,)
+                ORDER BY bm25(functions_fts, 5.0, 1.0)""",
+                (build_fts_match_expression(terms),)
             )
         except sqlite3.OperationalError:
-            # Fallback: LIKE search
-            like_pattern = f"%{search_string}%"
+            # Fallback: per-term LIKE search (FTS5 table missing)
+            like_sql, like_params = build_like_clause(('f.name', 'f.purpose'), terms)
             cursor = conn.execute(
-                """SELECT f.*, fi.name AS file_name, fi.path AS file_path
+                f"""SELECT f.*, fi.name AS file_name, fi.path AS file_path
                 FROM functions f
                 LEFT JOIN files fi ON f.file_id = fi.id
-                WHERE f.name LIKE ? OR f.purpose LIKE ?
+                WHERE {like_sql}
                 ORDER BY f.name""",
-                (like_pattern, like_pattern)
+                like_params
             )
 
         rows = cursor.fetchall()
@@ -912,7 +924,8 @@ def search_functions(
 
         return FunctionQueryResult(
             success=True,
-            functions=function_records
+            functions=function_records,
+            return_statements=get_return_statements("search_functions")
         )
 
     except Exception as e:
@@ -970,7 +983,8 @@ def get_function_by_name(
 
         return FunctionQueryResult(
             success=True,
-            functions=function_records
+            functions=function_records,
+            return_statements=get_return_statements("get_function_by_name")
         )
 
     except Exception as e:

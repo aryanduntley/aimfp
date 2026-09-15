@@ -21,7 +21,7 @@
         {
           "name": "status",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "pending",
           "description": "'pending', 'in_progress', 'completed', 'blocked'"
         },
@@ -42,14 +42,6 @@
       ],
       "target_database": "project",
       "used_by_directives": [
-        {
-          "directive_name": "project_task_decomposition",
-          "execution_context": "decompose_request",
-          "sequence_order": 2,
-          "is_required": true,
-          "parameters_mapping": {},
-          "description": "Create milestones for completion paths during decomposition - defines project phases"
-        },
         {
           "directive_name": "project_add_path",
           "execution_context": "insert_completion_path",
@@ -85,7 +77,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_milestone_complete",
-          "execution_context": "check_path_completion",
+          "execution_context": "mark_complete_and_update_path",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -126,7 +118,7 @@
         },
         {
           "directive_name": "project_metrics",
-          "execution_context": "calculate_completion_percentage",
+          "execution_context": "compute_progress",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
@@ -159,7 +151,7 @@
         },
         {
           "directive_name": "project_auto_resume",
-          "execution_context": "detect_unfinished_work",
+          "execution_context": "detect_incomplete_tasks",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
@@ -167,7 +159,7 @@
         },
         {
           "directive_name": "project_completion_check",
-          "execution_context": "check_completion_status",
+          "execution_context": "check_progress",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
@@ -292,7 +284,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -371,7 +363,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_task_decomposition",
-          "execution_context": "decompose_request",
+          "execution_context": "create_new_task",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {
@@ -501,7 +493,7 @@
         },
         {
           "directive_name": "project_auto_resume",
-          "execution_context": "detect_unfinished_work",
+          "execution_context": "detect_incomplete_tasks",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -509,7 +501,7 @@
         },
         {
           "directive_name": "project_auto_summary",
-          "execution_context": "generate_summary",
+          "execution_context": "summarize_project_state",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -517,7 +509,7 @@
         },
         {
           "directive_name": "project_completion_check",
-          "execution_context": "check_completion_status",
+          "execution_context": "check_progress",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -630,7 +622,7 @@
         },
         {
           "directive_name": "project_metrics",
-          "execution_context": "calculate_task_distribution",
+          "execution_context": "gather_metrics",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -689,11 +681,13 @@
           "description": "Task ID"
         }
       ],
-      "purpose": "Get all files related to task via flows (orchestrator)",
-      "error_handling": "",
+      "purpose": "Get the files worked on for a task, including files linked to its subtasks (task_files junction). Files are linked automatically when reserved, finalized, cataloged, or updated (and when their functions/types are finalized, cataloged, or updated) while a work item is in_progress — the most recent in_progress sidequest, else subtask, else task.",
+      "error_handling": "Returns error if the task is not found. Empty list when no files are linked.",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "If files[] is empty but work was done, link the files with link_files_to_task(task_id, file_ids)."
+      ],
       "target_database": "project",
       "used_by_directives": [
         {
@@ -702,13 +696,13 @@
           "sequence_order": 7,
           "is_required": true,
           "parameters_mapping": {},
-          "description": "Query files related to tasks via flows - maps task-file relationships through flows"
+          "description": "Query files worked on for tasks (task_files junction) - maps task-file relationships"
         }
       ],
       "implementation_notes": [
-        "Returns: Array of file objects [{id, name, path, language}, ...]",
-        "Orchestrator: queries task.flow_ids → file_flows table → files table",
-        "Multi-step lookup to get all files associated with task's flows"
+        "Returns: Array of file objects [{id, name, path, language}, ...] in link order",
+        "Reads task_files WHERE reference_table='tasks' plus rows for the task's subtasks",
+        "Flow-based lookup removed in schema v1.12: flows are architectural groupings, not the files a task touched"
       ]
     },
     {
@@ -771,6 +765,7 @@
       "is_sub_helper": false,
       "return_statements": [
         "If status='in_progress': BEFORE STARTING WORK — (1) search_notes(search_string=<task-relevant keywords>, exclude_note_types=['completed','obsolete']) for prior decisions or deferred work affecting this task. Review hits, mark handled notes as 'completed'/'obsolete'. (2) Check get_all_flows() and get_task_flows(task_id) for relevant workflow descriptions. (3) Use DB lookups (get_function_by_name, get_type_by_name, get_functions_by_file) to understand existing code BEFORE reading source files.",
+        "If status='in_progress': files you now reserve, finalize, catalog, or update (or whose functions/types you do) auto-link to this task — unless a subtask or sidequest is also in_progress, which takes precedence. Keep only the item you are actually working on in_progress.",
         "If task status changed: call add_note(note_type='task_context', reference_table='tasks', reference_id=<task_id>) describing the status change",
         "If status='completed': call get_incomplete_tasks_by_milestone(milestone_id, skip_pending=false) — if empty, call update_milestone(id, status='completed')",
         "Call aimfp_run(is_new_session=false) — returns watchdog info about external file changes detected since your last check."
@@ -779,7 +774,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_task_update",
-          "execution_context": "update_task_status_or_priority",
+          "execution_context": "update_task_status",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
@@ -859,7 +854,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -886,7 +881,7 @@
     "first_helper": "add_milestone",
     "last_helper": "delete_task",
     "status": "return_statements complete - 1 helper enhanced",
-    "last_updated": "2026-01-02",
+    "last_updated": "2026-09-14",
     "notes": "Implementation notes expanded with proper SQL queries and return types - removed fragmented 'See return_statements' references"
   }
 }

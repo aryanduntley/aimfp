@@ -262,19 +262,8 @@
           "description": "Insert parsed directives into user_directives table with pending_validation status"
         },
         {
-          "directive_name": "user_directive_parse",
-          "execution_context": "store_source_file",
-          "sequence_order": 1,
-          "is_required": true,
-          "parameters_mapping": {
-            "table": "source_files",
-            "fields": "file_path, file_format, file_checksum, parse_status"
-          },
-          "description": "Insert source file record with checksum for change detection"
-        },
-        {
           "directive_name": "user_directive_update",
-          "execution_context": "handle_new_directives",
+          "execution_context": "handle_changes",
           "sequence_order": 5,
           "is_required": false,
           "parameters_mapping": {},
@@ -359,7 +348,7 @@
         },
         {
           "directive_name": "user_directive_update",
-          "execution_context": "handle_modified_directives",
+          "execution_context": "handle_changes",
           "sequence_order": 4,
           "is_required": true,
           "parameters_mapping": {
@@ -405,7 +394,7 @@
       "used_by_directives": [
         {
           "directive_name": "user_directive_update",
-          "execution_context": "handle_removed_directives",
+          "execution_context": "handle_changes",
           "sequence_order": 6,
           "is_required": false,
           "parameters_mapping": {
@@ -450,7 +439,7 @@
         },
         {
           "directive_name": "aimfp_status",
-          "execution_context": "check_user_directive_status",
+          "execution_context": "check_user_directives_status",
           "sequence_order": 16,
           "is_required": false,
           "parameters_mapping": {},
@@ -601,7 +590,7 @@
       "used_by_directives": [
         {
           "directive_name": "user_directive_activate",
-          "execution_context": "update_status",
+          "execution_context": "initialize_execution_tracking",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
@@ -648,7 +637,7 @@
         },
         {
           "directive_name": "user_directive_update",
-          "execution_context": "handle_modified_directives",
+          "execution_context": "handle_changes",
           "sequence_order": 1,
           "is_required": false,
           "parameters_mapping": {},
@@ -873,10 +862,10 @@
       "target_database": "user_directives",
       "used_by_directives": [
         {
-          "directive_name": "user_directive_parse",
-          "execution_context": "initialize_database",
+          "directive_name": "aimfp_init",
+          "execution_context": "init_user_directives_db",
           "sequence_order": 1,
-          "description": "Create user_directives.db before storing parsed directives"
+          "description": "Create user_directives.db when the user opts in to the user directives system during init"
         }
       ],
       "implementation_notes": [
@@ -897,7 +886,7 @@
     "unmapped_helpers": 11,
     "note": "Removed 6 orchestrators that contained deep logic (parse_directive_file, validate_directive_config, generate_handler_code, deploy_background_service, get_user_directive_status, monitor_directive_execution). These operations are AI's responsibility guided by directive workflows. Replaced with CRUD-oriented helpers: get_user_directive_by_name, get_active_user_directives, search_user_directives, activate_user_directive, deactivate_user_directive. 11 helpers are generic AI tools (schema/CRUD/notes). 8 helpers mapped to directives.",
     "total_mappings": 14,
-    "last_updated": "2026-01-28",
+    "last_updated": "2026-09-14",
     "changes": [
       "REMOVED: parse_directive_file (orchestrator - AI follows user_directive_parse directive workflow)",
       "REMOVED: validate_directive_config (orchestrator - AI follows user_directive_validate directive workflow)",

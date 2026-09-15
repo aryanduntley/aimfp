@@ -10,6 +10,7 @@ Helpers in this file:
 All helpers target project.db only. No decision logic — AI interprets data.
 """
 
+import json
 import sqlite3
 from typing import Optional, Tuple, Dict, Any, List
 
@@ -26,6 +27,7 @@ from ._common import (
     VALID_TASK_TYPES,
     TASK_TABLE_MAP,
 )
+from ..project.task_files import WorkItemRef, query_current_focus_row, query_task_file_rows
 
 
 # ============================================================================
@@ -431,34 +433,8 @@ def _get_work_counts(conn: sqlite3.Connection) -> Dict[str, int]:
 
 def _get_current_focus(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
     """Effect: Get current in_progress work item (priority: sidequest > subtask > task)."""
-    # Check sidequests first
-    cursor = conn.execute(
-        "SELECT *, 'sidequest' as item_type FROM sidequests "
-        "WHERE status = 'in_progress' ORDER BY id DESC LIMIT 1"
-    )
-    row = cursor.fetchone()
-    if row:
-        return row_to_dict(row)
-
-    # Then subtasks
-    cursor = conn.execute(
-        "SELECT *, 'subtask' as item_type FROM subtasks "
-        "WHERE status = 'in_progress' ORDER BY id DESC LIMIT 1"
-    )
-    row = cursor.fetchone()
-    if row:
-        return row_to_dict(row)
-
-    # Then tasks
-    cursor = conn.execute(
-        "SELECT *, 'task' as item_type FROM tasks "
-        "WHERE status = 'in_progress' ORDER BY id DESC LIMIT 1"
-    )
-    row = cursor.fetchone()
-    if row:
-        return row_to_dict(row)
-
-    return None
+    row = query_current_focus_row(conn)
+    return row_to_dict(row) if row else None
 
 
 def _get_blocked_items(conn: sqlite3.Connection) -> Tuple[Dict[str, Any], ...]:
@@ -567,6 +543,11 @@ def get_task_context(
     Single call retrieves the item + associated items + flows + files +
     functions, and optionally interactions and note history.
 
+    Files come from the task_files junction: files tracked while the item was
+    in_progress, or linked with link_files_to_task. A task's context includes
+    its subtasks' files. Flows are the item's own flow_ids plus the flows of
+    its linked files.
+
     Args:
         task_id: ID of the task/subtask/sidequest
         task_type: 'task', 'subtask', or 'sidequest' (auto-detected if omitted)
@@ -635,13 +616,17 @@ def get_task_context(
             # Step 2: Get associated items
             items = _get_items_for_task(conn, task_type, task_id)
 
-            # Step 3: Get flows associated with this task's items
-            flow_ids = _get_flow_ids_from_items(conn, items)
-            flows = _get_flows_by_ids(conn, flow_ids)
+            # Step 3: Get files linked to this work item (task_files junction)
+            files = rows_to_tuple(query_task_file_rows(
+                conn,
+                WorkItemRef(TASK_TABLE_MAP[task_type], task_id),
+                include_subtasks=(task_type == 'task'),
+            ))
+            file_ids = tuple(f['id'] for f in files)
 
-            # Step 4: Get files from file_flows for those flows
-            file_ids = _get_file_ids_from_flows(conn, flow_ids)
-            files = _get_files_by_ids(conn, file_ids)
+            # Step 4: Flows = the item's own flow_ids + flows of its linked files
+            flow_ids = _get_flow_ids_for_task(conn, task_item, file_ids)
+            flows = _get_flows_by_ids(conn, flow_ids)
 
             # Step 5: Get functions for those files
             functions = _get_functions_for_files(conn, file_ids)
@@ -704,26 +689,32 @@ def _get_items_for_task(
     return rows_to_tuple(cursor.fetchall())
 
 
-def _get_flow_ids_from_items(
-    conn: sqlite3.Connection,
-    items: Tuple[Dict[str, Any], ...],
-) -> Tuple[int, ...]:
-    """Pure: Extract unique flow IDs from items (via file_flows)."""
-    file_ids = set()
-    for item in items:
-        fid = item.get('file_id')
-        if fid:
-            file_ids.add(fid)
-
-    if not file_ids:
+def parse_flow_ids(raw: Any) -> Tuple[int, ...]:
+    """Pure: Decode a work item's flow_ids JSON column; malformed or missing -> ()."""
+    if not raw:
         return ()
+    try:
+        decoded = json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, TypeError):
+        return ()
+    return tuple(int(f) for f in decoded if isinstance(f, int)) if isinstance(decoded, list) else ()
 
-    placeholders = ','.join('?' for _ in file_ids)
-    cursor = conn.execute(
-        f"SELECT DISTINCT flow_id FROM file_flows WHERE file_id IN ({placeholders})",
-        tuple(file_ids)
-    )
-    return tuple(row['flow_id'] for row in cursor.fetchall())
+
+def _get_flow_ids_for_task(
+    conn: sqlite3.Connection,
+    task_item: Dict[str, Any],
+    file_ids: Tuple[int, ...],
+) -> Tuple[int, ...]:
+    """Effect: The item's own flow_ids, then flows of its linked files (distinct, in order)."""
+    file_flow_ids: Tuple[int, ...] = ()
+    if file_ids:
+        placeholders = ','.join('?' for _ in file_ids)
+        cursor = conn.execute(
+            f"SELECT DISTINCT flow_id FROM file_flows WHERE file_id IN ({placeholders})",
+            file_ids
+        )
+        file_flow_ids = tuple(row['flow_id'] for row in cursor.fetchall())
+    return tuple(dict.fromkeys((*parse_flow_ids(task_item.get('flow_ids')), *file_flow_ids)))
 
 
 def _get_flows_by_ids(
@@ -740,33 +731,8 @@ def _get_flows_by_ids(
     return rows_to_tuple(cursor.fetchall())
 
 
-def _get_file_ids_from_flows(
-    conn: sqlite3.Connection,
-    flow_ids: Tuple[int, ...],
-) -> Tuple[int, ...]:
-    """Effect: Get unique file IDs from file_flows for given flow IDs."""
-    if not flow_ids:
-        return ()
-    placeholders = ','.join('?' for _ in flow_ids)
-    cursor = conn.execute(
-        f"SELECT DISTINCT file_id FROM file_flows WHERE flow_id IN ({placeholders})",
-        flow_ids
-    )
-    return tuple(row['file_id'] for row in cursor.fetchall())
 
 
-def _get_files_by_ids(
-    conn: sqlite3.Connection,
-    file_ids: Tuple[int, ...],
-) -> Tuple[Dict[str, Any], ...]:
-    """Effect: Get file records by IDs."""
-    if not file_ids:
-        return ()
-    placeholders = ','.join('?' for _ in file_ids)
-    cursor = conn.execute(
-        f"SELECT * FROM files WHERE id IN ({placeholders})", file_ids
-    )
-    return rows_to_tuple(cursor.fetchall())
 
 
 def _get_functions_for_files(

@@ -18,7 +18,7 @@
       "used_by_directives": [
         {
           "directive_name": "git_init",
-          "execution_context": "get_current_hash_after_init",
+          "execution_context": "integrate_existing_repo",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
@@ -229,7 +229,7 @@
         },
         {
           "directive_name": "git_merge_branch",
-          "execution_context": "list_available_branches",
+          "execution_context": "validate_merge_request",
           "sequence_order": 1,
           "is_required": false,
           "parameters_mapping": {},
@@ -365,7 +365,7 @@
       "used_by_directives": [
         {
           "directive_name": "git_init",
-          "execution_context": "update_project_last_known_git_hash",
+          "execution_context": "integrate_existing_repo",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
@@ -381,7 +381,7 @@
         },
         {
           "directive_name": "git_sync_state",
-          "execution_context": "initialize_hash_or_update_sync_timestamp",
+          "execution_context": "initialize_hash",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -394,7 +394,7 @@
     "file": "helpers-git.json",
     "count": 11,
     "status": "COMPLETE - all 11 helpers implemented 2026-01-27",
-    "last_updated": "2026-01-27",
+    "last_updated": "2026-09-14",
     "notes": "All helpers are Git operations + data retrieval. NO auto-resolution or scoring logic - AI handles decisions."
   }
 }

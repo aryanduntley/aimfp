@@ -43,6 +43,7 @@ class TablesResult:
     success: bool
     tables: Tuple[str, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ class FieldsResult:
     success: bool
     fields: Tuple[FieldInfo, ...] = ()
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,7 @@ class SchemaResult:
     success: bool
     schema: Dict[str, Tuple[FieldInfo, ...]] = None
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,7 @@ class JsonParametersResult:
     success: bool
     parameters: Dict[str, str] = None
     error: Optional[str] = None
+    return_statements: Tuple[str, ...] = ()
 
 
 # ============================================================================
@@ -142,7 +146,8 @@ def get_settings_tables() -> TablesResult:
 
         return TablesResult(
             success=True,
-            tables=tables
+            tables=tables,
+            return_statements=get_return_statements("get_settings_tables")
         )
 
     except Exception as e:
@@ -191,7 +196,8 @@ def get_settings_fields(table: str) -> FieldsResult:
 
         return FieldsResult(
             success=True,
-            fields=fields
+            fields=fields,
+            return_statements=get_return_statements("get_settings_fields")
         )
 
     except Exception as e:
@@ -231,7 +237,8 @@ def get_settings_schema() -> SchemaResult:
 
         return SchemaResult(
             success=True,
-            schema=schema
+            schema=schema,
+            return_statements=get_return_statements("get_settings_schema")
         )
 
     except Exception as e:
@@ -286,7 +293,8 @@ def get_settings_json_parameters(table: str) -> JsonParametersResult:
 
         return JsonParametersResult(
             success=True,
-            parameters=parameters
+            parameters=parameters,
+            return_statements=get_return_statements("get_settings_json_parameters")
         )
 
     except Exception as e:

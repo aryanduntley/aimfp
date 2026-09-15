@@ -49,6 +49,7 @@ Primary execution path that handles task completion and next-step planning.
 **Branch 1: If task_valid_for_completion**
 - **Then**: `mark_complete_and_items`
 - **Details**:
+  - First verifies task files: `get_task_context(task_id)` — `files[]` must list every file worked on. Files auto-link while the task is in_progress; link any worked on earlier with `link_files_to_task(task_id, file_ids)`
   - Updates task status to `completed`
   - Sets `completed_at` timestamp
   - Marks all items as complete

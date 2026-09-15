@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
 from ..utils import get_return_statements
+from ..shared.fts_query import tokenize_search_terms, build_fts_match_expression, build_like_clause
 from ._common import (
     _open_project_connection,
     get_cached_project_root,
@@ -463,23 +464,26 @@ def _get_unassigned_files_effect(conn: sqlite3.Connection) -> List[sqlite3.Row]:
 
 
 def _search_modules_effect(conn: sqlite3.Connection, search_string: str) -> List[sqlite3.Row]:
-    """Effect: Search modules using FTS5, with LIKE fallback."""
+    """Effect: Search modules using OR-joined FTS5 terms, with per-term LIKE fallback."""
+    terms = tokenize_search_terms(search_string)
+    if not terms:
+        return []
     try:
         cursor = conn.execute(
             """
             SELECT m.* FROM modules m
             JOIN modules_fts fts ON m.id = fts.rowid
             WHERE modules_fts MATCH ?
-            ORDER BY rank
+            ORDER BY bm25(modules_fts, 5.0, 1.0, 1.0)
             """,
-            (search_string,),
+            (build_fts_match_expression(terms),),
         )
         return cursor.fetchall()
     except sqlite3.OperationalError:
-        pattern = f"%{search_string}%"
+        like_sql, like_params = build_like_clause(('name', 'purpose', 'description'), terms)
         cursor = conn.execute(
-            "SELECT * FROM modules WHERE name LIKE ? OR purpose LIKE ? OR description LIKE ? ORDER BY name",
-            (pattern, pattern, pattern),
+            f"SELECT * FROM modules WHERE {like_sql} ORDER BY name",
+            like_params,
         )
         return cursor.fetchall()
 
@@ -580,8 +584,16 @@ def get_module_by_name(name: str, project_root: Optional[str] = None) -> ModuleQ
     try:
         row = _get_module_by_name_effect(conn, name)
         if row is None:
-            return ModuleQueryResult(success=True, module=None)
-        return ModuleQueryResult(success=True, module=row_to_module_record(row))
+            return ModuleQueryResult(
+                success=True,
+                module=None,
+                return_statements=get_return_statements("get_module_by_name"),
+            )
+        return ModuleQueryResult(
+            success=True,
+            module=row_to_module_record(row),
+            return_statements=get_return_statements("get_module_by_name"),
+        )
 
     except Exception as e:
         return ModuleQueryResult(success=False, error=f"Query failed: {str(e)}")
@@ -606,8 +618,16 @@ def get_module_by_path(path: str, project_root: Optional[str] = None) -> ModuleQ
     try:
         row = _get_module_by_path_effect(conn, path)
         if row is None:
-            return ModuleQueryResult(success=True, module=None)
-        return ModuleQueryResult(success=True, module=row_to_module_record(row))
+            return ModuleQueryResult(
+                success=True,
+                module=None,
+                return_statements=get_return_statements("get_module_by_path"),
+            )
+        return ModuleQueryResult(
+            success=True,
+            module=row_to_module_record(row),
+            return_statements=get_return_statements("get_module_by_path"),
+        )
 
     except Exception as e:
         return ModuleQueryResult(success=False, error=f"Query failed: {str(e)}")
@@ -681,7 +701,10 @@ def update_module(
         )
         _update_module_effect(conn, sql, params)
 
-        return UpdateModuleResult(success=True)
+        return UpdateModuleResult(
+            success=True,
+            return_statements=get_return_statements("update_module"),
+        )
 
     except sqlite3.IntegrityError as e:
         return UpdateModuleResult(success=False, error=f"Integrity error: {str(e)}")
@@ -724,7 +747,11 @@ def delete_module(module_id: int, project_root: Optional[str] = None) -> DeleteM
             "info", "ai", "entry_deletion",
         )
 
-        return DeleteModuleResult(success=True, file_count=file_count)
+        return DeleteModuleResult(
+            success=True,
+            file_count=file_count,
+            return_statements=get_return_statements("delete_module"),
+        )
 
     except Exception as e:
         return DeleteModuleResult(success=False, error=f"Delete failed: {str(e)}")
@@ -813,7 +840,10 @@ def remove_file_from_module(
                 f"WARNING: Module '{module_row['name']}' (id={module_id}) now has 0 files. Consider deleting the empty module via delete_module or reassigning files.",
             )
 
-        return ModuleFileResult(success=True, return_statements=stmts)
+        return ModuleFileResult(
+            success=True,
+            return_statements=(*get_return_statements("remove_file_from_module"), *stmts),
+        )
 
     except Exception as e:
         return ModuleFileResult(success=False, error=f"Failed to remove file: {str(e)}")
@@ -845,7 +875,11 @@ def get_module_files(module_id: int, project_root: Optional[str] = None) -> Modu
             for r in rows
         )
 
-        return ModuleFilesResult(success=True, files=files)
+        return ModuleFilesResult(
+            success=True,
+            files=files,
+            return_statements=get_return_statements("get_module_files"),
+        )
 
     except Exception as e:
         return ModuleFilesResult(success=False, error=f"Query failed: {str(e)}")
@@ -880,7 +914,11 @@ def get_module_functions(module_id: int, project_root: Optional[str] = None) -> 
             for r in rows
         )
 
-        return ModuleFunctionsResult(success=True, functions=functions)
+        return ModuleFunctionsResult(
+            success=True,
+            functions=functions,
+            return_statements=get_return_statements("get_module_functions"),
+        )
 
     except Exception as e:
         return ModuleFunctionsResult(success=False, error=f"Query failed: {str(e)}")
@@ -915,7 +953,11 @@ def get_module_types(module_id: int, project_root: Optional[str] = None) -> Modu
             for r in rows
         )
 
-        return ModuleTypesResult(success=True, types=types)
+        return ModuleTypesResult(
+            success=True,
+            types=types,
+            return_statements=get_return_statements("get_module_types"),
+        )
 
     except Exception as e:
         return ModuleTypesResult(success=False, error=f"Query failed: {str(e)}")
@@ -959,7 +1001,11 @@ def get_module_dependencies(module_id: int, project_root: Optional[str] = None) 
             for r in rows
         )
 
-        return ModuleDependenciesResult(success=True, dependencies=dependencies)
+        return ModuleDependenciesResult(
+            success=True,
+            dependencies=dependencies,
+            return_statements=get_return_statements("get_module_dependencies"),
+        )
 
     except Exception as e:
         return ModuleDependenciesResult(success=False, error=f"Query failed: {str(e)}")

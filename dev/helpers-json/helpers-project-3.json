@@ -194,7 +194,7 @@
         },
         {
           "directive_name": "project_file_write",
-          "execution_context": "finalize_after_write",
+          "execution_context": "finalize_reservations",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
@@ -202,7 +202,7 @@
         },
         {
           "directive_name": "project_update_db",
-          "execution_context": "finalize_new_functions",
+          "execution_context": "update_functions_table",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
@@ -282,7 +282,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "DB-FIRST: Use this lookup BEFORE reading source files. Function signatures (purpose, parameters, returns) in the DB eliminate the need to read full files for most lookups. Only read source files when you need implementation details beyond the signature."
+        "Function names are not unique \u2014 if several match, pick by file_path. No match: try search_functions with descriptive words before concluding the function does not exist."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -304,7 +304,7 @@
         },
         {
           "directive_name": "project_compliance_check",
-          "execution_context": "run_checks_with_preferences",
+          "execution_context": "collect_analytics",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
@@ -349,7 +349,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "DB-FIRST: Use this lookup BEFORE reading source files. Returns all function signatures (purpose, parameters, returns) for a file \u2014 often provides everything needed without reading the source. Only read the source file when you need implementation logic beyond signatures."
+        "An empty list for a code file means its functions were never tracked: catalog_functions (existing code) or reserve_functions (new code)."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -371,7 +371,7 @@
         },
         {
           "directive_name": "project_compliance_check",
-          "execution_context": "run_checks_with_preferences",
+          "execution_context": "collect_analytics",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -461,7 +461,7 @@
         },
         {
           "directive_name": "project_compliance_check",
-          "execution_context": "run_checks_with_preferences",
+          "execution_context": "collect_analytics",
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {},
@@ -523,7 +523,7 @@
         },
         {
           "directive_name": "project_compliance_check",
-          "execution_context": "run_checks_with_preferences",
+          "execution_context": "collect_analytics",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
@@ -614,7 +614,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -631,7 +631,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_file_delete",
-          "execution_context": "delete_file_and_db_records",
+          "execution_context": "dependencies_exist_cleanup_loop",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -661,7 +661,7 @@
           "type": "string",
           "required": true,
           "default": null,
-          "description": "Search string for function name or purpose (FTS5 full-text search)"
+          "description": "Free-text search over function name and purpose, one or more words (e.g. 'disk space free')"
         },
         {
           "name": "include_details",
@@ -678,16 +678,17 @@
           "description": "If true, return only id/name + purpose/parameters/returns"
         }
       ],
-      "purpose": "Search tracked functions by name or purpose using FTS5 full-text search with relevance ranking.",
-      "error_handling": "Falls back to LIKE search if FTS5 not available",
+      "purpose": "Search tracked functions by name or purpose with relevance ranking. Multi-word input is split into words; a row matches if ANY word prefix-matches (\"disk space free\" finds get_free_disk_space). Rows matching more words rank first. Punctuation is ignored, so no FTS syntax is needed or honored.",
+      "error_handling": "Returns empty list when nothing matches or input has no word characters. Falls back to per-word LIKE if the FTS5 table is missing",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [],
       "target_database": "project",
       "used_by_directives": [],
       "implementation_notes": [
-        "Uses FTS5 MATCH for relevance-ranked results",
-        "Falls back to LIKE for pre-migration databases"
+        "Terms built by helpers/shared/fts_query.py: tokenize_search_terms -> build_fts_match_expression ('\"disk\"* OR \"space\"*')",
+        "Ranked by bm25(functions_fts, 5.0, 1.0) \u2014 name matches weigh more than purpose matches",
+        "Fallback: build_like_clause per term when functions_fts is missing (pre-migration databases)"
       ]
     }
   ],
@@ -699,6 +700,6 @@
     "first_helper": "reserve_function",
     "last_helper": "delete_function",
     "status": "return_statements complete - 8 helpers enhanced",
-    "last_updated": "2026-01-02"
+    "last_updated": "2026-09-14"
   }
 }

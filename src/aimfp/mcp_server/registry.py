@@ -4,7 +4,7 @@ AIMFP MCP Server - Tool Registry
 Static dict mapping tool names to (module_path, function_name) tuples.
 Uses importlib for lazy loading — modules are only imported on first call.
 
-275 is_tool=true helpers registered. Generated from aimfp_core.db.
+277 is_tool=true helpers registered. Generated from aimfp_core.db.
 
 Why static, not DB-driven:
 - Predictable tool list, no runtime DB dependency for tool listing
@@ -217,6 +217,10 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "update_subtask": ("aimfp.helpers.project.subtasks_sidequests", "update_subtask"),
 
     # ── Project: Tasks & Milestones ──────────────────────────────────────
+    # helpers/project/task_files.py (2 tools)
+    "link_files_to_task": ("aimfp.helpers.project.task_files", "link_files_to_task"),
+    "unlink_files_from_task": ("aimfp.helpers.project.task_files", "unlink_files_from_task"),
+
     # helpers/project/tasks.py (15 tools)
     "add_milestone": ("aimfp.helpers.project.tasks", "add_milestone"),
     "add_task": ("aimfp.helpers.project.tasks", "add_task"),

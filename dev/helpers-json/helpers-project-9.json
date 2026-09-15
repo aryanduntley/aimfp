@@ -144,7 +144,7 @@
         },
         {
           "directive_name": "project_subtask_complete",
-          "execution_context": "mark_complete_and_items",
+          "execution_context": "mark_complete",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -233,7 +233,7 @@
         },
         {
           "directive_name": "project_task_decomposition",
-          "execution_context": "decompose_request",
+          "execution_context": "create_new_task",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
@@ -305,7 +305,7 @@
         },
         {
           "directive_name": "project_task_decomposition",
-          "execution_context": "decompose_request",
+          "execution_context": "create_new_task",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
@@ -382,7 +382,7 @@
         },
         {
           "directive_name": "project_subtask_complete",
-          "execution_context": "mark_complete_and_items",
+          "execution_context": "mark_complete",
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {},
@@ -456,7 +456,7 @@
         },
         {
           "directive_name": "project_subtask_complete",
-          "execution_context": "mark_complete_and_items",
+          "execution_context": "mark_complete",
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {},
@@ -517,7 +517,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -658,6 +658,13 @@
       "file_path": "helpers/project/items_notes.py",
       "parameters": [
         {
+          "name": "note_id",
+          "type": "integer",
+          "required": false,
+          "default": null,
+          "description": "Exact note ID — returns that single note with full content. Errors if not found or excluded by other filters"
+        },
+        {
           "name": "note_type",
           "type": "string",
           "required": false,
@@ -705,13 +712,29 @@
           "required": false,
           "default": null,
           "description": "List of note_type values to exclude from results (e.g., ['completed', 'obsolete'])"
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "required": false,
+          "default": null,
+          "description": "Maximum notes returned, newest first (default: all)"
+        },
+        {
+          "name": "preview_chars",
+          "type": "integer",
+          "required": false,
+          "default": null,
+          "description": "Cap each note's content at this many characters (default: full content)"
         }
       ],
-      "purpose": "Query notes with structured filters (type, reference, source, severity, directive). For targeted retrieval without keyword search.",
-      "error_handling": "",
+      "purpose": "Query notes with structured filters (id, type, reference, source, severity, directive). Use note_id to read one note in full, e.g. after search_notes returned a preview.",
+      "error_handling": "Returns error for invalid note_type/source/severity, limit < 1, preview_chars < 0, or a note_id that matches no note",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "If a note you need has content_truncated=true, read it in full with get_notes_comprehensive(note_id=<id>)."
+      ],
       "target_database": "project",
       "used_by_directives": [
         {
@@ -738,6 +761,10 @@
           "parameters_mapping": {},
           "description": "Read recent directive outcome notes to summarize successes, retries, and failures"
         }
+      ],
+      "implementation_notes": [
+        "Returns: {notes[], total_count} — total_count is the match count before limit",
+        "Shortened notes end with '…' and carry content_truncated=true"
       ]
     },
     {
@@ -749,7 +776,7 @@
           "type": "string",
           "required": true,
           "default": null,
-          "description": "Search string for note content"
+          "description": "Free-text search over note content, one or more words (e.g. 'hash digest')"
         },
         {
           "name": "note_type",
@@ -799,13 +826,30 @@
           "required": false,
           "default": null,
           "description": "List of note_type values to exclude from results (e.g., ['completed', 'obsolete'])"
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "required": false,
+          "default": 20,
+          "description": "Maximum notes returned, best matches first (default 20)"
+        },
+        {
+          "name": "preview_chars",
+          "type": "integer",
+          "required": false,
+          "default": 300,
+          "description": "Cap each note's content at this many characters (default 300; 0 = full content)"
         }
       ],
-      "purpose": "Search past decisions and context by keyword. Use to recall why a decision was made or find historical context.",
-      "error_handling": "",
+      "purpose": "Search past decisions and context by keyword. Multi-word input is split into words; a row matches if ANY word prefix-matches (\"disk space free\" finds get_free_disk_space). Rows matching more words rank first. Punctuation is ignored, so no FTS syntax is needed or honored. Returns capped previews by default; read a note in full with get_notes_comprehensive(note_id=X).",
+      "error_handling": "Returns error for invalid filters, limit < 1, or preview_chars < 0. Empty list when nothing matches",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "If a preview has content_truncated=true and looks relevant, read it in full with get_notes_comprehensive(note_id=<id>).",
+        "If total_count exceeds the notes returned, narrow with filters (note_type, exclude_note_types, reference_table) or raise limit."
+      ],
       "target_database": "project",
       "used_by_directives": [
         {
@@ -832,6 +876,11 @@
           "parameters_mapping": {},
           "description": "Look for a previously stored resolution before prompting the user"
         }
+      ],
+      "implementation_notes": [
+        "Returns: {notes[], total_count} — total_count is the match count before limit; compare with len(notes) to know more exist",
+        "Shortened notes end with '…' and carry content_truncated=true",
+        "Terms built by helpers/shared/fts_query.py; per-word LIKE fallback when notes_fts is missing"
       ]
     },
     {
@@ -1019,7 +1068,7 @@
     "first_helper": "get_items_for_task",
     "last_helper": "get_state_operations_template",
     "status": "return_statements complete",
-    "last_updated": "2026-04-16",
+    "last_updated": "2026-09-14",
     "notes": "Added get_state_operations_template helper; removed dead initialize_state_database from metadata.py"
   }
 }

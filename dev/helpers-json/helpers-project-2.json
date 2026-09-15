@@ -167,7 +167,7 @@
         },
         {
           "directive_name": "project_file_write",
-          "execution_context": "finalize_after_write",
+          "execution_context": "finalize_reservations",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
@@ -175,7 +175,7 @@
         },
         {
           "directive_name": "project_update_db",
-          "execution_context": "finalize_new_files",
+          "execution_context": "update_files_table",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -244,7 +244,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "DB-FIRST: Use this lookup BEFORE reading source files. The DB provides file metadata, path, and associated functions/types — often eliminating the need to read the full file. Only read source files when you need implementation details beyond what the DB provides."
+        "File names are not unique — if several files match, pick by path. No match for a file that exists on disk means it is untracked: catalog_files (existing code) or reserve_file (new file)."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -289,7 +289,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "DB-FIRST: Use this lookup BEFORE reading source files. The DB provides file metadata and associated functions/types — often eliminating the need to read the full file. Follow up with get_functions_by_file(file_id) for function signatures. Only read source files when you need implementation details beyond what the DB provides."
+        "file is null for a path that exists on disk → the file is untracked: catalog_files (existing code) or reserve_file (new file)."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -303,7 +303,7 @@
         },
         {
           "directive_name": "project_file_delete",
-          "execution_context": "check_file_tracked",
+          "execution_context": "validate_delete_request",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
@@ -402,7 +402,7 @@
         },
         {
           "directive_name": "project_integrity_check",
-          "execution_context": "verify_file_metadata",
+          "execution_context": "recalculate_file_checksum",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
@@ -437,7 +437,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_file_read",
-          "execution_context": "check_checksum_mismatch",
+          "execution_context": "warn_file_changed",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -528,7 +528,7 @@
         {
           "name": "note_type",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
         }
@@ -544,7 +544,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_file_delete",
-          "execution_context": "delete_file_and_db_records",
+          "execution_context": "call_delete_file_helper",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
@@ -574,6 +574,6 @@
     "first_helper": "reserve_file",
     "last_helper": "delete_file",
     "status": "return_statements complete - 6 helpers enhanced",
-    "last_updated": "2026-01-02"
+    "last_updated": "2026-09-14"
   }
 }

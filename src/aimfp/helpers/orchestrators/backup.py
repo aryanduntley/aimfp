@@ -26,6 +26,7 @@ from ._common import (
     database_exists,
     BACKUPS_DIR_NAME,
     Result,
+    get_return_statements,
 )
 
 
@@ -111,7 +112,11 @@ def create_project_backup(project_root: Optional[str] = None) -> Result:
                 success=False,
                 error=outcome.get('error') or 'Backup failed for an unknown reason',
             )
-        return Result(success=True, data=outcome)
+        return Result(
+            success=True,
+            data=outcome,
+            return_statements=get_return_statements("create_project_backup"),
+        )
     except Exception as e:
         return Result(success=False, error=f"Backup failed: {str(e)}")
 
@@ -160,7 +165,7 @@ def check_scheduled_backup_due(project_root: Optional[str] = None) -> Result:
                 'last_backup': None,
                 'days_since_backup': None,
                 'backup_count': 0,
-            })
+            }, return_statements=get_return_statements("check_scheduled_backup_due"))
 
         backups_dir = os.path.join(get_aimfp_project_dir(root), BACKUPS_DIR_NAME)
         newest, count = _latest_backup(backups_dir)
@@ -173,7 +178,7 @@ def check_scheduled_backup_due(project_root: Optional[str] = None) -> Result:
                 'last_backup': None,
                 'days_since_backup': None,
                 'backup_count': 0,
-            })
+            }, return_statements=get_return_statements("check_scheduled_backup_due"))
 
         name, mtime = newest
         days_since = (datetime.now(timezone.utc) - mtime).days
@@ -184,7 +189,7 @@ def check_scheduled_backup_due(project_root: Optional[str] = None) -> Result:
             'last_backup': name,
             'days_since_backup': days_since,
             'backup_count': count,
-        })
+        }, return_statements=get_return_statements("check_scheduled_backup_due"))
 
     except Exception as e:
         return Result(success=False, error=f"Scheduled backup check failed: {str(e)}")
