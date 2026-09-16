@@ -20,11 +20,40 @@ CREATE TABLE IF NOT EXISTS user_directives (
 
     -- Trigger information
     trigger_type TEXT NOT NULL CHECK (trigger_type IN ('time', 'event', 'condition', 'manual')),
-    trigger_config JSON NOT NULL,                   -- e.g., {"time": "17:00", "timezone": "America/New_York"}
+    -- trigger_config has a GRAMMAR, enforced by the validate_trigger_config tool
+    -- and refused at insert by add_user_custom_entry. Unknown keys are errors.
+    -- Time triggers are a discriminated union on "kind":
+    --   {"kind": "interval", "seconds": 900}
+    --   {"kind": "daily",    "at": "17:00", "timezone": "America/New_York"}
+    --   {"kind": "weekly",   "at": "17:00", "weekdays": ["mon","wed","fri"]}
+    --   {"kind": "monthly",  "at": "09:00", "days": [1, 15]}
+    -- The other three have fixed shapes:
+    --   event:     {"event": "stove_on", "source": "home_assistant"}
+    --   condition: {"expression": "cpu > 90", "evaluate_every_seconds": 60}
+    --   manual:    {}
+    -- "at" is 24-hour HH:MM, zero-padded. "timezone" is an IANA name and is
+    -- not valid on an interval, which counts elapsed seconds. AIMFP computes
+    -- the next fire time from this column (hooks.schedule.next_fire_time).
+    trigger_config JSON NOT NULL,
 
     -- Action information
     action_type TEXT NOT NULL CHECK (action_type IN ('api_call', 'script_execution', 'function_call', 'command', 'notification')),
-    action_config JSON NOT NULL,                    -- e.g., {"api": "homeassistant", "endpoint": "/lights/off"}
+    -- action_config has an ENVELOPE per action_type, enforced by the
+    -- validate_action_config tool and refused at insert:
+    --   api_call:         {"endpoint": "/lights/off", "api": "homeassistant",
+    --                      "method": "POST", "headers": {}, "body": ...,
+    --                      "timeout_seconds": 30}     -- endpoint required
+    --   script_execution: {"script": "scripts/backup.sh", "args": ["--full"],
+    --                      "cwd": ..., "env": {}}     -- script required
+    --   command:          {"command": "systemctl restart nginx" | ["ls","-la"]}
+    --   function_call:    {"function": "handlers.lights.turn_off",
+    --                      "module": ..., "args": [], "kwargs": {}}
+    --   notification:     {"message": "...", "channel": ..., "title": ...,
+    --                      "priority": "low|normal|high|urgent"}
+    -- For function_call and command AIMFP validates the envelope only: the
+    -- target exists in the generated project, so whether it RESOLVES is the
+    -- caller's to check (validate_action_config returns caller_resolved=true).
+    action_config JSON NOT NULL,
 
     -- Status and lifecycle
     status TEXT DEFAULT 'pending_validation' CHECK (status IN (

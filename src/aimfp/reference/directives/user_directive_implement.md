@@ -54,8 +54,14 @@ This directive applies when:
 2. **Parse validated configuration**:
    ```python
    config = json.loads(directive.validated_config)
-   trigger_config = config['trigger']
-   action_config = config['action']
+   trigger_config = config['trigger']['config']
+   action_config = config['action']['config']
+
+   # Both columns have an enforced grammar. Validate BEFORE writing:
+   # add_user_custom_entry refuses a non-conforming config, and knowing why
+   # beforehand is cheaper than discovering it at the insert.
+   #   validate_trigger_config(trigger_type, trigger_config)
+   #   validate_action_config(action_type, action_config)
    conditions = config.get('conditions', [])
    metadata = config.get('metadata', {})
    ```
@@ -503,15 +509,21 @@ If code generation fails:
   "name": "turn_off_lights_5pm",
   "trigger": {
     "type": "time",
-    "time": "17:00",
-    "timezone": "America/New_York"
+    "config": {
+      "kind": "daily",
+      "at": "17:00",
+      "timezone": "America/New_York"
+    }
   },
   "action": {
     "type": "api_call",
-    "url": "http://homeassistant.local:8123/api/services/light/turn_off",
-    "method": "POST",
-    "headers": {"Authorization": "Bearer ${HOMEASSISTANT_TOKEN}"},
-    "payload": {"entity_id": "group.living_room_lights"}
+    "config": {
+      "api": "homeassistant",
+      "endpoint": "/api/services/light/turn_off",
+      "method": "POST",
+      "headers": {"Authorization": "Bearer ${HOMEASSISTANT_TOKEN}"},
+      "body": {"entity_id": "group.living_room_lights"}
+    }
   }
 }
 ```

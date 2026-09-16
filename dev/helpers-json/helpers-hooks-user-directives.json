@@ -1,16 +1,16 @@
 {
   "_comment": [
-    "UC2 RUNTIME HOOKS — AIMFP's library surface for code running OUTSIDE AIMFP.",
+    "UC2 RUNTIME HOOKS \u2014 AIMFP's library surface for code running OUTSIDE AIMFP.",
     "",
     "Every helper in this file is is_tool=0 / is_hook=1 and MUST STAY THAT WAY.",
     "These are imported and called by a generated Use Case 2 runner in the user's",
-    "project — firing from cron, systemd, or its own scheduler, with no AI session",
+    "project \u2014 firing from cron, systemd, or its own scheduler, with no AI session",
     "open. The AI's relationship to them is that it WRITES CODE CALLING THEM during",
     "user_directive_implement; it never invokes them itself.",
     "",
     "Exposing run_directive as an MCP tool would let the AI execute a user's",
     "automation inside an MCP session at an arbitrary moment, with the AI's process",
-    "as the runtime — the exact thing the hook execution model exists to prevent.",
+    "as the runtime \u2014 the exact thing the hook execution model exists to prevent.",
     "sync-directives guards this: a hook appearing in TOOL_REGISTRY, or marked both",
     "is_hook=1 and is_tool=1, is reported as a defect.",
     "",
@@ -29,7 +29,7 @@
           "type": "string",
           "required": true,
           "default": null,
-          "description": "Absolute path to the project root. Always explicit — the runner fires with cwd pointing anywhere, so the process-global cache is never used."
+          "description": "Absolute path to the project root. Always explicit \u2014 the runner fires with cwd pointing anywhere, so the process-global cache is never used."
         },
         {
           "name": "now",
@@ -40,7 +40,7 @@
         }
       ],
       "purpose": "HOOK. Return the active directives the caller's runner may execute now. Time triggers are filtered by next_scheduled_time against `now`; event, condition and manual triggers are returned unfiltered because only the caller can judge them. Each DueDirective carries trigger_config, action_type, action_config and implementation_file_path, so the runner dispatches without a second query.",
-      "error_handling": "Returns DueDirectivesResult(success=False) with an explanatory error when user_directives.db is absent — a Use Case 1 project must be askable without guarding. Never raises.",
+      "error_handling": "Returns DueDirectivesResult(success=False) with an explanatory error when user_directives.db is absent \u2014 a Use Case 1 project must be askable without guarding. Never raises.",
       "is_tool": false,
       "is_sub_helper": false,
       "is_hook": true,
@@ -63,7 +63,7 @@
           "type": "callable",
           "required": true,
           "default": null,
-          "description": "Zero-argument callable performing the actual work. The caller's own handler — AIMFP never imports user code, it receives the function."
+          "description": "Zero-argument callable performing the actual work. The caller's own handler \u2014 AIMFP never imports user code, it receives the function."
         },
         {
           "name": "project_root",
@@ -73,7 +73,7 @@
           "description": "Absolute path to the project root"
         }
       ],
-      "purpose": "HOOK. The primary entry point for a generated runner: time the caller's handler, record the outcome, and never let its exception escape. Higher-order by design — the caller passes its own callable in, so AIMFP runs the automation without importing user code. A thin composition of record_execution_start and record_execution_end. Generate calls to this in preference to the start/end pair whenever the work can be wrapped in a function.",
+      "purpose": "HOOK. The primary entry point for a generated runner: time the caller's handler, record the outcome, and never let its exception escape. Higher-order by design \u2014 the caller passes its own callable in, so AIMFP runs the automation without importing user code. A thin composition of record_execution_start and record_execution_end. Generate calls to this in preference to the start/end pair whenever the work can be wrapped in a function.",
       "error_handling": "An exception from `action` is caught, recorded with its traceback, and reported as action_succeeded=False. It is NEVER re-raised: an unhandled exception would kill the caller's scheduler thread and silently stop every other directive.",
       "is_tool": false,
       "is_sub_helper": false,
@@ -100,7 +100,7 @@
           "description": "Absolute path to the project root"
         }
       ],
-      "purpose": "HOOK. Open an execution record and return an ExecutionToken carrying a wall-clock start (for the log record) and a monotonic start (for the duration, so a clock adjustment mid-run cannot produce a negative value). Use with record_execution_end only when the work CANNOT be wrapped in a callable — a subprocess, a webhook, or a run spanning processes. Otherwise generate run_directive.",
+      "purpose": "HOOK. Open an execution record and return an ExecutionToken carrying a wall-clock start (for the log record) and a monotonic start (for the duration, so a clock adjustment mid-run cannot produce a negative value). Use with record_execution_end only when the work CANNOT be wrapped in a callable \u2014 a subprocess, a webhook, or a run spanning processes. Otherwise generate run_directive.",
       "error_handling": "Returns a token with valid=False and an error set when user_directives.db is absent. Pass it to record_execution_end anyway: the failure surfaces there as one coherent result rather than two.",
       "is_tool": false,
       "is_sub_helper": false,
@@ -141,7 +141,7 @@
           "description": "Full traceback when the caller has one. The database keeps only a brief message (store_last_error_only defaults to 1); the traceback belongs in the error log, where retention is 90 days."
         }
       ],
-      "purpose": "HOOK. Close the execution opened by record_execution_start: compute duration from the token's monotonic start, write the JSON-lines record, and fold the run into directive_executions (counts, running average, maximum, last_error fields on failure). This is the SINGLE place a failed execution is written to the error log, whichever path reached it — run_directive hands its caught traceback here rather than logging separately, so one failure produces exactly one error line.",
+      "purpose": "HOOK. Close the execution opened by record_execution_start: compute duration from the token's monotonic start, write the JSON-lines record, and fold the run into directive_executions (counts, running average, maximum, last_error fields on failure). This is the SINGLE place a failed execution is written to the error log, whichever path reached it \u2014 run_directive hands its caught traceback here rather than logging separately, so one failure produces exactly one error line.",
       "error_handling": "Returns ExecutionResult. `success` reports whether AIMFP recorded the run; `action_succeeded` reports the handler's own outcome. A handler that failed while recording worked is success=True, action_succeeded=False.",
       "is_tool": false,
       "is_sub_helper": false,
@@ -182,7 +182,7 @@
           "description": "Absolute path to the project root"
         }
       ],
-      "purpose": "HOOK. Record a failure that happened OUTSIDE any execution — a trigger that misfired, a missing dependency, a scheduler that could not dispatch. Updates error_count and the last_error fields without counting an execution, so the error rate stays honest: a directive that failed to start ten times has ten errors and zero executions.",
+      "purpose": "HOOK. Record a failure that happened OUTSIDE any execution \u2014 a trigger that misfired, a missing dependency, a scheduler that could not dispatch. Updates error_count and the last_error fields without counting an execution, so the error rate stays honest: a directive that failed to start ten times has ten errors and zero executions.",
       "error_handling": "Returns HookMutationResult(success=False) with an error when user_directives.db is absent. Never raises.",
       "is_tool": false,
       "is_sub_helper": false,
@@ -216,7 +216,7 @@
           "description": "Absolute path to the project root"
         }
       ],
-      "purpose": "HOOK. Let the caller's scheduler declare when it next expects to fire. This is the field that makes overdue detection possible at all — without it AIMFP cannot distinguish a directive idle by design from one whose runner has died, which is how the monitoring tools report a dead service without ever knowing a process id. Generated runners should call this every time they schedule the next run.",
+      "purpose": "HOOK. Let the caller's scheduler declare when it next expects to fire. This is the field that makes overdue detection possible at all \u2014 without it AIMFP cannot distinguish a directive idle by design from one whose runner has died, which is how the monitoring tools report a dead service without ever knowing a process id. Generated runners should call this every time they schedule the next run.",
       "error_handling": "Returns HookMutationResult(success=False) with an error when user_directives.db is absent. Never raises.",
       "is_tool": false,
       "is_sub_helper": false,
@@ -238,6 +238,73 @@
       ],
       "purpose": "HOOK. Report whether this project has a user_directives.db at all, so generated code can branch without provoking an error. False for every Use Case 1 project, which is the normal case and not an error condition.",
       "error_handling": "Pure existence check. Never raises.",
+      "is_tool": false,
+      "is_sub_helper": false,
+      "is_hook": true,
+      "return_statements": [],
+      "target_database": "user_directives"
+    },
+    {
+      "name": "trigger_config_grammar",
+      "file_path": "hooks/triggers.py",
+      "parameters": [
+        {
+          "name": "trigger_type",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Narrow the result to one trigger type; omit for all four"
+        }
+      ],
+      "purpose": "HOOK. Return the machine-readable grammar every trigger_config must satisfy - required and optional keys per trigger_type and, for time triggers, per kind, plus one conforming example each and the weekday token set. Single source for the validator's rules, the MCP tool's failure response and the directive documentation, so the documented spec cannot drift from the enforced one. Returns a fresh dict per call, so a caller mutating it cannot corrupt the spec.",
+      "error_handling": "Never raises. An unrecognised trigger_type yields an empty dict.",
+      "is_tool": false,
+      "is_sub_helper": false,
+      "is_hook": true,
+      "return_statements": [],
+      "target_database": "user_directives"
+    },
+    {
+      "name": "next_fire_time",
+      "file_path": "hooks/schedule.py",
+      "parameters": [
+        {
+          "name": "trigger_config",
+          "type": "object",
+          "required": true,
+          "default": null,
+          "description": "A time trigger's config, as a mapping or JSON text"
+        },
+        {
+          "name": "after",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "ISO anchor to schedule from. Defaults to now; a parameter so schedules are testable without moving the system clock."
+        }
+      ],
+      "purpose": "HOOK. Compute the first moment a time trigger fires strictly after an anchor - strictly after, never equal, because an occurrence at the anchor would leave a directive that just ran immediately due again. A generated runner should call this rather than hand-rolling calendar arithmetic; that hand-rolling is exactly how two projects end up disagreeing about when 17:00 is. Occurrences are computed as wall clock IN the target zone, so a daily 17:00 stays 17:00 across a DST boundary, then converted back to NAIVE LOCAL time - the representation _now_iso and is_due already use. A monthly day the month lacks skips that month rather than clamping, following cron. Note that record_execution_end already advances next_scheduled_time automatically, so a runner usually does not need to call this at all.",
+      "error_handling": "Never raises. A non-conforming config, an unresolvable timezone (resolution deliberately happens here rather than in the validator), and a schedule with no occurrence inside the 400-day search window all return success=False with an explanation.",
+      "is_tool": false,
+      "is_sub_helper": false,
+      "is_hook": true,
+      "return_statements": [],
+      "target_database": "user_directives"
+    },
+    {
+      "name": "action_config_grammar",
+      "file_path": "hooks/actions.py",
+      "parameters": [
+        {
+          "name": "action_type",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Narrow the result to one action type; omit for all five"
+        }
+      ],
+      "purpose": "HOOK. Return the envelope every action_config must satisfy - required and optional keys per action_type, one conforming example each, and for function_call and command a note saying what the caller must still check. Single source for the validator's rules, the MCP tool's failure response and the directive documentation, so the documented spec cannot drift from the enforced one.",
+      "error_handling": "Never raises. An unrecognised action_type yields an empty dict.",
       "is_tool": false,
       "is_sub_helper": false,
       "is_hook": true,

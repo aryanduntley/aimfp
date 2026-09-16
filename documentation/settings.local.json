@@ -279,6 +279,8 @@
       "mcp__aimfp__update_user_custom_entry",
       "mcp__aimfp__update_user_setting",
       "mcp__aimfp__user_directives_allowed_check_constraints",
+      "mcp__aimfp__validate_trigger_config",
+      "mcp__aimfp__validate_action_config",
       "mcp__aimfp__user_preferences_allowed_check_constraints",
       "mcp__aimfp__verify_fanout_ready"
     ]

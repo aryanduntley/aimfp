@@ -38,6 +38,98 @@
       ]
     },
     {
+      "name": "validate_trigger_config",
+      "file_path": "helpers/user_directives/validation.py",
+      "parameters": [
+        {
+          "name": "trigger_type",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "'time', 'event', 'condition', or 'manual'"
+        },
+        {
+          "name": "trigger_config",
+          "type": "object",
+          "required": true,
+          "default": null,
+          "description": "The config to check, as an object or a JSON string"
+        }
+      ],
+      "purpose": "Checks a trigger_config against AIMFP's grammar for its trigger_type BEFORE the row is written. add_user_custom_entry and update_user_custom_entry refuse a non-conforming config, so calling this first turns a rejected insert into a fixed config. Time triggers are a discriminated union on 'kind' (interval/daily/weekly/monthly); event, condition and manual have fixed shapes. Unknown keys are errors, not ignored - a typo'd schedule key is the silent failure this exists to surface, because a schedule that never fires produces no log line and no recorded error. On failure, errors names every offending key and grammar carries the expected shape for that trigger_type, so the AI is told what IS expected rather than guessing.",
+      "error_handling": "Never raises. An unrecognised trigger_type, a payload that is not a JSON object, and a malformed field all return valid=false with field-level errors.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "If valid=false: do NOT write this directive. Fix every key named in errors and re-validate. The grammar field carries the required and optional keys plus a conforming example for this trigger_type.",
+        "If valid=true: the config will be accepted by add_user_custom_entry. For a time trigger, AIMFP now owns the schedule arithmetic too - a generated runner should call the aimfp.hooks.schedule.next_fire_time hook rather than computing the next run itself.",
+        "This tool is the AI-facing half of one implementation. A generated runner calls the aimfp.hooks.triggers.validate_trigger_config hook directly, so the AI and the runner can never disagree about what conforms."
+      ],
+      "target_database": "user_directives",
+      "used_by_directives": [
+        {
+          "directive_name": "user_directive_parse",
+          "execution_context": "parse_content"
+        },
+        {
+          "directive_name": "user_directive_validate",
+          "execution_context": "store_validated_directives"
+        }
+      ],
+      "implementation_notes": [
+        "Thin wrapper over the aimfp.hooks.triggers hook of the same name; the hook is imported under an alias so the module namespace holds exactly one validate_trigger_config, the tool.",
+        "The hook itself is NOT a tool and must never become one - hooks are AIMFP's library surface for code running outside AIMFP (notes 34/39).",
+        "The same hook backs _reject_invalid_trigger_config, the gate inside add_user_custom_entry and update_user_custom_entry.",
+        "Grammar examples: {\"kind\": \"interval\", \"seconds\": 900} | {\"kind\": \"daily\", \"at\": \"17:00\", \"timezone\": \"America/New_York\"} | {\"kind\": \"weekly\", \"at\": \"17:00\", \"weekdays\": [\"mon\",\"wed\",\"fri\"]} | {\"kind\": \"monthly\", \"at\": \"09:00\", \"days\": [1,15]} | event {\"event\": \"stove_on\"} | condition {\"expression\": \"cpu > 90\"} | manual {}"
+      ]
+    },
+    {
+      "name": "validate_action_config",
+      "file_path": "helpers/user_directives/validation.py",
+      "parameters": [
+        {
+          "name": "action_type",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "'api_call', 'script_execution', 'function_call', 'command', or 'notification'"
+        },
+        {
+          "name": "action_config",
+          "type": "object",
+          "required": true,
+          "default": null,
+          "description": "The config to check, as an object or a JSON string"
+        }
+      ],
+      "purpose": "Checks an action_config against AIMFP's envelope for its action_type BEFORE the row is written; add_user_custom_entry and update_user_custom_entry refuse a non-conforming config. AIMFP validates the ENVELOPE ONLY. api_call, script_execution and notification are generic, so AIMFP can specify them fully. function_call and command name a target that exists in the caller's own project, so AIMFP checks that a target is named and well-formed but never that it resolves - caller_resolved=true marks exactly that, and means 'the shape is right, now check it resolves'. Unknown keys are errors, not ignored. On failure, errors names every offending key and grammar carries the expected envelope.",
+      "error_handling": "Never raises. An unrecognised action_type, a payload that is not a JSON object, and any malformed field all return valid=false with field-level errors.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "If valid=false: do NOT write this directive. Fix every key named in errors and re-validate. The grammar field carries the required and optional keys plus a conforming example for this action_type.",
+        "If valid=true and caller_resolved=true: AIMFP has validated everything it can. The action names a function or executable that exists only in the generated project, so verify THERE that the target actually resolves - a valid envelope is not a working action.",
+        "Unlike a bad trigger_config, a bad action fails loudly at runtime: the handler raises, record_execution_end writes an error log line, and get_recent_directive_errors surfaces it."
+      ],
+      "target_database": "user_directives",
+      "used_by_directives": [
+        {
+          "directive_name": "user_directive_parse",
+          "execution_context": "parse_content"
+        },
+        {
+          "directive_name": "user_directive_validate",
+          "execution_context": "store_validated_directives"
+        }
+      ],
+      "implementation_notes": [
+        "Thin wrapper over the aimfp.hooks.actions hook of the same name, imported under an alias so the module namespace holds exactly one validate_action_config: the tool.",
+        "Returns ActionValidationResult, NOT TriggerValidationResult - reusing that type would have put an action_type inside a field named trigger_type.",
+        "The same hook backs _reject_invalid_action_config, the gate inside add_user_custom_entry and update_user_custom_entry.",
+        "Envelopes: api_call {\"endpoint\": \"/lights/off\", \"api\": \"homeassistant\", \"method\": \"POST\"} | script_execution {\"script\": \"scripts/backup.sh\", \"args\": [\"--full\"]} | command {\"command\": \"systemctl restart nginx\"} | function_call {\"function\": \"handlers.lights.turn_off\"} | notification {\"message\": \"...\", \"channel\": \"ops\"}"
+      ]
+    },
+    {
       "name": "get_user_custom_tables",
       "file_path": "helpers/user_directives/schema.py",
       "parameters": [],

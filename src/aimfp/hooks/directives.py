@@ -8,7 +8,19 @@ higher-order, so the caller passes its own handler in.
     from aimfp.hooks.directives import get_due_directives, run_directive
 
     for directive in get_due_directives(project_root=ROOT).directives:
+        if directive.trigger_type != 'time' and not should_fire(directive):
+            continue        # see below - this branch is NOT optional
         run_directive(directive.directive_id, HANDLERS[directive.name], ROOT)
+
+THE BRANCH ABOVE IS PART OF THE CONTRACT. is_due returns event, condition
+and manual triggers on EVERY call, because AIMFP cannot evaluate them - only
+the caller knows whether the event fired or the condition holds. A loop
+without that branch therefore runs those directives on every single tick,
+forever. `should_fire` is the caller's own judgment, whatever shape it takes.
+
+Time triggers need no such branch: record_execution_end advances
+next_scheduled_time from the directive's own trigger_config, so a time
+directive that just ran is not due again until it should be.
 
 Nothing here is an MCP tool, and nothing here may become one. If the AI could
 call run_directive, it would execute a user's automation inside an MCP session
@@ -36,6 +48,7 @@ from ..database.connection import (
     get_user_directives_db_path,
 )
 from .config import load_log_config
+from .schedule import next_fire_time
 from .logs import (
     append_error_log,
     append_execution_log,
@@ -98,7 +111,7 @@ def is_due(
     current = _parse_iso(now)
     if scheduled is None or current is None:
         return True
-    return scheduled <= current
+    return _strip_zone(scheduled) <= _strip_zone(current)
 
 
 def update_running_average(
@@ -136,6 +149,21 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(value)
     except (TypeError, ValueError):
         return None
+
+
+def _strip_zone(value: datetime) -> datetime:
+    """
+    Pure: Express a timestamp as naive local time.
+
+    AIMFP writes naive local timestamps throughout (_now_iso), but
+    set_next_scheduled_time accepts whatever string the caller hands it, so a
+    runner may already have stored a tz-aware one. Comparing an aware and a
+    naive datetime raises TypeError, and that exception inside is_due would
+    kill the runner's whole tick rather than mis-scheduling one directive.
+    """
+    if value.tzinfo is None:
+        return value
+    return value.astimezone().replace(tzinfo=None)
 
 
 def _parse_json_object(value: Optional[str]) -> Dict[str, Any]:
@@ -296,6 +324,11 @@ def record_execution_end(
     whichever path reached it - run_directive hands its caught traceback here
     rather than logging separately, so one failure produces one error line.
 
+    Also advances next_scheduled_time for a time directive whose
+    trigger_config conforms to the grammar, so a runner cannot leave one due
+    on every tick by forgetting to schedule it. The advance never fails the
+    recording, and an explicit set_next_scheduled_time afterwards still wins.
+
     Args:
         token: Token from record_execution_start
         success: Whether the caller's handler succeeded
@@ -358,6 +391,9 @@ def record_execution_end(
         error_type=_classify_error(success, traceback_text),
         error_message=error,
     )
+
+    _effect_advance_schedule(
+        token.project_root, token.directive_id, token.started_at)
 
     return ExecutionResult(
         success=recorded,
@@ -664,6 +700,73 @@ def _effect_directive_name(project_root: str, directive_id: int) -> Optional[str
     finally:
         if conn is not None:
             _close_connection(conn)
+
+
+def _effect_directive_trigger(
+    project_root: str,
+    directive_id: int,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Effect: Read a directive's trigger_type and raw trigger_config."""
+    db_path = get_user_directives_db_path(project_root)
+    conn = None
+    try:
+        conn = _open_connection(db_path)
+        row = conn.execute(
+            "SELECT trigger_type, trigger_config FROM user_directives WHERE id = ?",
+            (directive_id,),
+        ).fetchone()
+        if row is None:
+            return None, None
+        return row['trigger_type'], row['trigger_config']
+    except sqlite3.Error:
+        return None, None
+    finally:
+        if conn is not None:
+            _close_connection(conn)
+
+
+def _effect_advance_schedule(
+    project_root: str,
+    directive_id: int,
+    started_at: Optional[str],
+) -> None:
+    """
+    Effect: Move a time directive's next_scheduled_time past this run.
+
+    WHY THIS IS AUTOMATIC. is_due treats a time directive with no
+    next_scheduled_time as due immediately, which is right for a first run
+    and catastrophic afterwards: a runner that never declares its next fire
+    re-runs that directive on every single tick, forever. Leaving the advance
+    to the caller made the correct loop easy to omit - and the package's own
+    docstring example omitted it. AIMFP now owns the arithmetic, so it owns
+    the advance too.
+
+    ANCHORED ON THE START, NOT ON NOW, so a run that takes thirty seconds
+    does not push a fifteen-minute schedule thirty seconds later every cycle.
+    When the run outlasts its own interval the anchored time is already past,
+    so the schedule is recomputed from now instead - late once, rather than
+    immediately due again.
+
+    Never fails the recording. A directive whose config predates this grammar
+    keeps the behaviour it has always had: the runner declares its own next
+    fire, or is reported overdue for never doing so. The caller may also
+    override this afterwards with an explicit set_next_scheduled_time.
+    """
+    trigger_type, raw_config = _effect_directive_trigger(project_root, directive_id)
+    if trigger_type != 'time' or raw_config is None:
+        return
+
+    computed = next_fire_time(raw_config, after=started_at)
+    if not computed.success:
+        return
+
+    now = _now_iso()
+    if computed.next_fire_time <= now:
+        computed = next_fire_time(raw_config, after=now)
+        if not computed.success:
+            return
+
+    set_next_scheduled_time(directive_id, computed.next_fire_time, project_root)
 
 
 def _classify_error(success: bool, traceback_text: Optional[str]) -> Optional[str]:

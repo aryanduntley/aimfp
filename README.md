@@ -281,7 +281,7 @@ VALUES ('project_file_write', 'always_add_docstrings', 'true');
 This database only exists in **Use Case 2: Custom Directive Automation** projects. In regular software development projects, this database is not created.
 
 **Key Tables**:
-- `user_directives`: Directive definitions (triggers, actions, status, validated configuration)
+- `user_directives`: Directive definitions (triggers, actions, status, validated configuration). `trigger_config` and `action_config` have an enforced grammar — see [Directive Configuration Schema](#directive-configuration-schema)
 - `directive_executions`: Execution statistics (summary only, detailed logs in files)
 - `directive_dependencies`: Required packages, APIs, environment variables
 - `directive_implementations`: Links directives to generated code files
@@ -343,6 +343,55 @@ home-automation/
 9. Next session, AIMFP reports what happened and what looks broken
 
 **Note**: User directive files stay in the user's project. `.aimfp-project/` is AI-managed metadata.
+
+### Directive Configuration Schema
+
+Triggers and actions have an **enforced grammar**. A non-conforming config is
+refused at insert — a bad action fails loudly at runtime, but a bad schedule
+fails silently by never firing, so both are checked before they are stored.
+
+**Triggers** — time triggers are a discriminated union on `kind`:
+
+```jsonc
+{"kind": "interval", "seconds": 900}
+{"kind": "daily",    "at": "17:00", "timezone": "America/New_York"}
+{"kind": "weekly",   "at": "17:00", "weekdays": ["mon","wed","fri"]}
+{"kind": "monthly",  "at": "09:00", "days": [1, 15]}
+
+{"event": "stove_on", "source": "home_assistant"}              // event
+{"expression": "cpu > 90", "evaluate_every_seconds": 60}       // condition
+{}                                                             // manual
+```
+
+`at` is 24-hour `HH:MM`, zero-padded. `timezone` is an IANA name, and is not
+valid on an `interval` — an interval counts elapsed seconds. **Unknown keys are
+errors**, because a typo'd schedule key would otherwise validate cleanly and
+then never fire.
+
+**Actions** — an envelope per `action_type`:
+
+```jsonc
+{"endpoint": "/lights/off", "api": "homeassistant", "method": "POST"}  // api_call
+{"script": "scripts/backup.sh", "args": ["--full"]}                    // script_execution
+{"command": "systemctl restart nginx"}                                 // command
+{"function": "handlers.lights.turn_off"}                               // function_call
+{"message": "Backup finished", "channel": "ops"}                       // notification
+```
+
+For `function_call` and `command`, AIMFP validates the **envelope only** — the
+function or executable exists in your generated project, so whether it actually
+resolves is yours to check.
+
+AIMFP also owns the schedule arithmetic: `aimfp.hooks.schedule.next_fire_time`
+computes the next run (wall-clock-correct across DST boundaries), and
+`record_execution_end` advances `next_scheduled_time` automatically after every
+run. Your runner never needs to hand-roll calendar maths — that is how two
+projects end up disagreeing about when 17:00 is.
+
+The AI validates configs with the `validate_trigger_config` and
+`validate_action_config` tools, which return the expected shape alongside any
+errors. The full spec is available as data from the `trigger_config_grammar()`
+and `action_config_grammar()` hooks.
 
 ---
 

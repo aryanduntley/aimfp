@@ -16,7 +16,33 @@ Load via: get_supportive_context(variant='case2')
   user_directive_approve → user_directive_activate → status='active'
   user_directive_monitor | user_directive_update (changes trigger full re-pipeline)
 
-3. PREFERENCES REFERENCE
+3. CONFIG GRAMMAR (enforced — a bad config cannot be stored)
+
+  trigger_config and action_config have a grammar. add_user_custom_entry and
+  update_user_custom_entry REFUSE a non-conforming config, so validate first:
+  validate_trigger_config(trigger_type, config) / validate_action_config(action_type, config).
+  Both return the expected shape with the errors on failure — never guess.
+
+  time triggers are a union on "kind": interval{seconds} | daily{at} |
+  weekly{at,weekdays} | monthly{at,days}; all but interval take optional timezone.
+  event{event,source?} | condition{expression,evaluate_every_seconds?} | manual{}.
+  "at" is 24h HH:MM zero-padded. UNKNOWN KEYS ARE ERRORS.
+
+  action_config is an envelope per action_type: api_call{endpoint,api?,method?,
+  headers?,body?,timeout_seconds?} | script_execution{script,args?,cwd?,env?} |
+  command{command} | function_call{function,module?,args?,kwargs?} |
+  notification{message,channel?,title?,priority?}.
+  function_call and command return caller_resolved=true: AIMFP checked the shape,
+  YOU check the target resolves.
+
+  Full spec on demand: trigger_config_grammar() / action_config_grammar().
+  Runner-side: aimfp.hooks.schedule.next_fire_time computes schedules — never
+  hand-roll calendar arithmetic. record_execution_end auto-advances
+  next_scheduled_time, so a time directive is not due again until it should be.
+  A dispatch loop MUST branch on trigger kind: is_due returns event/condition/
+  manual on every call, so an unbranched loop runs them forever.
+
+4. PREFERENCES REFERENCE
 
   Atomic key-value overrides per directive: add_directive_preference(directive_name, key, value).
   Tracking features ALL OFF by default. Don't mention tracking to regular users.

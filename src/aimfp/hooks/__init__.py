@@ -29,14 +29,30 @@ from .directives import (
     run_directive,
     set_next_scheduled_time,
 )
+from .actions import (
+    ACTION_TYPES,
+    action_config_grammar,
+    validate_action_config,
+)
 from .results import (
+    ActionConfigValidation,
     DueDirective,
     DueDirectivesResult,
     ExecutionResult,
     ExecutionToken,
     HookMutationResult,
     LogConfig,
+    NextFireResult,
     RotationPlan,
+    TriggerConfigValidation,
+)
+from .schedule import next_fire_time
+from .triggers import (
+    TIME_KINDS,
+    TRIGGER_TYPES,
+    WEEKDAY_TOKENS,
+    trigger_config_grammar,
+    validate_trigger_config,
 )
 
 __all__ = [
@@ -51,6 +67,17 @@ __all__ = [
     # Availability and configuration
     'hooks_available',
     'load_log_config',
+    # Trigger configuration grammar
+    'validate_trigger_config',
+    'trigger_config_grammar',
+    'next_fire_time',
+    # Action configuration envelope
+    'validate_action_config',
+    'action_config_grammar',
+    'ACTION_TYPES',
+    'TRIGGER_TYPES',
+    'TIME_KINDS',
+    'WEEKDAY_TOKENS',
     # Types
     'DueDirective',
     'DueDirectivesResult',
@@ -59,4 +86,7 @@ __all__ = [
     'HookMutationResult',
     'LogConfig',
     'RotationPlan',
+    'TriggerConfigValidation',
+    'NextFireResult',
+    'ActionConfigValidation',
 ]

@@ -50,7 +50,18 @@ This directive applies when:
    LIMIT 1;
    ```
 
-2. **Load ambiguities**:
+2. **Check the stored configs against AIMFP's grammar**:
+   ```
+   validate_trigger_config(trigger_type, trigger_config)
+   validate_action_config(action_type, action_config)
+   ```
+   A config that does not conform cannot be stored, so any row that needs
+   fixing must be fixed before `store_validated_directives`. On failure both
+   tools return the expected shape with the errors. For `function_call` and
+   `command`, `caller_resolved=true` means AIMFP has checked everything it
+   can and whether the target actually resolves is still yours to verify.
+
+3. **Load ambiguities**:
    - Parse `ambiguities_json` array
    - Prioritize by criticality:
      1. **Critical**: Missing required fields (trigger time, API endpoint)

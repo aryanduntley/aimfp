@@ -150,3 +150,79 @@ class RotationPlan:
     archive_name: Optional[str] = None
     compress_paths: Tuple[str, ...] = field(default_factory=tuple)
     delete_paths: Tuple[str, ...] = field(default_factory=tuple)
+
+
+# ============================================================================
+# Trigger Configuration
+# ============================================================================
+
+@dataclass(frozen=True)
+class TriggerConfigValidation:
+    """
+    Outcome of checking one trigger_config against AIMFP's grammar.
+
+    errors carries every field-level problem found, not just the first, and
+    each message names the offending key - the caller should be able to fix
+    the whole config from one call without re-reading the spec.
+
+    kind echoes the resolved time-trigger kind when one was determined. It is
+    None for event, condition and manual triggers, and also None when the
+    kind itself was the problem.
+
+    config carries the payload already normalised into a dict, whether it
+    arrived as a mapping or as JSON text, so a caller that validates and then
+    uses the config parses it exactly once. It is None when the payload could
+    not be read at all. A plain dict rather than a mappingproxy, matching
+    DueDirective.trigger_config, because callers round-trip these types
+    through dataclasses.asdict().
+
+    Deliberately has no return_statements field. This is a pure hook-side
+    result handed to a runner, not an MCP tool result.
+    """
+    valid: bool
+    trigger_type: Optional[str] = None
+    kind: Optional[str] = None
+    errors: Tuple[str, ...] = field(default_factory=tuple)
+    config: Optional[Dict[str, Any]] = None
+
+
+@dataclass(frozen=True)
+class NextFireResult:
+    """
+    What next_fire_time computed for one schedule.
+
+    next_fire_time is a NAIVE LOCAL ISO timestamp, matching _now_iso and
+    is_due. Handing back a tz-aware string would make is_due's
+    `scheduled <= current` comparison raise TypeError against a naive `now`,
+    and that exception would kill the runner's whole tick.
+
+    A result type rather than an exception or a bare Optional, because the
+    caller is an unattended runner. A non-conforming config, an unresolvable
+    timezone, and a schedule with no occurrence inside the search window all
+    arrive as success=False carrying an explanation.
+    """
+    success: bool
+    next_fire_time: Optional[str] = None
+    kind: Optional[str] = None
+    error: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ActionConfigValidation:
+    """
+    Outcome of checking one action_config against AIMFP's envelope for its
+    action_type.
+
+    caller_resolved marks the two action types AIMFP can only describe:
+    function_call and command name a target that exists in the caller's own
+    project, so a valid=True verdict on those means "the envelope is right,
+    now check that it resolves" rather than "this will work".
+
+    config carries the payload normalised to a dict, as
+    TriggerConfigValidation does, so a caller parses the JSON once.
+    """
+    valid: bool
+    action_type: Optional[str] = None
+    errors: Tuple[str, ...] = field(default_factory=tuple)
+    config: Optional[Dict[str, Any]] = None
+    caller_resolved: bool = False

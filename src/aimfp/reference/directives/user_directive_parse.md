@@ -281,6 +281,10 @@ Ambiguities: ["No trigger defined - when should this run?", "Action missing endp
 - **Handling**:
   - Parse hierarchically
   - Store as JSON in `trigger_config` and `action_config` fields
+  - Both columns have an ENFORCED GRAMMAR. Call `validate_trigger_config` and
+    `validate_action_config` before writing: `add_user_custom_entry` refuses a
+    non-conforming config, and on failure both tools return the expected shape
+    alongside the field-level errors, so there is nothing to guess at.
   - Flag for thorough validation
 
 ### 4. **File Modified During Parsing**
@@ -367,7 +371,7 @@ See system prompt for usage.
 ### Tables Updated
 
 #### user_directives
-Fields: name, trigger_type, trigger_config (JSON), action_type, action_config (JSON), conditions_json (JSON, optional), status ('parsed'), validation_status ('needs_validation' or 'ready'), ambiguities_json (JSON array), source_file_id (FK), parsed_at
+Fields: name, trigger_type, trigger_config (JSON, grammar enforced — see `validate_trigger_config`), action_type, action_config (JSON, envelope enforced — see `validate_action_config`), conditions_json (JSON, optional), status ('parsed'), validation_status ('needs_validation' or 'ready'), ambiguities_json (JSON array), source_file_id (FK), parsed_at
 
 #### source_files
 Fields: file_path, format ('yaml'/'json'/'txt'), last_parsed_at, checksum, directive_count

@@ -88,7 +88,8 @@ def _add_directive(
             (name, source_file, source_format, raw_content, validated_content,
              trigger_type, trigger_config, action_type, action_config, status)
         VALUES (?, 'directives/home.yaml', 'yaml', 'turn off lights at 5pm',
-                '{}', ?, '{"time": "17:00"}', 'api_call', '{"endpoint": "/off"}', ?)
+                '{}', ?, '{"kind": "daily", "at": "17:00"}', 'api_call',
+                '{"endpoint": "/off"}', ?)
         """,
         (name, trigger_type, status),
     )
@@ -221,7 +222,7 @@ def test_due_directive_carries_dispatch_payload():
     root = _uc2_project()
     _add_directive(root)
     directive = get_due_directives(root).directives[0]
-    assert directive.trigger_config == {"time": "17:00"}
+    assert directive.trigger_config == {"kind": "daily", "at": "17:00"}
     assert directive.action_config == {"endpoint": "/off"}
     assert directive.action_type == "api_call"
 

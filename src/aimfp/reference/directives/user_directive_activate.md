@@ -116,27 +116,36 @@ This directive applies when:
 **Branch by trigger_type**:
 
 ##### 3a. Time-Based Trigger (Scheduler)
+
+`trigger_config` for a time trigger is a discriminated union on `kind`. Read
+it with the grammar, never by guessing at key names — AIMFP enforces this
+shape at insert, so these are the only keys that can be present:
+
 ```python
 if trigger_type == 'time':
-    # Use APScheduler or similar
     from apscheduler.schedulers.background import BackgroundScheduler
 
     scheduler = BackgroundScheduler()
+    config = directive.trigger_config          # already a dict
 
-    # Add job based on trigger config
-    job = scheduler.add_job(
-        func=entry_point,
-        trigger='cron',
-        hour=trigger_config['time'].hour,
-        minute=trigger_config['time'].minute,
-        timezone=trigger_config['timezone'],
-        id=f"directive_{directive_id}",
-        name=directive_name
-    )
+    if config['kind'] == 'interval':
+        job = scheduler.add_job(
+            entry_point, 'interval', seconds=config['seconds'],
+            id=f"directive_{directive_id}", name=directive_name)
+    else:
+        hour, minute = config['at'].split(':')
+        job = scheduler.add_job(
+            entry_point, 'cron',
+            hour=int(hour), minute=int(minute),
+            timezone=config.get('timezone'),
+            day_of_week=','.join(config['weekdays'])
+                if config['kind'] == 'weekly' else None,
+            day=','.join(str(d) for d in config['days'])
+                if config['kind'] == 'monthly' else None,
+            id=f"directive_{directive_id}", name=directive_name)
 
     scheduler.start()
 
-    # Store scheduler info
     store_deployment_info(
         directive_id=directive_id,
         deployment_type='scheduler',
@@ -145,45 +154,58 @@ if trigger_type == 'time':
     )
 ```
 
+A scheduler is only one option. cron and systemd timers are equally valid,
+and the runner is generated into the user's project either way — AIMFP has
+no timer of its own (see `user_directive_implement`).
+
 ##### 3b. Event-Based Trigger (Webhook/Listener)
+
+`trigger_config` is `{"event": "...", "source": "..."}`. `source` is
+optional; a directive may name only the event it waits for.
+
 ```python
 if trigger_type == 'event':
-    # Start event listener service
+    config = directive.trigger_config
+
     listener = EventListener(
-        event_source=trigger_config['event_source'],
-        event_type=trigger_config['event_type'],
+        event_source=config.get('source'),
+        event_type=config['event'],
         callback=entry_point
     )
-
     listener.start()
 
-    # Store listener info
     store_deployment_info(
         directive_id=directive_id,
         deployment_type='event_listener',
-        listener_port=listener.port if hasattr(listener, 'port') else None,
-        event_source=trigger_config['event_source']
+        listener_port=getattr(listener, 'port', None),
+        event_source=config.get('source')
     )
 ```
 
 ##### 3c. Condition-Based Trigger (Polling Service)
+
+`trigger_config` is `{"expression": "...", "evaluate_every_seconds": N}`.
+AIMFP stores the expression but never evaluates it — deciding whether the
+condition holds is the runner's, which is why `is_due` always returns
+condition triggers and leaves the judgment to the caller.
+
 ```python
 if trigger_type == 'condition':
-    # Start background polling service
+    config = directive.trigger_config
+
     poller = ConditionPoller(
-        check_interval=trigger_config['check_interval'],
+        check_interval=config.get('evaluate_every_seconds', 60),
+        expression=config['expression'],
         condition_func=entry_point,
         directive_id=directive_id
     )
-
     process = poller.start_background()
 
-    # Store process info
     store_deployment_info(
         directive_id=directive_id,
         deployment_type='background_service',
         process_id=process.pid,
-        check_interval=trigger_config['check_interval']
+        check_interval=config.get('evaluate_every_seconds', 60)
     )
 ```
 
@@ -195,10 +217,21 @@ if trigger_type == 'condition':
 **Alternative**: Direct SQL queries are acceptable for user_directives.db if helpers are insufficient, but helpers should be preferred for efficiency.
 
 2. **Calculate next execution**:
+
+   AIMFP owns this arithmetic — do NOT hand-roll it. Hand-rolling is how two
+   projects end up disagreeing about when 17:00 is.
+
    ```python
+   from aimfp.hooks.schedule import next_fire_time
+
    if trigger_type == 'time':
-       next_run = calculate_next_run_time(trigger_config)
+       result = next_fire_time(directive.trigger_config)
+       next_run = result.next_fire_time if result.success else None
    ```
+
+   In practice a runner rarely needs this call at all: `record_execution_end`
+   already advances `next_scheduled_time` after every run, so a time
+   directive that just fired is not due again until it should be.
 
 #### Step 5: Initialize Logging
 

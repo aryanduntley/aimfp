@@ -32,6 +32,14 @@ from ._common import (
     _record_exists,
 )
 
+# The insert-time gate. trigger_config is the one column where a bad value
+# fails SILENTLY - a schedule that never fires writes no log line and records
+# no error - so it is checked before it is stored rather than at dispatch.
+from .validation import (
+    _reject_invalid_action_config,
+    _reject_invalid_trigger_config,
+)
+
 
 # ============================================================================
 # Data Structures (Immutable)
@@ -281,6 +289,17 @@ def add_user_custom_entry(
                 error=f"Table {table} not found"
             )
 
+        # Gate: a non-conforming trigger_config must never reach the column.
+        if table == 'user_directives':
+            rejection = _reject_invalid_trigger_config(
+                data.get('trigger_type'), data.get('trigger_config'))
+            if rejection is None:
+                rejection = _reject_invalid_action_config(
+                    data.get('action_type'), data.get('action_config'))
+            if rejection is not None:
+                conn.close()
+                return MutationResult(success=False, error=rejection)
+
         # Build INSERT query
         fields = list(data.keys())
         placeholders = ','.join('?' * len(fields))
@@ -316,6 +335,28 @@ def add_user_custom_entry(
             success=False,
             error=f"Database error: {str(e)}"
         )
+
+
+def _resolved_type(
+    conn: sqlite3.Connection,
+    data: Dict[str, Any],
+    record_id: int,
+    column: str
+) -> Optional[str]:
+    """
+    Effect: The type an update should be validated against.
+
+    A partial update that changes a config without restating its type must be
+    checked against the type already stored, not waved through for lack of
+    one - otherwise the easiest hole stays open: update just the config and
+    the gate never fires.
+    """
+    if data.get(column) is not None:
+        return data[column]
+    stored = conn.execute(
+        f"SELECT {column} FROM user_directives WHERE id = ?", (record_id,)
+    ).fetchone()
+    return stored[column] if stored else None
 
 
 def update_user_custom_entry(
@@ -366,6 +407,24 @@ def update_user_custom_entry(
                 success=False,
                 error=f"Record with id {record_id} not found in {table}"
             )
+
+        # Same gate on update: turning a conforming config into a broken one
+        # is the same silent failure as writing one. A partial update that
+        # carries trigger_config without trigger_type is checked against the
+        # trigger_type already stored, rather than being waved through.
+        if table == 'user_directives':
+            rejection = None
+            if 'trigger_config' in data:
+                rejection = _reject_invalid_trigger_config(
+                    _resolved_type(conn, data, record_id, 'trigger_type'),
+                    data.get('trigger_config'))
+            if rejection is None and 'action_config' in data:
+                rejection = _reject_invalid_action_config(
+                    _resolved_type(conn, data, record_id, 'action_type'),
+                    data.get('action_config'))
+            if rejection is not None:
+                conn.close()
+                return MutationResult(success=False, error=rejection)
 
         # Build UPDATE query
         set_parts = [f"{field} = ?" for field in data.keys()]

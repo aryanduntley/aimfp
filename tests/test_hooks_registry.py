@@ -12,6 +12,8 @@ query described hooks as "is_tool = 0 AND is_sub_helper = 0" - an absence, not
 a declaration - and so returned an empty list silently for as long as nothing
 populated that gap. test_get_hooks_returns_registered_hooks fails loudly now.
 """
+import json
+import os
 import sqlite3
 
 import pytest
@@ -30,6 +32,12 @@ EXPECTED_HOOKS = {
     'record_directive_error',
     'set_next_scheduled_time',
     'hooks_available',
+    # Milestone 5: AIMFP owns the trigger_config grammar and the schedule
+    # arithmetic, so a runner asks AIMFP when a directive fires next instead
+    # of hand-rolling calendar maths that drifts per project.
+    'trigger_config_grammar',
+    'next_fire_time',
+    'action_config_grammar',
 }
 
 
@@ -136,6 +144,27 @@ def test_old_absence_query_is_gone(core_rows):
     names = {r['name'] for r in core_rows}
     assert 'get_helpers_not_tool_not_sub' not in names
     assert 'get_helpers_not_tool_not_sub' not in TOOL_REGISTRY
+
+
+def test_no_helper_name_is_registered_twice():
+    """
+    A name in two spec files silently clobbers one of them.
+
+    Registering the validate_trigger_config hook alongside the MCP tool of
+    the same name discarded one spec with no warning during sync, and the
+    survivor depended on file ordering. Names are the key, so they must be
+    unique across every helpers-*.json.
+    """
+    import collections
+    import glob
+
+    names = []
+    for path in sorted(glob.glob(os.path.join(
+            os.path.dirname(__file__), "..", "dev", "helpers-json", "helpers-*.json"))):
+        names.extend(h["name"] for h in json.load(open(path)).get("helpers", []))
+
+    duplicates = [n for n, c in collections.Counter(names).items() if c > 1]
+    assert not duplicates, f"helper names declared more than once: {duplicates}"
 
 
 def test_is_hook_defaults_false_for_every_other_helper(core_rows):

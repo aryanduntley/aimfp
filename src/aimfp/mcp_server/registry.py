@@ -376,8 +376,10 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "get_user_custom_json_parameters": ("aimfp.helpers.user_directives.schema", "get_user_custom_json_parameters"),
     "get_user_custom_schema": ("aimfp.helpers.user_directives.schema", "get_user_custom_schema"),
     "get_user_custom_tables": ("aimfp.helpers.user_directives.schema", "get_user_custom_tables"),
-    # helpers/user_directives/validation.py (1 tool)
+    # helpers/user_directives/validation.py (3 tools)
     "user_directives_allowed_check_constraints": ("aimfp.helpers.user_directives.validation", "user_directives_allowed_check_constraints"),
+    "validate_trigger_config": ("aimfp.helpers.user_directives.validation", "validate_trigger_config"),
+    "validate_action_config": ("aimfp.helpers.user_directives.validation", "validate_action_config"),
 
     # ── User Preferences ─────────────────────────────────────────────────
     # helpers/user_preferences/crud.py (6 tools)
