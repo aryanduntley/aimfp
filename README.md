@@ -388,6 +388,14 @@ computes the next run (wall-clock-correct across DST boundaries), and
 run. Your runner never needs to hand-roll calendar maths — that is how two
 projects end up disagreeing about when 17:00 is.
 
+One consequence to know if you build a UI: `next_scheduled_time` is stored as
+naive **local** time, because `is_due` compares it against a naive local now. A
+schedule declared as `17:00` in `America/New_York` is stored as `14:00` on a
+machine in Los Angeles. Nothing is lost — the declared zone stays in
+`trigger_config` — but the column is a comparison value, not a rendering. Show
+a user their schedule from `trigger_config`, never from `next_scheduled_time`,
+or they will "fix" a config that was already correct.
+
 The AI validates configs with the `validate_trigger_config` and
 `validate_action_config` tools, which return the expected shape alongside any
 errors. The full spec is available as data from the `trigger_config_grammar()`

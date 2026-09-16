@@ -762,6 +762,16 @@ Rules that belong in every generated runner:
   overdue.
 - **Use `record_directive_error`** for failures *outside* a run — a trigger that
   misfired, a dependency that was missing, a scheduler that could not dispatch.
+- **Never show `next_scheduled_time` to a user as their schedule.** It is naive
+  *local* time, because `is_due` compares against a naive local now — so a
+  directive declared as `{"kind": "daily", "at": "17:00", "timezone":
+  "America/New_York"}` stores `14:00` on a machine in Los Angeles. Nothing is
+  lost (the declared zone stays in `trigger_config`), but the column is a
+  comparison value, not a rendering. If the runner or its UI reports when a
+  directive runs next, render it from `trigger_config` — `trigger_config_grammar()`
+  publishes the shape as data. Displaying the converted time tells the user
+  their 17:00 schedule is set for 14:00, and the obvious response is to
+  "correct" a config that was already right.
 - **Do not write your own logging or statistics.** `run_directive` already
   writes the JSON-lines execution and error logs and updates
   `directive_executions`. A second logger produces a per-project record shape

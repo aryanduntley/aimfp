@@ -18,6 +18,15 @@ the loop a runner drives every tick. So occurrences are computed as wall
 clock IN the target zone, which is what a user means by "17:00 in New York",
 and converted back to naive local before they are handed out or stored.
 
+WHICH MEANS THE RESULT IS NOT THE SCHEDULE THE USER WROTE. "17:00 in New
+York" stored on a machine in Los Angeles is 14:00. Nothing is lost - the
+declared zone stays in trigger_config and is always recoverable - but the
+column is a comparison value, not a rendering. NEVER SHOW next_scheduled_time
+OR next_fire_time TO A USER AS THEIR SCHEDULE; render from trigger_config,
+which trigger_config_grammar() publishes as data for exactly that. Showing
+the converted time tells a user their 17:00 schedule is set for 14:00, and
+the obvious response is to "correct" a config that was already right.
+
 THE SEARCH IS A DAY-BY-DAY WALK, capped at 400 days. Calendar arithmetic
 invites off-by-one errors around month ends and DST; walking candidate dates
 and asking "does this one match" is obviously correct instead, and 400
@@ -174,7 +183,9 @@ def next_fire_time(
 
     Returns:
         NextFireResult. next_fire_time is naive local ISO, matching _now_iso
-        and is_due. An unresolvable timezone or an unsatisfiable schedule is
+        and is_due - so it is a comparison value, not the wall clock the
+        config declared, and is not what to display to a user (see the module
+        docstring). An unresolvable timezone or an unsatisfiable schedule is
         success=False with an explanation, never an exception.
     """
     validation = validate_trigger_config('time', trigger_config)

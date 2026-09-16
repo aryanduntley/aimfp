@@ -39,6 +39,10 @@ Load via: get_supportive_context(variant='case2')
   Runner-side: aimfp.hooks.schedule.next_fire_time computes schedules — never
   hand-roll calendar arithmetic. record_execution_end auto-advances
   next_scheduled_time, so a time directive is not due again until it should be.
+  next_scheduled_time is naive LOCAL time, not the declared wall clock ("17:00
+  New York" stores as 14:00 in Los Angeles). It is a comparison value — NEVER
+  render it as the user's schedule; render from trigger_config. Showing it
+  makes a user "fix" a config that was already correct.
   A dispatch loop MUST branch on trigger kind: is_due returns event/condition/
   manual on every call, so an unbranched loop runs them forever.
 
