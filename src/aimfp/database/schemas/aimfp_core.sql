@@ -1,7 +1,16 @@
 -- aimfp_core.db Schema
--- Version: 2.0
+-- Version: 2.4  (authoritative value is the INSERT at the bottom of this file;
+--                keep this comment in sync with it)
 -- Purpose: Defines MCP-level directives (read-only) and helper functions
 -- This database is immutable once deployed; AI reads it but never modifies it.
+--
+-- This database NEVER MIGRATES. It ships read-only in the wheel and
+-- dev/sync-directives.py rebuilds it clean, which is why migrate_databases
+-- tracks only project.db and user_preferences.db. A schema change here costs
+-- a version bump plus a rebuild - there is no user migration path to write.
+--
+-- Changelog 2.4: helper_functions.is_hook - the library surface for code
+--                outside AIMFP (see the column comment).
 
 CREATE TABLE IF NOT EXISTS directives (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -133,6 +142,15 @@ CREATE TABLE IF NOT EXISTS helper_functions (
     error_handling TEXT,                     -- How errors are handled (e.g., 'Return None if not found', 'Raise ValidationError')
     is_tool BOOLEAN NOT NULL DEFAULT 0,      -- TRUE if exposed as MCP tool (AI can call directly via MCP)
     is_sub_helper BOOLEAN NOT NULL DEFAULT 0,-- TRUE if internal utility (only called by other helpers, no direct AI access)
+    -- TRUE if part of AIMFP's library surface for code running OUTSIDE AIMFP
+    -- (src/aimfp/hooks/). A hook is NEVER an MCP tool and must never become
+    -- one: the AI's relationship to it is that it WRITES CODE CALLING IT (in a
+    -- generated Use Case 2 runner), not that it invokes it. Discover hooks with
+    -- get_hooks. An affirmative flag rather than "is_tool=0 AND is_sub_helper=0",
+    -- because that absence-query silently returned nothing for as long as the
+    -- category went unpopulated. A hook is legitimately absent from
+    -- TOOL_REGISTRY, so the sync registry guard must not flag it.
+    is_hook BOOLEAN NOT NULL DEFAULT 0,
     return_statements JSON,                  -- JSON array of AI guidance after execution (e.g., next steps, validation checks)
     target_database TEXT CHECK (target_database IN (
         'core',              -- aimfp_core.db (directives, helpers, directive_flow)
@@ -241,4 +259,4 @@ CREATE TABLE IF NOT EXISTS system_notices (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '2.3');
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '2.4');

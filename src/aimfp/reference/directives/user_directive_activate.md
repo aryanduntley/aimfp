@@ -575,39 +575,16 @@ user_directive_monitor (runs continuously)
 
 ## Helper Functions
 
-Query `get_helpers_for_directive()` to discover this directive's available helpers.
-See system prompt for usage.
-### Approval Verification
-- `check_approval_status(directive_id: int) -> bool`
-  - Verify approved = true
-  - Gate function
+Query `get_helpers_for_directive('user_directive_activate')` to discover this
+directive's helpers, and `get_helper_by_name` for a signature. They are not
+listed here on purpose: the tool surface evolves, and a hardcoded list in a
+rarely-read file goes stale silently and is believed anyway.
 
-### Deployment
-- `deploy_time_based_trigger(directive_id: int, trigger_config: dict) -> JobID`
-  - Register cron job with scheduler
-  - Returns job ID
-
-- `deploy_event_listener(directive_id: int, trigger_config: dict) -> Listener`
-  - Start event listener service
-  - Returns listener instance
-
-- `deploy_condition_poller(directive_id: int, trigger_config: dict) -> Process`
-  - Start background polling service
-  - Returns process handle
-
-### Logging
-- `setup_logger(name: str, log_file: str, format: str, rotation: str, retention_days: int) -> Logger`
-  - Configure execution and error loggers
-  - Returns logger instance
-
-- `lifecycle_log(message: str, log_file: str)`
-  - Write to lifecycle log
-  - Human-readable format
-
-### Monitoring
-- `initialize_execution_tracking(directive_id: int) -> bool`
-  - Create directive_executions record
-  - Set up monitoring hooks
+Activation does not start anything. It sets status and records the
+timestamp; the generated runner in the user's project owns the process and
+the timer. Confirm with the user that the runner is actually deployed —
+an active directive whose runner was never deployed shows up later as
+`never_run`.
 
 ---
 

@@ -297,6 +297,33 @@
             ]
           },
           {
+            "step": "wire_runtime_hooks",
+            "note": "AIMFP never executes a user directive. The generated code owns the timer AND the execution; it calls the AIMFP hook library so that AIMFP can answer 'what is due' and record 'what happened'. Discover the surface with get_hooks - you generate calls to it, you never invoke it yourself.",
+            "actions": [
+              {
+                "generate": "the runner's dispatch loop as: for d in get_due_directives(project_root=ROOT).directives: run_directive(d.directive_id, HANDLERS[d.name], ROOT)"
+              },
+              {
+                "prefer": "run_directive over the record_execution_start/record_execution_end pair whenever the work can be wrapped in a zero-argument callable - it times, records, and contains exceptions in one call. Use the pair only for subprocesses, webhooks, or runs spanning processes."
+              },
+              {
+                "always": "call set_next_scheduled_time whenever the runner schedules its next run. Without it AIMFP cannot distinguish a directive idle by design from one whose runner has died, and user_directive_monitor can never report it overdue."
+              },
+              {
+                "use": "record_directive_error for failures OUTSIDE a run - a trigger that misfired, a missing dependency, a scheduler that could not dispatch"
+              },
+              {
+                "do_not": "write custom logging or statistics. run_directive already writes the JSONL execution and error logs and updates directive_executions. A second logger produces a per-project record shape nothing can read back."
+              },
+              {
+                "tell_user": "importing aimfp.hooks makes aimfp a RUNTIME dependency of this automation, not just a dev tool - the generated code stops working if aimfp is absent from the environment the runner executes in (cron, systemd, a container)"
+              },
+              {
+                "scheduler_choice": "the timer belongs to the generated project and follows from the directive's trigger_config - cron, a systemd timer, or an in-process scheduler. AIMFP has no timer and never supervises the runner."
+              }
+            ]
+          },
+          {
             "step": "write_implementation_files",
             "actions": [
               {
@@ -615,88 +642,99 @@
       "level": 3,
       "parent_directive": "user_directive_activate",
       "md_file_path": "directives/user_directive_monitor.md",
-      "description": "Monitor active directive executions, track statistics, and handle errors",
+      "description": "Review what the user's directive runners did while no AI session was open: health, statistics, and errors. Read-only - AIMFP neither executes directives nor supervises the runner.",
       "workflow": {
-        "trunk": "monitor_directive_execution",
+        "trunk": "review_directive_health",
+        "note": "AIMFP does NOT execute user directives and does NOT supervise the runner. The generated runner in the user's project owns the timer and the process; it records every execution through the aimfp.hooks library API while no AI session is open. This workflow is the READ side: at session start, or when the user asks, look at what happened and report it.",
         "branches": [
           {
-            "step": "track_executions",
+            "step": "assess_health",
             "actions": [
               {
-                "on_execution_start": "log timestamp and directive name to execution log file"
+                "call": "check_directive_health"
               },
               {
-                "on_execution_end": "log result, duration_ms, and metadata to execution log file"
+                "if": "needs_attention is false",
+                "then": "report that directives are running normally and stop - do not dig further"
               },
               {
-                "update": "directive_executions (total_executions++, last_execution_time, avg_execution_time_ms)"
-              },
-              {
-                "if_success": "increment success_count"
-              },
-              {
-                "calculate": "running average of execution time"
+                "if": "needs_attention is true",
+                "then": "report each non-ok directive with its health state and detail"
               }
             ]
           },
           {
-            "step": "handle_errors",
+            "step": "investigate_failures",
+            "condition": "a directive is reported error or degraded",
             "actions": [
               {
-                "on_error": "log error details (type, message, stack_trace) to error log file"
+                "call": "get_recent_directive_errors(directive_id=<id>)"
               },
               {
-                "update": "directive_executions (error_count++, last_error_time, last_error_type, last_error_message)"
+                "look_for": "a repeated error_type across records, which points at a systemic cause - a dead dependency or a changed credential - rather than a flaky run"
               },
               {
-                "if": "error_count > threshold (e.g., 5 consecutive errors)",
-                "then": "update status to error and notify user"
+                "note": "error_type 'handler_exception' carries a full traceback; 'execution_error' means the runner reported failure itself"
               },
               {
-                "check": "error patterns for common issues (connection errors, auth failures, etc.)"
+                "then": "tell the user what is failing and why, and propose a fix - do not silently repair a directive they authored"
               }
             ]
           },
           {
-            "step": "rotate_logs",
+            "step": "investigate_silence",
+            "condition": "a directive is reported overdue or never_run",
             "actions": [
               {
-                "check": "execution log file size or date against rotation policy"
+                "overdue_means": "the runner declared when it would next fire via set_next_scheduled_time and that moment has passed - silence past a declared deadline IS the dead-runner evidence, which is why no PID or scheduler inspection is needed or possible"
               },
               {
-                "if": "rotation_trigger_met",
-                "then": "rotate log file to archive with timestamp"
+                "never_run_means": "the directive is active but has never executed - implementation likely completed while the runner was never deployed or its schedule never registered"
               },
               {
-                "if": "retention_period_exceeded",
-                "then": "compress old archives (.gz) or delete"
+                "check": "that the generated runner is deployed and its scheduler is running, using whatever mechanism the directive's implementation chose (cron, systemd, an in-process scheduler)"
               },
               {
-                "apply": "same rotation logic to error logs"
+                "caution": "a directive whose runner never calls set_next_scheduled_time can never be reported overdue - if a directive looks silent but never appears overdue, suspect the runner is not recording its schedule"
               }
             ]
           },
           {
-            "step": "health_check",
+            "step": "report_statistics",
+            "condition": "the user asks how a directive has been performing",
             "actions": [
               {
-                "check": "background services are still running (verify PID)"
+                "call": "get_directive_execution_stats(directive_id=<id or omit for all>)"
               },
               {
-                "check": "schedulers are properly registered"
+                "report": "executions, success and error counts, error rate, average and maximum duration, last execution time"
               },
               {
-                "if_service_died": "attempt restart or update status to error"
+                "note": "the database stores summary statistics only (store_execution_history defaults to 0); per-run history lives in the JSONL execution log under 30-day retention, and error history under 90-day"
+              }
+            ]
+          },
+          {
+            "step": "route_to_repair",
+            "condition": "the fix requires changing the directive or its generated code",
+            "actions": [
+              {
+                "if": "the user's intent or the directive file changed",
+                "then": "route to user_directive_update"
               },
               {
-                "log": "health check results to lifecycle log"
+                "if": "the directive should stop running while it is repaired",
+                "then": "route to user_directive_deactivate"
+              },
+              {
+                "record": "add_user_directive_note describing what failed and what was decided"
               }
             ]
           }
         ],
         "error_handling": {
-          "on_failure": "log_monitor_error_to_error_log_and_continue",
-          "note": "monitoring should be resilient and not crash on errors"
+          "on_failure": "report_what_could_not_be_read_and_continue",
+          "note": "Monitoring is read-only and must never be the reason anything stops. A missing user_directives.db means this is a Use Case 1 project with no directives to monitor, which is normal and not an error."
         }
       },
       "intent_keywords": [
@@ -707,8 +745,8 @@
       ],
       "confidence_threshold": 0.7,
       "outputs": {
-        "success": "MonitoringReport with statistics and health status",
-        "failure": "MonitoringError with details (but monitoring continues)"
+        "success": "Health verdict per directive plus statistics and recent errors",
+        "failure": "Explanation of what could not be read; monitoring never blocks other work"
       }
     },
     {

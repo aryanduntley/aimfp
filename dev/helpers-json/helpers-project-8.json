@@ -5,18 +5,18 @@
       "file_path": "helpers/project/subtasks_sidequests.py",
       "parameters": [
         {
-          "name": "name",
-          "type": "string",
-          "required": true,
-          "default": null,
-          "description": "Subtask name"
-        },
-        {
           "name": "parent_task_id",
           "type": "integer",
           "required": true,
           "default": null,
           "description": "Parent task ID"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Subtask name"
         },
         {
           "name": "status",
@@ -26,18 +26,18 @@
           "description": "'pending', 'in_progress', 'completed', 'blocked'"
         },
         {
-          "name": "description",
-          "type": "string",
-          "required": false,
-          "default": null,
-          "description": "Subtask description"
-        },
-        {
           "name": "priority",
           "type": "string",
           "required": false,
           "default": "high",
           "description": "'low', 'medium', 'high', 'critical'"
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Subtask description"
         }
       ],
       "purpose": "Create a focused sub-unit of work under a parent task. The parent is paused until all subtasks complete.",

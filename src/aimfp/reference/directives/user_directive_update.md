@@ -494,27 +494,10 @@ user_directive_approve (require re-approval)
 
 ## Helper Functions
 
-Query `get_helpers_for_directive()` to discover this directive's available helpers.
-See system prompt for usage.
-### Change Detection
-- `calculate_file_checksum(file_path: str) -> str`
-  - MD5 or SHA256 of file content
-
-- `detect_changed_files() -> list[str]`
-  - Compare stored checksums with current
-
-- `compare_configs(old: dict, new: dict) -> dict`
-  - Return diff of configurations
-
-### File Watching
-- `setup_file_watcher(directory: str, callback: function)`
-  - Monitor directory for changes
-  - Trigger callback on modification
-
-### Backup
-- `backup_configuration(directive_id: int) -> bool`
-  - Save current config before update
-  - Enable rollback if needed
+Query `get_helpers_for_directive('user_directive_update')` to discover this
+directive's helpers, and `get_helper_by_name` for a signature. They are not
+listed here on purpose: the tool surface evolves, and a hardcoded list in a
+rarely-read file goes stale silently and is believed anyway.
 
 ---
 

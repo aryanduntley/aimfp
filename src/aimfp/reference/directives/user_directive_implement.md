@@ -719,53 +719,48 @@ user_directive_approve
 
 ## Helper Functions
 
-Query `get_helpers_for_directive()` to discover this directive's available helpers.
-See system prompt for usage.
-### Code Generation
-- `generate_types_module(config: dict) -> str`
-  - Generate ADTs and data structures
-  - Returns: Python code string
+Query `get_helpers_for_directive('user_directive_implement')` to discover this
+directive's helpers, and `get_helper_by_name` for a signature. They are not
+listed here on purpose: the tool surface evolves, and a hardcoded list in a
+rarely-read file goes stale silently and is believed anyway.
 
-- `generate_trigger_module(trigger_config: dict) -> str`
-  - Generate trigger handler functions
-  - Returns: Python code string
+### The runtime hook surface (what you generate calls TO)
 
-- `generate_action_module(action_config: dict) -> str`
-  - Generate action executor functions
-  - Returns: Python code string
+Separate from the helpers above. `get_hooks` returns AIMFP's library API for
+code running **outside** AIMFP — the runner you are generating. You never invoke
+these; you write code that imports them.
 
-- `generate_orchestrator_module(config: dict) -> str`
-  - Generate main run_directive function
-  - Returns: Python code string
+```python
+from aimfp.hooks.directives import get_due_directives, run_directive
 
-- `generate_tests_module(directive_name: str, config: dict) -> str`
-  - Generate pytest test cases
-  - Returns: Python code string
+for d in get_due_directives(project_root=ROOT).directives:
+    run_directive(d.directive_id, HANDLERS[d.name], ROOT)
+```
 
-### FP Validation
-- `validate_fp_compliance(code: str) -> Result[bool, list[str]]`
-  - Check generated code against all FP directives
-  - Returns: Success or list of violations
+Rules that belong in every generated runner:
 
-- `auto_fix_fp_violations(code: str, violations: list) -> str`
-  - Attempt to fix common violations automatically
-  - Example: Add `frozen=True` to dataclasses
+- **`run_directive` is the default.** It times the handler, catches its
+  exceptions, writes the log records, and updates the statistics in one call.
+  Use `record_execution_start` / `record_execution_end` only when the work
+  cannot be wrapped in a callable — a subprocess, a webhook, a run spanning
+  processes.
+- **Always call `set_next_scheduled_time`** when the runner schedules its next
+  run. Without it, AIMFP cannot distinguish a directive idle by design from one
+  whose runner has died, and `user_directive_monitor` can never report it
+  overdue.
+- **Use `record_directive_error`** for failures *outside* a run — a trigger that
+  misfired, a dependency that was missing, a scheduler that could not dispatch.
+- **Do not write your own logging or statistics.** `run_directive` already
+  writes the JSON-lines execution and error logs and updates
+  `directive_executions`. A second logger produces a per-project record shape
+  that nothing can read back.
+- **Tell the user** that importing `aimfp.hooks` makes `aimfp` a **runtime**
+  dependency of their automation, not just a dev tool. The generated code stops
+  working if `aimfp` is absent from the environment the runner executes in.
 
-### Template Rendering
-- `render_template(template_name: str, context: dict) -> str`
-  - Use Jinja2 or similar for code templates
-  - Returns: Rendered code string
-
-### Dependency Management
-- `extract_imports(code: str) -> list[str]`
-  - Parse code to find import statements
-  - Returns: List of packages needed
-
-- `check_package_installed(package_name: str) -> bool`
-  - Check if package available
-  - Returns: True if installed
-
----
+The timer belongs to the generated project and follows from the directive's
+`trigger_config` — cron, a systemd timer, or an in-process scheduler. AIMFP has
+no timer of its own and never supervises the runner.
 
 ## Database Operations
 

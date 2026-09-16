@@ -49,7 +49,7 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "get_helpers_are_tool": ("aimfp.helpers.core.directives_2", "get_helpers_are_tool"),
     "get_helpers_by_database": ("aimfp.helpers.core.directives_2", "get_helpers_by_database"),
     "get_helpers_for_directive": ("aimfp.helpers.core.directives_2", "get_helpers_for_directive"),
-    "get_helpers_not_tool_not_sub": ("aimfp.helpers.core.directives_2", "get_helpers_not_tool_not_sub"),
+    "get_hooks": ("aimfp.helpers.core.directives_2", "get_hooks"),
 
     # ── Core: Flows ──────────────────────────────────────────────────────
     # helpers/core/flows.py (5 tools)
@@ -346,6 +346,14 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "catalog_types": ("aimfp.helpers.catalog.register", "catalog_types"),
 
     # ── User Directives ──────────────────────────────────────────────────
+    # helpers/user_directives/monitoring.py (3 tools)
+    # AI-facing read side of the hook execution model. The runtime hooks in
+    # src/aimfp/hooks/ are deliberately NOT here: a hook in this registry would
+    # let the AI execute a user's automation inside an MCP session.
+    "get_directive_execution_stats": ("aimfp.helpers.user_directives.monitoring", "get_directive_execution_stats"),
+    "get_recent_directive_errors": ("aimfp.helpers.user_directives.monitoring", "get_recent_directive_errors"),
+    "check_directive_health": ("aimfp.helpers.user_directives.monitoring", "check_directive_health"),
+
     # helpers/user_directives/crud.py (8 tools)
     "add_user_custom_entry": ("aimfp.helpers.user_directives.crud", "add_user_custom_entry"),
     "delete_user_custom_entry": ("aimfp.helpers.user_directives.crud", "delete_user_custom_entry"),

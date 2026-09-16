@@ -120,6 +120,11 @@ class HelperRecord:
     error_handling: Optional[str]
     created_at: str
     updated_at: str
+    # Appended with a default so existing positional constructions are unaffected.
+    # True for AIMFP's library surface for code running OUTSIDE AIMFP
+    # (src/aimfp/hooks/) - never an MCP tool, and something the AI writes calls
+    # to rather than invokes. See the helper_functions.is_hook column comment.
+    is_hook: bool = False
 
 
 @dataclass(frozen=True)
@@ -203,6 +208,7 @@ def row_to_helper(row: sqlite3.Row) -> HelperRecord:
         error_handling=row['error_handling'] if 'error_handling' in row.keys() else None,
         created_at=row['created_at'] if 'created_at' in row.keys() else '',
         updated_at=row['updated_at'] if 'updated_at' in row.keys() else '',
+        is_hook=bool(row['is_hook']) if 'is_hook' in row.keys() else False,
     )
 
 

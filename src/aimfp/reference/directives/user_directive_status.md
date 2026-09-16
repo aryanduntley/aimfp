@@ -483,36 +483,16 @@ All systems operational! ✨
 
 ## Helper Functions
 
-Query `get_helpers_for_directive()` to discover this directive's available helpers.
-See system prompt for usage.
-### Status Aggregation
-- `get_all_directive_status() -> list[dict]`
-  - Query all directives with stats
-  - Return structured data
+Query `get_helpers_for_directive('user_directive_status')` to discover this
+directive's helpers, and `get_helper_by_name` for a signature. They are not
+listed here on purpose: the tool surface evolves, and a hardcoded list in a
+rarely-read file goes stale silently and is believed anyway.
 
-- `calculate_success_rate(directive_id: int) -> float`
-  - success_count / total_executions
-
-### Health Checks
-- `check_scheduler_health(directive_id: int) -> str`
-  - Return 'OK', 'MISSING', 'ERROR'
-
-- `check_process_health(process_id: int) -> str`
-  - Return 'OK', 'DOWN', 'ERROR'
-
-### Log Parsing
-- `parse_execution_log(log_file: str, directive_id: int, limit: int) -> list[dict]`
-  - Parse recent executions from log
-
-- `parse_error_log(log_file: str, directive_id: int, last_hours: int) -> list[dict]`
-  - Parse recent errors
-
-### Reporting
-- `format_status_report(directives: list[dict]) -> str`
-  - Generate human-readable status
-
-- `generate_recommendations(directives: list[dict]) -> list[str]`
-  - Analyze and recommend actions
+Status reporting reads the same surface `user_directive_monitor` does:
+`check_directive_health` for verdicts and `get_directive_execution_stats`
+for raw numbers. There is no process or scheduler inspection available —
+a dead runner shows up as `overdue`, meaning it declared a next run time
+and that moment passed.
 
 ---
 

@@ -441,17 +441,24 @@ def complete_order(order_id: str, user_id: str) -> Result[OrderConfirmation, str
 
 ## Helper Functions
 
-Query `get_helpers_for_directive()` to discover this directive's available helpers.
-See system prompt for usage.
+Query `get_helpers_for_directive('fp_modular_reuse')` to discover this directive's
+helpers, and `get_helper_by_name` for a current signature.
 
-**Module-specific helpers**:
-- `add_module(name, path, description, purpose, external_dependencies)` — create module entry
-- `search_modules(search_string)` — find existing modules by name/purpose/description
-- `get_all_modules()` — list all project modules
-- `get_module_for_file(file_id)` — reverse lookup: which module owns this file?
-- `get_module_files(module_id)` — list files in a module
-- `get_module_functions(module_id)` — list functions in a module
-- `get_module_dependencies(module_id)` — cross-module dependency graph
+The module toolset is this directive's subject matter, so the names are worth
+knowing by heart — but look the signatures up rather than trusting a copy:
+
+- `add_module` — create a module entry
+- `search_modules` — find existing modules by name, purpose, or description
+- `get_all_modules` — list every module in the project
+- `get_module_for_file` — reverse lookup: which module owns this file?
+- `get_module_files` / `get_module_functions` — what a module contains
+- `get_module_dependencies` — cross-module dependency graph
+- `add_file_to_module` / `add_files_to_module` — assign after `finalize_file`
+
+Signatures are deliberately omitted. This file previously carried them, and they
+had already gone stale: it documented `search_modules(search_string)` after the
+function had gained `limit`. A signature in prose is a copy that nothing keeps in
+sync, and a stale one is worse than none because it is believed.
 
 ---
 

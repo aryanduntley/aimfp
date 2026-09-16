@@ -246,10 +246,16 @@ from helpers._common import _validate_result  # Global utility
 **Location**: `<source-dir>/.state/runtime.db`
 
 **Operations**: Import from `state_operations.{ext}`:
-- `set_var(var_name, value)` - Store variable
-- `get_var(var_name)` - Retrieve variable
-- `delete_var(var_name)` - Remove variable
-- `increment_var(var_name, amount)` - Increment counter
+- `set_var` - Store a variable
+- `get_var` - Retrieve a variable
+- `delete_var` - Remove a variable
+- `increment_var` - Increment a counter
+
+These are NOT MCP tools and `get_helper_by_name` will not find them. They are
+generated INTO the project from `templates/state_db/`, so you write code calling
+them rather than invoking them — read the generated `state_operations` file for
+current signatures. This list previously carried `set_var(var_name, value)` after
+the real function had gained `var_type`, which is why the signatures are gone.
 
 **When to Use**:
 - ✅ Replacing mutable global variables

@@ -452,40 +452,14 @@ AI: Stopping 'webhook_listener'...
 
 ## Helper Functions
 
-Query `get_helpers_for_directive()` to discover this directive's available helpers.
-See system prompt for usage.
-### Process Management
-- `terminate_process(pid: int, timeout: int = 10) -> bool`
-  - Graceful shutdown request
-  - Wait for termination
+Query `get_helpers_for_directive('user_directive_deactivate')` to discover this
+directive's helpers, and `get_helper_by_name` for a signature. They are not
+listed here on purpose: the tool surface evolves, and a hardcoded list in a
+rarely-read file goes stale silently and is believed anyway.
 
-- `kill_process(pid: int) -> bool`
-  - Force kill process
-  - Last resort
-
-- `process_exists(pid: int) -> bool`
-  - Check if process still running
-
-### Scheduler Management
-- `remove_scheduler_job(job_id: str) -> bool`
-  - Remove job from APScheduler
-
-- `get_scheduler_instance() -> Scheduler`
-  - Get global scheduler instance
-
-### Logging
-- `flush_log(log_file: str) -> bool`
-  - Flush buffered log entries
-
-- `archive_log(current: str, archive: str) -> bool`
-  - Move log to archive
-
-### Cleanup
-- `close_all_connections(directive_id: int) -> bool`
-  - Close API connections, DB connections
-
-- `cleanup_temp_files(directive_id: int) -> bool`
-  - Remove temporary files
+Deactivation does not stop anything. It sets status to `paused`; stopping
+the runner is the user's action on their own scheduler, and worth stating
+explicitly so a directive is not assumed dormant while it is still firing.
 
 ---
 

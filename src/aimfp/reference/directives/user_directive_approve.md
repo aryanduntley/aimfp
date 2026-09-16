@@ -515,29 +515,10 @@ user_directive_activate
 
 ## Helper Functions
 
-Query `get_helpers_for_directive()` to discover this directive's available helpers.
-See system prompt for usage.
-### Approval Management
-- `check_approval_status(directive_id: int) -> dict`
-  - Check if directive is approved
-  - Returns: {approved, approved_at, approved_by}
-
-- `mark_as_approved(directive_id: int) -> bool`
-  - Set approved = true
-  - Log approval
-  - Update timestamps
-
-### Testing Guidance
-- `generate_testing_instructions(directive_name: str) -> str`
-  - Create custom testing guide
-  - Include test commands
-  - List expected behaviors
-
-### Feedback Processing
-- `parse_user_feedback(feedback: str) -> dict`
-  - Analyze feedback
-  - Categorize: approval, issues, adjustments, rework
-  - Extract actionable items
+Query `get_helpers_for_directive('user_directive_approve')` to discover this
+directive's helpers, and `get_helper_by_name` for a signature. They are not
+listed here on purpose: the tool surface evolves, and a hardcoded list in a
+rarely-read file goes stale silently and is believed anyway.
 
 ---
 

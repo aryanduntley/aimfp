@@ -787,7 +787,8 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: bool = True) -> Resu
 
         # Bundle: Case 2 context (if this is a Case 2 project)
         user_directives_status = status_data.get('user_directives_status')
-        case_2_context = _build_case_2_context(status_data)
+        case_2_context = _build_case_2_context(
+            status_data, _get_directive_health_safe())
 
         # Note: modules_summary already included via aimfp_status() — not duplicated here
 
@@ -865,6 +866,46 @@ def _check_scheduled_backup_safe() -> Optional[Dict[str, Any]]:
         return None
 
 
+def _get_directive_health_safe(
+    project_root: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Effect: Assess user directive health, degrading to None on any failure.
+
+    Session start must never fail because of a monitoring read, so every error
+    is swallowed - the same reasoning as _check_scheduled_backup_safe.
+
+    Returns None when there is nothing worth saying: a Use Case 1 project, no
+    directives, or everything healthy. Only directives NEEDING ATTENTION are
+    carried, alongside the counts, because the runner fires with no AI session
+    open and nobody has seen these outcomes.
+
+    Returns:
+        {'summary': {state: count}, 'needs_attention': True,
+         'directives': [{name, health, detail}, ...]}, or None
+    """
+    try:
+        from ..user_directives.monitoring import check_directive_health
+        result = check_directive_health(project_root=project_root)
+        if not result.success or not result.needs_attention:
+            return None
+        return {
+            'summary': result.summary,
+            'needs_attention': True,
+            'directives': [
+                {
+                    'directive_id': d.directive_id,
+                    'name': d.name,
+                    'health': d.health,
+                    'detail': d.detail,
+                }
+                for d in result.directives if d.health != 'ok'
+            ],
+        }
+    except Exception:
+        return None
+
+
 def _get_pending_notices_safe() -> Optional[List[Dict[str, Any]]]:
     """
     Effect: Fetch unacknowledged release notices, degrading to None on any failure.
@@ -886,15 +927,24 @@ def _get_pending_notices_safe() -> Optional[List[Dict[str, Any]]]:
         return None
 
 
-def _build_case_2_context(status_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _build_case_2_context(
+    status_data: Dict[str, Any],
+    health: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Pure: Build the Case 2 context dict from status data, or None for
     Case 1 projects. Shared by aimfp_run and build_status_bundle.
+
+    `health` is read separately by _get_directive_health_safe and passed in,
+    so this stays pure. It is omitted from the payload entirely when there is
+    nothing to report - a section that appears every session saying everything
+    is fine trains the reader to skip it, and then it is not read on the
+    session that matters.
     """
     user_directives_status = status_data.get('user_directives_status')
     if user_directives_status is None:
         return None
-    return {
+    context = {
         'is_case_2': True,
         'status': user_directives_status,
         'phase': _get_case_2_phase(user_directives_status),
@@ -910,6 +960,9 @@ def _build_case_2_context(status_data: Dict[str, Any]) -> Optional[Dict[str, Any
         ),
         'routing': status_data.get('case_2_routing'),
     }
+    if health:
+        context['health'] = health
+    return context
 
 
 def build_status_bundle(project_root: Optional[str] = None) -> Result:
@@ -973,7 +1026,8 @@ def build_status_bundle(project_root: Optional[str] = None) -> Result:
                 'project_root': root,
                 'status': status_data,
                 'user_settings': _get_user_settings_safe(root),
-                'case_2_context': _build_case_2_context(status_data),
+                'case_2_context': _build_case_2_context(
+                    status_data, _get_directive_health_safe(project_root)),
                 'deferred_notes': _get_deferred_notes_summary(root),
             },
         )

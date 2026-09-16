@@ -40,7 +40,7 @@ Keywords: "end session", "wrap up", "done for now", "finish session", "close", "
 ### Important Note
 
 `aimfp_end` is a **best practice**, not mandatory. If the user closes the chat without calling it:
-- The watchdog (when implemented) catches drift during the next session
+- The watchdog catches drift during the next session (startup reconciliation plus live monitoring)
 - `aimfp_run(is_new_session=true)` on next session start detects and addresses stale state
 - No data is lost — the database is always the source of truth
 
@@ -221,7 +221,7 @@ Process audit in batches. Report progress to user between sections.
 
 ### Case 4: User Closes Without aimfp_end
 
-Not a failure state. Watchdog (when implemented) catches file/function drift during the next session. `aimfp_run(is_new_session=true)` on next session start provides fresh context.
+Not a failure state. The watchdog catches file/function drift during the next session via startup reconciliation. `aimfp_run(is_new_session=true)` on next session start provides fresh context.
 
 ---
 
@@ -270,6 +270,6 @@ Not a failure state. Watchdog (when implemented) catches file/function drift dur
 ## Notes
 
 - `aimfp_end` is a best practice, not a requirement — sessions can end without it
-- The `aimfp_end` helper (Python code in `entry_points.py`) is **not yet implemented** — JSON definition complete, code pending
-- Watchdog integration is designed to work before and after watchdog implementation
+- Implemented in `helpers/orchestrators/entry_points.py` and registered as an MCP tool
+- Watchdog integration degrades gracefully: if no watchdog is running, there is no PID file and `watchdog.stopped` comes back null
 - Terminal flow — no loop back to status after completion

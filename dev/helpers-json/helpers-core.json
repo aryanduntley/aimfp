@@ -683,14 +683,22 @@
       "used_by_directives": []
     },
     {
-      "name": "get_helpers_not_tool_not_sub",
+      "name": "get_hooks",
       "file_path": "helpers/core/directives_2.py",
       "parameters": [],
-      "purpose": "Get all directive-callable helpers",
-      "error_handling": "",
+      "purpose": "Get AIMFP's library surface for code running OUTSIDE AIMFP (src/aimfp/hooks/). Hooks are NOT MCP tools and you cannot call them — they are imported by code that is not AIMFP, such as a generated Use Case 2 automation runner firing from cron or systemd with no AI session open. Your relationship to a hook is that you WRITE CODE CALLING IT during user_directive_implement. Queries is_hook=1 affirmatively; it replaced get_helpers_not_tool_not_sub, which described hooks as the absence of two other flags and so returned an empty list silently for as long as nothing populated that gap.",
+      "error_handling": "Returns HelpersResult(success=False) if aimfp_core.db is missing or unreadable. An empty helpers tuple means no hooks are registered, which is itself a defect worth reporting — the UC2 runtime hooks should always be present.",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "is_hook": false,
+      "return_statements": [
+        "You CANNOT call these. Generate code that imports and calls them; never attempt to invoke a hook as a tool.",
+        "Import path = 'aimfp.' + file_path with '/' replaced by '.' and '.py' stripped. file_path 'hooks/directives.py' means: from aimfp.hooks.directives import run_directive",
+        "Typical generated runner shape: for d in get_due_directives(project_root=ROOT).directives: run_directive(d.directive_id, HANDLERS[d.name], ROOT)",
+        "Prefer run_directive over the record_execution_start/record_execution_end pair whenever the work can be wrapped in a zero-argument callable — it times, records, and contains exceptions in one call. Use the pair only for subprocesses, webhooks, or runs spanning processes.",
+        "Generated runners must call set_next_scheduled_time whenever they schedule the next run. Without it, overdue detection is impossible and a dead runner is indistinguishable from one idle by design.",
+        "Importing aimfp.hooks makes aimfp a RUNTIME dependency of the user's automation, not just a dev tool — the generated code stops working if aimfp is absent from that environment. Say so when generating it."
+      ],
       "target_database": "core",
       "used_by_directives": []
     },

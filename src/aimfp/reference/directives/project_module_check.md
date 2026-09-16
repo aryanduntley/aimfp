@@ -193,11 +193,20 @@ The test: "Would extracting this create a module with only one caller and no dom
 ## Database Integration
 
 ### Helpers Used
-- `search_modules(search_string)` — search existing modules by name/purpose/description
-- `get_all_modules()` — list all modules for overview
-- `add_module(name, path, description, purpose, external_dependencies)` — create new module
-- `get_module_files(module_id)` — inspect what's already in a module
-- `get_module_for_file(file_id)` — reverse lookup: which module owns this file?
+
+Look signatures up with `get_helper_by_name`; the names alone are listed here
+because they are this directive's subject matter.
+
+- `search_modules` — search existing modules by name/purpose/description
+- `get_all_modules` — list all modules for overview
+- `add_module` — create a new module
+- `get_module_files` — inspect what is already in a module
+- `get_module_for_file` — reverse lookup: which module owns this file?
+
+Signatures are deliberately omitted: this list previously carried
+`search_modules(search_string)` after the function had gained `limit`. A
+signature copied into prose is a copy nothing keeps in sync, and a stale one is
+worse than none because it is believed.
 
 ### Tracking Flow
 1. Module check triggers during `project_file_write`

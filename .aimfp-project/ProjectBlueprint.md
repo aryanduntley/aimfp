@@ -149,7 +149,8 @@ and the **tracked source directory**):
 | `helpers_orchestrators` | `src/aimfp/helpers/orchestrators/` | Entry points + migration (8) |
 | `helpers_core` | `src/aimfp/helpers/core/` | Read-only aimfp_core.db access (7) |
 | `helpers_user_preferences` | `src/aimfp/helpers/user_preferences/` | user_preferences.db (6) |
-| `helpers_user_directives` | `src/aimfp/helpers/user_directives/` | user_directives.db, UC2 (6) |
+| `helpers_user_directives` | `src/aimfp/helpers/user_directives/` | user_directives.db, UC2 + AI-facing monitoring (7) |
+| `hooks` | `src/aimfp/hooks/` | UC2 runtime API for code running OUTSIDE AIMFP (5) |
 | `helpers_shared` | `src/aimfp/helpers/shared/` | Cross-cutting utilities (5) |
 | `helpers_git` | `src/aimfp/helpers/git/` | Git integration (2) |
 | `mcp_server` | `src/aimfp/mcp_server/` | JSON-RPC protocol layer (6) |
@@ -304,11 +305,59 @@ Watchdog exclusions also read here: `watchdog_excluded_dirs` /
 
 AIMFP itself is a **Use Case 1** project (regular software development) — no
 `user_directives.db` exists here. The UC2 subsystem is a *feature we ship*, not a
-mode this project runs in.
+mode this project runs in. That is also why it cannot be dogfooded: the mitigation
+is a fixture project in `tests/test_uc2_end_to_end.py`.
 
 UC2: user writes directive definitions (YAML/JSON/TXT); AIMFP generates and manages
 the automation codebase in `src/`. Adds `user_directives.db` and file-based logs
 (30-day execution / 90-day error retention).
+
+### Execution model (settled 2026-09-15)
+
+**AIMFP never executes a user directive and never supervises the process that
+does.** This is the load-bearing decision; everything else in UC2 follows from it.
+
+AIMFP is an MCP server answering tool calls. It has no timer, and no AI session is
+open at 3am when a time-triggered directive fires. So the timer and the execution
+live in the **user's generated project** — created during `user_directive_implement`
+because the directive content called for one (cron, a systemd timer, or an
+in-process scheduler). That runner imports `src/aimfp/hooks/` as a **library** to
+ask what is due and record what happened.
+
+Two runner shapes, differing in what runs forever and how they fail:
+
+- **OS scheduler** (cron/systemd timer) — cron runs forever; the runner is
+  short-lived, starting and exiting each firing. A crash self-heals on the next tick.
+- **Daemon / heartbeat** — the runner itself loops forever and must be supervised.
+  A crash is silent and permanent.
+
+`run_directive` is **higher-order**: the caller passes its handler in, so AIMFP
+runs the automation without ever importing user code. It times the call, contains
+the exception (an escaping one would kill the caller's scheduler thread and
+silently stop every *other* directive), writes the JSONL records, and folds the run
+into `directive_executions`. One writer shared by every UC2 project, which is what
+stops the log format drifting per project.
+
+**Dead-runner detection without process inspection.** The runner declares when it
+will next fire via `set_next_scheduled_time`; silence past that deadline is the
+evidence, reported as `overdue`. This replaces the PID checks and scheduler
+introspection the original `user_directive_monitor` workflow assumed — none of
+which AIMFP can perform. The corollary matters: a runner that never records its
+schedule can never be reported overdue, so silence becomes indistinguishable from
+health.
+
+**Two surfaces, and the distinction is enforced.** Hooks (`is_hook=1`, `is_tool=0`)
+are the library API for outside code; the AI discovers them with `get_hooks` and
+**writes code calling them**, never invoking them — a hook exposed as an MCP tool
+would let the AI execute a user's automation inside a session at an arbitrary
+moment. The AI-facing read side is three real MCP tools in
+`helpers/user_directives/monitoring.py`: `get_directive_execution_stats`,
+`get_recent_directive_errors`, `check_directive_health`. `sync-directives` fails the
+build if a hook appears in `TOOL_REGISTRY` or is marked both hook and tool.
+
+Health surfaces at session start through `_build_case_2_context`, present **only**
+when something needs attention — a section that appears every session saying all is
+well trains the reader to skip it.
 
 ---
 
@@ -442,7 +491,38 @@ project.
 
 ## 12. Evolution History
 
-### Dogfooding fixes from an external project — 2026-09-14 (current)
+### UC2 runtime hooks — 2026-09-15 (current)
+
+Closed the last open question in the UC2 Automation Flow: **who executes a user
+directive, and how does AIMFP find out what happened?** Settled as "not AIMFP" —
+see §8 for the model. Milestone *UC2 Directive Runtime Hooks*, 5 tasks.
+
+- **New top-level package `src/aimfp/hooks/`** (module `hooks`, 5 files) — the
+  library surface for code running outside AIMFP. Import-light by contract:
+  stdlib plus `database/connection.py` only, never the watchdog or directive
+  loader, so a headless automation environment pays little to install it. Enforced
+  by a test.
+- **`aimfp_core.db` 2.3 → 2.4**: `helper_functions.is_hook`. An affirmative flag,
+  because the prior "hook" query was `is_tool=0 AND is_sub_helper=0` — an absence,
+  which returned an empty list silently for as long as nothing populated it.
+  `get_helpers_not_tool_not_sub` → `get_hooks`. Core never migrates; it ships
+  read-only and is rebuilt by `sync-directives`.
+- **Three AI-facing monitoring tools** in `helpers/user_directives/monitoring.py`,
+  with classification as a pure function of (rows, now, threshold).
+- **`user_directive_monitor` rewritten** — from 0 helper mappings and 8 phantom
+  helpers to 3 mappings on real tools; MD 549 → 249 lines. `user_directive_implement`
+  gained a `wire_runtime_hooks` step, since that is where the runtime dependency
+  actually enters the user's project.
+- **Session-start health** via `_build_case_2_context` (+ `build_status_bundle`, so
+  svamanas gets it), present only when attention is needed.
+- **MD convention enforced** — all 7 UC2 directive MDs now carry soft references
+  with no hardcoded helper lists. `user_directive_status.md` had been documenting
+  `check_process_health(process_id)`, the exact PID model being removed.
+  `fp_modular_reuse.md` is the last remaining outlier.
+- Tests 1222 → 1321. svamanas embedding contract 11/11 unchanged; handoff written
+  to `svamanas/docs/aimfp-uc2-runtime-hooks.md`.
+
+### Dogfooding fixes from an external project — 2026-09-14
 
 - **Trigger**: an AI using AIMFP in another project fell back to raw sqlite3 four times.
 - **Search** (`helpers/shared/fts_query.py`): free text is tokenized, quoted, and

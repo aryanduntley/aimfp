@@ -7,7 +7,7 @@ Helpers in this file:
 - get_helper_by_name: Get specific helper function details
 - get_helpers_by_database: Get all helpers for a specific database
 - get_helpers_are_tool: Get all MCP tools (is_tool=true)
-- get_helpers_not_tool_not_sub: Get all directive-callable helpers
+- get_hooks: Get AIMFP's library surface for code outside AIMFP (never MCP tools)
 - get_helpers_are_sub: Get all sub-helpers (is_sub_helper=true)
 - get_helpers_for_directive: Get all helpers used by a directive
 - get_directives_for_helper: Get all directives that use a helper
@@ -238,18 +238,27 @@ def get_helpers_are_tool() -> HelpersResult:
         return HelpersResult(success=False, error=f"Query failed: {str(e)}")
 
 
-def get_helpers_not_tool_not_sub() -> HelpersResult:
+def get_hooks() -> HelpersResult:
     """
-    Get all directive-callable helpers.
+    Get AIMFP's library surface for code running OUTSIDE AIMFP.
 
-    Returns helpers that are not MCP tools and not sub-helpers.
-    These are called by directives during workflow execution.
+    Hooks are NOT MCP tools and you cannot call them. They are imported and
+    called by code that is not AIMFP - a generated Use Case 2 automation
+    runner in the user's project, firing from cron or systemd with no AI
+    session open. Your relationship to them is that you WRITE CODE CALLING
+    THEM (during user_directive_implement), which is why this returns an
+    import path and usage guidance rather than a callable tool listing.
+
+    Queries is_hook = 1 affirmatively. It replaced an earlier query for
+    "is_tool = 0 AND is_sub_helper = 0", which described hooks only as the
+    absence of two other flags and therefore returned an empty list silently
+    for as long as nothing populated that gap.
 
     Returns:
-        HelpersResult with directive-callable helpers
+        HelpersResult with every registered hook
 
     Example:
-        >>> result = get_helpers_not_tool_not_sub()
+        >>> result = get_hooks()
         >>> result.success
         True
     """
@@ -260,13 +269,13 @@ def get_helpers_not_tool_not_sub() -> HelpersResult:
             cursor = conn.execute(
                 """
                 SELECT * FROM helper_functions
-                WHERE is_tool = 0 AND is_sub_helper = 0
+                WHERE is_hook = 1
                 ORDER BY target_database, name
                 """
             )
             rows = cursor.fetchall()
             helpers = tuple(row_to_helper(row) for row in rows)
-            return_statements = get_return_statements("get_helpers_not_tool_not_sub")
+            return_statements = get_return_statements("get_hooks")
 
             return HelpersResult(
                 success=True,

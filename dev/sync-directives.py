@@ -582,6 +582,8 @@ def sync_helper_functions(conn: sqlite3.Connection) -> int:
     - name, file_path, parameters, purpose, error_handling
     - is_tool: Read from JSON (TRUE if exposed as MCP tool)
     - is_sub_helper: Read from JSON (TRUE if internal helper only)
+    - is_hook: Read from JSON (TRUE if library API for code outside AIMFP,
+      never an MCP tool - see the helper_functions.is_hook column comment)
     - target_database: Read from JSON
     - return_statements: Read from JSON
 
@@ -639,6 +641,7 @@ def sync_helper_functions(conn: sqlite3.Connection) -> int:
                     error_handling = ?,
                     is_tool = ?,
                     is_sub_helper = ?,
+                    is_hook = ?,
                     return_statements = ?,
                     target_database = ?
                 WHERE name = ?
@@ -649,6 +652,7 @@ def sync_helper_functions(conn: sqlite3.Connection) -> int:
                 helper.get('error_handling'),
                 1 if helper.get('is_tool', False) else 0,
                 1 if helper.get('is_sub_helper', False) else 0,
+                1 if helper.get('is_hook', False) else 0,
                 return_statements,
                 helper.get('target_database'),
                 name
@@ -659,8 +663,8 @@ def sync_helper_functions(conn: sqlite3.Connection) -> int:
             cur.execute("""
                 INSERT INTO helper_functions
                 (name, file_path, parameters, purpose, error_handling, is_tool, is_sub_helper,
-                 return_statements, target_database)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 is_hook, return_statements, target_database)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 name,
                 helper.get('file_path'),
@@ -669,6 +673,7 @@ def sync_helper_functions(conn: sqlite3.Connection) -> int:
                 helper.get('error_handling'),
                 1 if helper.get('is_tool', False) else 0,
                 1 if helper.get('is_sub_helper', False) else 0,
+                1 if helper.get('is_hook', False) else 0,
                 return_statements,
                 helper.get('target_database')
             ))
@@ -1203,6 +1208,34 @@ def validate_integrity(conn):
             )
         if not unregistered and not orphaned:
             print(f"   ✓ Registry matches DB exactly ({len(registered)} tools dispatchable)")
+
+        # Hooks are the inverse invariant: they are AIMFP's library surface for
+        # code running outside AIMFP and must NEVER be callable by the AI. A hook
+        # in TOOL_REGISTRY would let the AI execute a user's automation inside an
+        # MCP session at an arbitrary moment — the exact thing the hook execution
+        # model exists to prevent. is_hook=1 with is_tool=1 is the same defect
+        # declared rather than leaked.
+        cur.execute("SELECT name FROM helper_functions WHERE is_hook = 1;")
+        db_hooks = {row["name"] for row in cur.fetchall()}
+
+        leaked = sorted(db_hooks & registered)
+        if leaked:
+            issues.append(
+                "⚠️ is_hook=1 but present in TOOL_REGISTRY (hooks must never be "
+                f"AI-callable): {', '.join(leaked)}"
+            )
+
+        cur.execute(
+            "SELECT name FROM helper_functions WHERE is_hook = 1 AND is_tool = 1;")
+        contradictory = sorted(row["name"] for row in cur.fetchall())
+        if contradictory:
+            issues.append(
+                "⚠️ Marked BOTH is_hook=1 and is_tool=1 — a hook cannot be a tool: "
+                f"{', '.join(contradictory)}"
+            )
+
+        if db_hooks and not leaked and not contradictory:
+            print(f"   ✓ {len(db_hooks)} hooks registered, none AI-callable")
     except ImportError as e:
         issues.append(f"⚠️ Could not import TOOL_REGISTRY to cross-check tools: {e}")
     finally:
