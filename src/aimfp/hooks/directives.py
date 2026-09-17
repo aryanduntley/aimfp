@@ -18,6 +18,17 @@ the caller knows whether the event fired or the condition holds. A loop
 without that branch therefore runs those directives on every single tick,
 forever. `should_fire` is the caller's own judgment, whatever shape it takes.
 
+For a condition, that judgment includes the repeat semantics the grammar
+declares (hooks/triggers.py): by default a condition fires once per rise, so
+should_fire compares the evaluation against directive.condition_latched and
+persists the new latch with set_condition_state. Only a config with
+"repeat": "while_true" fires on every true evaluation.
+
+A time slot the runner decides not to run - reached too late, or with an
+unreadable schedule - is reported with record_directive_skip, never with
+record_directive_error: a skip is not a failure, and health reports it on its
+own terms.
+
 Time triggers need no such branch: record_execution_end advances
 next_scheduled_time from the directive's own trigger_config, so a time
 directive that just ran is not due again until it should be.
@@ -44,6 +55,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from ..database.connection import (
     _close_connection,
     _open_connection,
+    _get_table_info,
     database_exists,
     get_user_directives_db_path,
 )
@@ -54,6 +66,7 @@ from .logs import (
     append_execution_log,
     build_error_record,
     build_execution_record,
+    build_skip_record,
 )
 from .results import (
     DueDirective,
@@ -70,6 +83,19 @@ _CALLER_JUDGED_TRIGGERS = frozenset({'event', 'condition', 'manual'})
 _NO_DATABASE = (
     "No user_directives.db for this project. Hooks are Use Case 2 only; "
     "a Use Case 1 project has no user directives to run."
+)
+
+# directive_executions columns added in user_directives schema 1.3. A runner
+# can pick up a new aimfp before any AI session has run migrate_databases, so
+# every read and write here checks for them rather than assuming them - an
+# upgraded package must never stop an unmigrated runner.
+_SKIP_COLUMNS = frozenset({
+    'skip_count', 'consecutive_skip_count', 'last_skip_time', 'last_skip_reason'})
+_CONDITION_COLUMNS = frozenset({'condition_latched', 'last_condition_eval_time'})
+
+_NEEDS_MIGRATION = (
+    "user_directives.db predates schema 1.3 and has no {what} columns. "
+    "Open an AIMFP session and run migrate_databases."
 )
 
 
@@ -189,7 +215,25 @@ def _row_to_due_directive(row: Any) -> DueDirective:
         implementation_file_path=row['implementation_file_path'],
         next_scheduled_time=row['next_scheduled_time'],
         last_execution_time=row['last_execution_time'],
+        condition_latched=bool(_optional_column(row, 'condition_latched')),
+        last_condition_eval_time=_optional_column(row, 'last_condition_eval_time'),
     )
+
+
+def _optional_column(row: Any, name: str) -> Any:
+    """Pure: A column's value, None when the row predates that column."""
+    return row[name] if name in row.keys() else None
+
+
+def _optional_select(columns: frozenset, wanted: frozenset, alias: str) -> str:
+    """
+    Pure: SELECT fragments for columns that may not exist yet.
+
+    Returns ', alias.col' for each wanted column the table has, in sorted
+    order, or '' when it has none of them.
+    """
+    present = sorted(wanted & columns)
+    return ''.join(f", {alias}.{name}" for name in present)
 
 
 def _now_iso() -> str:
@@ -229,11 +273,13 @@ def get_due_directives(
     conn = None
     try:
         conn = _open_connection(db_path)
+        condition_state = _optional_select(
+            _effect_execution_columns(conn), _CONDITION_COLUMNS, 'de')
         rows = conn.execute(
-            """
+            f"""
             SELECT ud.id, ud.name, ud.trigger_type, ud.trigger_config,
                    ud.action_type, ud.action_config, ud.implementation_file_path,
-                   de.next_scheduled_time, de.last_execution_time
+                   de.next_scheduled_time, de.last_execution_time{condition_state}
             FROM user_directives ud
             LEFT JOIN directive_executions de ON de.directive_id = ud.id
             WHERE ud.status = 'active'
@@ -555,9 +601,200 @@ def set_next_scheduled_time(
             _close_connection(conn)
 
 
+def record_directive_skip(
+    directive_id: int,
+    reason: str,
+    project_root: str,
+    next_scheduled_time: Optional[str] = None,
+) -> HookMutationResult:
+    """
+    HOOK (library API, not an MCP tool).
+
+    Record an occurrence the runner deliberately did not run.
+
+    Missed time occurrences are skipped, never caught up - but a skip must be
+    visible, or "silently did nothing" looks exactly like "ran fine". This
+    raises skip_count and consecutive_skip_count and sets last_skip_time and
+    last_skip_reason. It never touches total_executions, success_count or
+    error_count: a skip is neither a run nor an error. The next recorded
+    execution resets consecutive_skip_count, which is what check_directive_health
+    reads to report 'skipping'.
+
+    Writes one outcome 'skipped' line to the execution log.
+
+    Never advances the schedule on its own - the caller already knows the next
+    slot. Pass it as next_scheduled_time to record the skip and declare the
+    slot in one write, so a crash between the two cannot leave a skipped
+    directive holding a stale slot.
+
+    Args:
+        directive_id: Directive whose occurrence was skipped
+        reason: Short classification, e.g. 'missed_occurrence',
+            'unreadable_schedule'
+        project_root: Absolute path to the project root
+        next_scheduled_time: ISO timestamp of the next slot, when declaring it
+
+    Returns:
+        HookMutationResult. success=False, never an exception, when the
+        database is absent, not yet migrated to schema 1.3, or reason is blank.
+    """
+    if not isinstance(reason, str) or not reason.strip():
+        return HookMutationResult(
+            success=False, directive_id=directive_id,
+            error="reason: must be a non-empty string")
+
+    db_path = get_user_directives_db_path(project_root)
+    if not database_exists(db_path):
+        return HookMutationResult(
+            success=False, directive_id=directive_id, error=_NO_DATABASE)
+
+    skipped_at = _now_iso()
+    conn = None
+    try:
+        conn = _open_connection(db_path)
+        if not _SKIP_COLUMNS <= _effect_execution_columns(conn):
+            return HookMutationResult(
+                success=False, directive_id=directive_id,
+                error=_NEEDS_MIGRATION.format(what='skip'))
+
+        _effect_ensure_execution_row(conn, directive_id)
+        updates, params = _build_skip_update(reason, skipped_at, next_scheduled_time)
+        conn.execute(
+            f"UPDATE directive_executions SET {', '.join(updates)} "
+            "WHERE directive_id = ?",
+            (*params, directive_id),
+        )
+        conn.commit()
+    except sqlite3.Error as exc:
+        return HookMutationResult(
+            success=False, directive_id=directive_id, error=str(exc))
+    finally:
+        if conn is not None:
+            _close_connection(conn)
+
+    append_execution_log(
+        project_root,
+        load_log_config(project_root),
+        build_skip_record(
+            directive_id=directive_id,
+            directive_name=_effect_directive_name(project_root, directive_id),
+            reason=reason,
+            skipped_at=skipped_at,
+            next_scheduled_time=next_scheduled_time,
+        ),
+    )
+    return HookMutationResult(success=True, directive_id=directive_id)
+
+
+def set_condition_state(
+    directive_id: int,
+    latched: bool,
+    project_root: str,
+    evaluated_at: Optional[str] = None,
+) -> HookMutationResult:
+    """
+    HOOK (library API, not an MCP tool).
+
+    Persist a condition directive's edge-trigger latch after an evaluation.
+
+    The runner evaluates the expression; AIMFP only stores the outcome, so a
+    condition that is still true does not fire again after a restart. Call
+    it after every evaluation that actually ran, and never for a tick that
+    evaluate_every_seconds throttled - not looking is not the condition
+    clearing. get_due_directives hands both fields back on DueDirective.
+
+    The latch rule itself (triggers.py, CONDITION REPEAT SEMANTICS): a false
+    evaluation stores False; a true one stores True, including on the rise
+    whose dispatch authorization then denied.
+
+    Args:
+        directive_id: Condition directive just evaluated
+        latched: The latch after this evaluation
+        project_root: Absolute path to the project root
+        evaluated_at: ISO timestamp of the evaluation, defaults to now. A
+            tz-aware value is stored as naive local, like every AIMFP
+            timestamp.
+
+    Returns:
+        HookMutationResult. success=False, never an exception, when the
+        database is absent, not yet migrated to schema 1.3, or an argument is
+        malformed.
+    """
+    if not isinstance(latched, bool):
+        return HookMutationResult(
+            success=False, directive_id=directive_id,
+            error=f"latched: must be a bool, got {type(latched).__name__}")
+
+    evaluated = _parse_iso(evaluated_at) if evaluated_at else None
+    if evaluated_at and evaluated is None:
+        return HookMutationResult(
+            success=False, directive_id=directive_id,
+            error=f"evaluated_at: must be an ISO timestamp, got {evaluated_at!r}")
+    stamp = (_strip_zone(evaluated).isoformat(timespec='seconds')
+             if evaluated is not None else _now_iso())
+
+    db_path = get_user_directives_db_path(project_root)
+    if not database_exists(db_path):
+        return HookMutationResult(
+            success=False, directive_id=directive_id, error=_NO_DATABASE)
+
+    conn = None
+    try:
+        conn = _open_connection(db_path)
+        if not _CONDITION_COLUMNS <= _effect_execution_columns(conn):
+            return HookMutationResult(
+                success=False, directive_id=directive_id,
+                error=_NEEDS_MIGRATION.format(what='condition state'))
+
+        _effect_ensure_execution_row(conn, directive_id)
+        conn.execute(
+            "UPDATE directive_executions SET condition_latched = ?, "
+            "last_condition_eval_time = ? WHERE directive_id = ?",
+            (1 if latched else 0, stamp, directive_id),
+        )
+        conn.commit()
+        return HookMutationResult(success=True, directive_id=directive_id)
+    except sqlite3.Error as exc:
+        return HookMutationResult(
+            success=False, directive_id=directive_id, error=str(exc))
+    finally:
+        if conn is not None:
+            _close_connection(conn)
+
+
+def _build_skip_update(
+    reason: str,
+    skipped_at: str,
+    next_scheduled_time: Optional[str],
+) -> Tuple[List[str], List[Any]]:
+    """
+    Pure: Build the SET clauses and parameters for one recorded skip.
+
+    Touches only the skip fields and, when declared, the next slot - never
+    the execution or error counters.
+    """
+    updates = [
+        "skip_count = COALESCE(skip_count, 0) + 1",
+        "consecutive_skip_count = COALESCE(consecutive_skip_count, 0) + 1",
+        "last_skip_time = ?",
+        "last_skip_reason = ?",
+    ]
+    params: List[Any] = [skipped_at, reason]
+    if next_scheduled_time is not None:
+        updates.append("next_scheduled_time = ?")
+        params.append(next_scheduled_time)
+    return updates, params
+
+
 # ============================================================================
 # Effects
 # ============================================================================
+
+def _effect_execution_columns(conn: sqlite3.Connection) -> frozenset:
+    """Effect: The column names directive_executions has on this database."""
+    return frozenset(
+        column['name'] for column in _get_table_info(conn, 'directive_executions'))
+
 
 def _effect_ensure_execution_row(
     conn: sqlite3.Connection,
@@ -621,6 +858,8 @@ def _effect_record_execution(
             error_type=error_type,
             error_message=error_message,
             count_execution=count_execution,
+            reset_consecutive_skips=(
+                'consecutive_skip_count' in _effect_execution_columns(conn)),
         )
         conn.execute(
             f"UPDATE directive_executions SET {', '.join(updates)} "
@@ -643,6 +882,7 @@ def _build_statistics_update(
     error_type: Optional[str],
     error_message: Optional[str],
     count_execution: bool,
+    reset_consecutive_skips: bool = False,
 ) -> Tuple[List[str], List[Any]]:
     """
     Pure: Build the SET clauses and parameters for a statistics update.
@@ -650,6 +890,10 @@ def _build_statistics_update(
     Separated from the write so the counter arithmetic - especially the
     running average, which cannot be recomputed from history - is testable
     without a database.
+
+    A counted execution ends a run of skips, so it zeroes
+    consecutive_skip_count when the table has that column. An out-of-band
+    error does not: a denied dispatch is not a run.
     """
     previous_total = (current['total_executions'] or 0) if current else 0
     previous_avg = (current['avg_execution_time_ms'] if current else None)
@@ -665,6 +909,9 @@ def _build_statistics_update(
 
         if succeeded:
             updates.append("success_count = success_count + 1")
+
+        if reset_consecutive_skips:
+            updates.append("consecutive_skip_count = 0")
 
         if duration_ms is not None:
             updates.append("avg_execution_time_ms = ?")

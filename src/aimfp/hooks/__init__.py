@@ -25,8 +25,10 @@ from .directives import (
     get_due_directives,
     record_directive_error,
     record_execution_end,
+    record_directive_skip,
     record_execution_start,
     run_directive,
+    set_condition_state,
     set_next_scheduled_time,
 )
 from .actions import (
@@ -48,6 +50,7 @@ from .results import (
 )
 from .schedule import next_fire_time
 from .triggers import (
+    CONDITION_REPEAT_MODES,
     TIME_KINDS,
     TRIGGER_TYPES,
     WEEKDAY_TOKENS,
@@ -63,7 +66,9 @@ __all__ = [
     'record_execution_start',
     'record_execution_end',
     'record_directive_error',
+    'record_directive_skip',
     'set_next_scheduled_time',
+    'set_condition_state',
     # Availability and configuration
     'hooks_available',
     'load_log_config',
@@ -78,6 +83,7 @@ __all__ = [
     'TRIGGER_TYPES',
     'TIME_KINDS',
     'WEEKDAY_TOKENS',
+    'CONDITION_REPEAT_MODES',
     # Types
     'DueDirective',
     'DueDirectivesResult',

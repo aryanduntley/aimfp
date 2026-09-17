@@ -26,8 +26,34 @@ trigger_type and action_type enums already in the schema:
     {"kind": "monthly",  "at": "09:00", "days": [1, 15]}
 
     event:     {"event": "stove_on", "source": "home_assistant"}
-    condition: {"expression": "cpu > 90", "evaluate_every_seconds": 60}
+    condition: {"expression": "cpu > 90", "evaluate_every_seconds": 60,
+                "repeat": "on_rise"}
     manual:    {}
+
+CONDITION REPEAT SEMANTICS. A condition can stay true for a long time, and a
+runner that dispatches whenever the expression holds would fire on every
+evaluation for as long as it holds. Two runners that disagree about this
+disagree about how many times an automation runs. So the grammar names the
+intent, even though AIMFP never evaluates the expression:
+
+    repeat absent or "on_rise"  fire once when the condition becomes true;
+                                arm again when an evaluation finds it false
+    repeat "while_true"         fire on every evaluation that finds it true
+
+The default is edge-triggered. The caller applies it after evaluating, by
+keeping a per-directive latch:
+
+    evaluation       latch before   dispatch?          latch after
+    not evaluated    any            no                 unchanged
+    false            any            no                 false
+    true             false          yes (the rise)     true
+    true             true           no                 true
+
+The latch sets on the rise even when authorization then denies the run - the
+trigger did fire - and a tick throttled by evaluate_every_seconds never
+changes it, because not looking is not the same as the condition clearing.
+AIMFP stores the latch for the runner (set_condition_state) so it survives a
+restart; is_due still returns every condition directive on every tick.
 
 Unknown keys are rejected rather than ignored. A typo'd key in a schedule is
 precisely the failure this module exists to surface: a bad action fails
@@ -48,6 +74,7 @@ import re
 from typing import Any, Dict, Optional, Tuple
 
 from ._common import (
+    check_enum,
     check_keys,
     check_positive_int,
     check_non_empty_string,
@@ -74,6 +101,10 @@ WEEKDAY_TOKENS: Tuple[str, ...] = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'su
 
 TRIGGER_TYPES: Tuple[str, ...] = ('time', 'event', 'condition', 'manual')
 
+# How a condition that stays true is dispatched. The first entry is the
+# default when the key is absent. See CONDITION REPEAT SEMANTICS above.
+CONDITION_REPEAT_MODES: Tuple[str, ...] = ('on_rise', 'while_true')
+
 # (required keys, optional keys) per time kind. "kind" is required everywhere
 # because it is the discriminator. An interval takes no timezone: it counts
 # elapsed seconds, so accepting one would imply a wall-clock meaning it does
@@ -90,7 +121,10 @@ _TIME_KIND_KEYS: Dict[str, Tuple[frozenset, frozenset]] = {
 # without claiming to understand it.
 _NON_TIME_KEYS: Dict[str, Tuple[frozenset, frozenset]] = {
     'event': (frozenset({'event'}), frozenset({'source'})),
-    'condition': (frozenset({'expression'}), frozenset({'evaluate_every_seconds'})),
+    'condition': (
+        frozenset({'expression'}),
+        frozenset({'evaluate_every_seconds', 'repeat'}),
+    ),
     'manual': (frozenset(), frozenset()),
 }
 
@@ -225,6 +259,7 @@ _FIELD_CHECKS = {
     'source': check_non_empty_string,
     'expression': check_non_empty_string,
     'evaluate_every_seconds': check_positive_int,
+    'repeat': lambda value, key: check_enum(value, key, CONDITION_REPEAT_MODES),
 }
 
 
@@ -377,6 +412,8 @@ def trigger_config_grammar(trigger_type: Optional[str] = None) -> Dict[str, Any]
         grammar[name] = {**shape(*keys), 'example': _EXAMPLES[name]}
 
     grammar['time']['weekday_tokens'] = list(WEEKDAY_TOKENS)
+    grammar['condition']['repeat_modes'] = list(CONDITION_REPEAT_MODES)
+    grammar['condition']['repeat_default'] = CONDITION_REPEAT_MODES[0]
 
     if trigger_type is None:
         return grammar

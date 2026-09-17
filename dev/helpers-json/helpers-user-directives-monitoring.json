@@ -33,7 +33,7 @@
           "description": "Project root; defaults to the session root"
         }
       ],
-      "purpose": "Read execution statistics from directive_executions joined to directive names and statuses, for one user directive or all of them. Includes a derived error_rate per row. This is how the AI sees what the user's automation did while no session was open — executions, successes, errors, average and maximum duration, and the last recorded error.",
+      "purpose": "Read execution statistics from directive_executions joined to directive names and statuses, for one user directive or all of them. Includes a derived error_rate per row. This is how the AI sees what the user's automation did while no session was open — executions, successes, errors, average and maximum duration, and the last recorded error. On a database at schema 1.3 or later, each row also carries skip_count, consecutive_skip_count, last_skip_time, last_skip_reason, condition_latched and last_condition_eval_time.",
       "error_handling": "Returns success=False with an explanatory error when user_directives.db is absent (a Use Case 1 project has no user directives). Directives that have never run still appear, with zero counts, via a LEFT JOIN.",
       "is_tool": true,
       "is_sub_helper": false,
@@ -122,9 +122,16 @@
           "required": false,
           "default": 0.5,
           "description": "Error rate at or above which a directive is reported degraded"
+        },
+        {
+          "name": "skip_threshold",
+          "type": "integer",
+          "required": false,
+          "default": 3,
+          "description": "Consecutive skipped occurrences at or above which a directive is reported skipping"
         }
       ],
-      "purpose": "Assess every user directive and report which need attention. Health states, in the precedence applied: 'error' (the directive's own status is error), 'overdue' (next_scheduled_time is in the past — the runner said when it would next fire and did not), 'degraded' (error rate at or above threshold), 'never_run' (active but never executed, so the runner may not be deployed), or 'ok'. Returns a per-directive verdict with a one-line explanation plus a summary count per state, designed to render as a single sentence at session start.",
+      "purpose": "Assess every user directive and report which need attention. The health states, in the order they are checked: 'error' (the directive's own status is error); 'overdue' (next_scheduled_time is in the past, meaning the runner said when it would next fire and did not); 'skipping' (consecutive_skip_count is at or above skip_threshold with no run since the last skip, meaning the runner is alive but keeps skipping occurrences, usually because the host is down at the scheduled time); 'degraded' (error rate at or above the threshold); 'never_run' (active but never executed; when dispatch errors exist, the detail says the runner is running but refusing or failing to dispatch, otherwise that the runner may not be deployed); or 'ok'. Returns a verdict per directive with a one-line explanation and the skip fields, plus a count per state, designed to render as a single sentence at session start.",
       "error_handling": "Returns success=False with an explanatory error when user_directives.db is absent. Classification itself is a pure function of the rows, the current time, and the threshold.",
       "is_tool": true,
       "is_sub_helper": false,
@@ -132,7 +139,8 @@
       "return_statements": [
         "If needs_attention is true, tell the user which directives and why before continuing with other work — these ran unattended and nobody has seen the outcome.",
         "'overdue' is the dead-runner signal: the directive's own scheduler declared a next run time and that moment has passed. Check that the generated runner is still deployed and running.",
-        "'never_run' on an active directive usually means implementation completed but the runner was never deployed or its scheduler was never registered.",
+        "'skipping' means the runner is alive but keeps skipping scheduled occurrences (see last_skip_reason). Missed occurrences are never caught up, so a skipping directive is not running at all - check whether the host is up at the scheduled time, or move the schedule.",
+        "'never_run' with zero errors usually means implementation completed but the runner was never deployed or its scheduler was never registered. With dispatch errors, the runner IS deployed and is refusing or failing before execution (denied, unmappable, misconfigured) - call get_recent_directive_errors.",
         "A directive with no next_scheduled_time can never be reported overdue. If its runner does not call set_next_scheduled_time when scheduling, silence is indistinguishable from health."
       ],
       "target_database": "user_directives",

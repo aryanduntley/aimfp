@@ -762,6 +762,35 @@ Rules that belong in every generated runner:
   overdue.
 - **Use `record_directive_error`** for failures *outside* a run — a trigger that
   misfired, a dependency that was missing, a scheduler that could not dispatch.
+- **Use `record_directive_skip`, not `record_directive_error`, for an occurrence
+  the runner deliberately does not run.** Missed time slots are skipped, never
+  caught up: a slot reached too late, or a `next_scheduled_time` that cannot be
+  read, is a skip. Call
+  `record_directive_skip(directive_id, reason, ROOT, next_scheduled_time=slot)`
+  with a short reason (`'missed_occurrence'`, `'unreadable_schedule'`) and the
+  next slot from `next_fire_time(after=now)`. It records the skip and declares
+  the slot in one write, without counting a run or an error, so
+  `user_directive_monitor` can report `skipping` rather than a false `ok`.
+- **Implement the condition latch.** A condition fires **once per rise** unless
+  its `trigger_config` has `"repeat": "while_true"`. The runner evaluates the
+  expression deterministically, never with `eval()` and never with a model, and
+  applies this table per directive:
+
+  | Evaluation this tick | Latch before | Dispatch? | Latch after |
+  |---|---|---|---|
+  | not evaluated (throttled by `evaluate_every_seconds`) | any | no | unchanged |
+  | false | any | no | false |
+  | true | false | **yes** (the rise) | true |
+  | true | true | no (unless `while_true`) | true |
+
+  The latch sets on the rise **even if authorization then denies the run**.
+  Otherwise a denied directive re-requests on every tick. Read the latch from
+  `DueDirective.condition_latched`. After every evaluation that actually ran,
+  persist it with `set_condition_state(directive_id, latched, ROOT,
+  evaluated_at=...)`. It survives a restart, and
+  `DueDirective.last_condition_eval_time` backs `evaluate_every_seconds`
+  throttling. Never call it for a throttled tick: not looking is not the
+  condition clearing.
 - **Never show `next_scheduled_time` to a user as their schedule.** It is naive
   *local* time, because `is_due` compares against a naive local now — so a
   directive declared as `{"kind": "daily", "at": "17:00", "timezone":

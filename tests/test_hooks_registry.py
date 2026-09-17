@@ -32,6 +32,10 @@ EXPECTED_HOOKS = {
     'record_directive_error',
     'set_next_scheduled_time',
     'hooks_available',
+    # Milestone 6: skips are visible to health, and the condition latch
+    # survives a runner restart.
+    'record_directive_skip',
+    'set_condition_state',
     # Milestone 5: AIMFP owns the trigger_config grammar and the schedule
     # arithmetic, so a runner asks AIMFP when a directive fires next instead
     # of hand-rolling calendar maths that drifts per project.

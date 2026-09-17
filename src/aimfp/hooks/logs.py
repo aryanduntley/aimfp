@@ -78,6 +78,44 @@ def build_execution_record(
     return record
 
 
+def build_skip_record(
+    directive_id: int,
+    directive_name: Optional[str],
+    reason: str,
+    skipped_at: str,
+    next_scheduled_time: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Pure: Build the JSON-lines record for one skipped occurrence.
+
+    Written to the execution log rather than the error log: a skip is part of
+    the directive's run history (it is the run that did not happen), and it is
+    not an error. outcome 'skipped' sits beside 'success' and 'error', so a
+    reader filtering on outcome sees the full sequence.
+
+    Args:
+        directive_id: Directive whose occurrence was skipped
+        directive_name: Directive name, when known
+        reason: Short classification, e.g. 'missed_occurrence'
+        skipped_at: ISO timestamp the skip was decided
+        next_scheduled_time: The slot the caller moved on to, when declared
+
+    Returns:
+        Dict ready to serialize as one JSON line
+    """
+    record = {
+        'directive_id': directive_id,
+        'directive_name': directive_name,
+        'event': 'skipped',
+        'outcome': 'skipped',
+        'reason': reason,
+        'skipped_at': skipped_at,
+    }
+    if next_scheduled_time:
+        record['next_scheduled_time'] = next_scheduled_time
+    return record
+
+
 def build_error_record(
     directive_id: int,
     error_type: str,

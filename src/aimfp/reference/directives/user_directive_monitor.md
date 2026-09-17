@@ -90,8 +90,9 @@ Health states, in the precedence the assessment applies:
 |---|---|
 | `error` | The directive's own status is `error` |
 | `overdue` | `next_scheduled_time` has passed — the dead-runner signal |
+| `skipping` | At least `skip_threshold` (default 3) consecutive skipped occurrences and no run since — the runner is alive but the host is not up at the scheduled time |
 | `degraded` | Error rate at or above the threshold (default 50%) |
-| `never_run` | Active but never executed — runner likely not deployed |
+| `never_run` | Active but never executed. With zero errors the runner is likely not deployed; with dispatch errors it **is** deployed and is refusing or failing to dispatch |
 | `ok` | Running normally |
 
 Precedence is deliberate and most-actionable-first: a directive already in error
@@ -114,13 +115,23 @@ a directive they authored.
 
 ### Step 3: `investigate_silence`
 
-*When a directive is `overdue` or `never_run`.*
+*When a directive is `overdue`, `skipping` or `never_run`.*
 
 - **`overdue`** — the runner said it would fire and did not. Check that it is
   deployed and its scheduler is running, using whatever mechanism the
   implementation chose. AIMFP cannot check this for you.
-- **`never_run`** — active but never executed. Implementation likely completed
-  while the runner was never deployed, or its schedule was never registered.
+- **`skipping`** — the runner is alive and keeps reaching the scheduled time
+  too late, so it skips the occurrence. Missed occurrences are never caught up,
+  so the automation has effectively stopped. `last_skip_reason` says why. The
+  usual cause is a host that is off or asleep at that hour: suggest moving the
+  schedule or keeping the host up. `skipping` never masks `overdue`, because a
+  skipping runner keeps moving the slot forward.
+- **`never_run`** — active but never executed. With zero errors, implementation
+  likely completed while the runner was never deployed, or its schedule was
+  never registered. When the detail lists dispatch errors, the runner **is**
+  running and refuses the directive before execution: denied authorization, an
+  unmappable action, or bad configuration. Call
+  `get_recent_directive_errors(directive_id=<id>)`.
 
 ### Step 4: `report_statistics`
 
@@ -198,6 +209,11 @@ indistinguishable from health.
 
 **Non-zero `malformed_lines`.** Usually one run interrupted mid-write, which is
 normal. Many of them suggest something other than AIMFP is writing to that log.
+
+**Skips are not errors.** `record_directive_skip` raises `skip_count` (never
+reset) and `consecutive_skip_count` (reset by every recorded run), and leaves
+the execution and error counts alone. Both appear in
+`get_directive_execution_stats` and in each health verdict.
 
 **Errors exceeding executions.** Expected. `record_directive_error` records
 failures that happened *outside* a run — a trigger that misfired, a missing

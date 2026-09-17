@@ -25,7 +25,10 @@ Load via: get_supportive_context(variant='case2')
 
   time triggers are a union on "kind": interval{seconds} | daily{at} |
   weekly{at,weekdays} | monthly{at,days}; all but interval take optional timezone.
-  event{event,source?} | condition{expression,evaluate_every_seconds?} | manual{}.
+  event{event,source?} | condition{expression,evaluate_every_seconds?,repeat?} | manual{}.
+  condition repeat: absent/"on_rise" = fire ONCE when it becomes true, re-arm when
+  false (default). "while_true" = fire every true evaluation — add it ONLY when
+  the user asks for repetition.
   "at" is 24h HH:MM zero-padded. UNKNOWN KEYS ARE ERRORS.
 
   action_config is an envelope per action_type: api_call{endpoint,api?,method?,
@@ -45,6 +48,9 @@ Load via: get_supportive_context(variant='case2')
   makes a user "fix" a config that was already correct.
   A dispatch loop MUST branch on trigger kind: is_due returns event/condition/
   manual on every call, so an unbranched loop runs them forever.
+  Conditions: the runner keeps the latch via set_condition_state (read back on
+  DueDirective.condition_latched). Skipped time slots (too late, unreadable
+  schedule) → record_directive_skip, never record_directive_error.
 
 4. PREFERENCES REFERENCE
 

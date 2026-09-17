@@ -359,7 +359,8 @@ fails silently by never firing, so both are checked before they are stored.
 {"kind": "monthly",  "at": "09:00", "days": [1, 15]}
 
 {"event": "stove_on", "source": "home_assistant"}              // event
-{"expression": "cpu > 90", "evaluate_every_seconds": 60}       // condition
+{"expression": "cpu > 90", "evaluate_every_seconds": 60}       // condition (fires once per rise)
+{"expression": "cpu > 90", "repeat": "while_true"}             // condition (fires every true check)
 {}                                                             // manual
 ```
 
@@ -395,6 +396,15 @@ machine in Los Angeles. Nothing is lost — the declared zone stays in
 `trigger_config` — but the column is a comparison value, not a rendering. Show
 a user their schedule from `trigger_config`, never from `next_scheduled_time`,
 or they will "fix" a config that was already correct.
+
+AIMFP never evaluates a condition, but the grammar says how often a held one
+fires. By default a condition fires **once when it becomes true** and re-arms
+when an evaluation finds it false; `"repeat": "while_true"` fires on every true
+evaluation. The runner keeps that latch with `set_condition_state`, so a restart
+does not re-fire a condition that is still true. A time slot the runner reaches
+too late is **skipped, never caught up**, and recorded with
+`record_directive_skip`. A skip counts as neither a run nor an error, and a
+directive that keeps skipping is reported `skipping` rather than a false `ok`.
 
 The AI validates configs with the `validate_trigger_config` and
 `validate_action_config` tools, which return the expected shape alongside any
@@ -802,7 +812,7 @@ Manage AI behavior customization and learning:
 - Execution driven by your own scheduler, recorded through the AIMFP hook library
 - File-based logging (30-day execution logs, 90-day error logs) written by AIMFP,
   so every automation project's records have the same shape
-- Health reporting at session start: overdue, degraded, never-run, or in error
+- Health reporting at session start: overdue, skipping, degraded, never-run, or in error
 - Dependency management with user confirmation
 
 **Example Directive Definition**:

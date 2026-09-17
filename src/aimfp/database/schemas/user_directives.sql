@@ -118,6 +118,22 @@ CREATE TABLE IF NOT EXISTS directive_executions (
     avg_execution_time_ms REAL,                     -- Average execution time in milliseconds
     max_execution_time_ms REAL,
 
+    -- Skipped occurrences (record_directive_skip). A skip is neither an
+    -- execution nor an error: a time slot the runner reached too late, or a
+    -- schedule it could not read. Recorded so that "silently did nothing" is
+    -- distinguishable from "ran fine". consecutive_skip_count resets on every
+    -- recorded execution; skip_count never resets.
+    skip_count INTEGER DEFAULT 0,
+    consecutive_skip_count INTEGER DEFAULT 0,
+    last_skip_time DATETIME,
+    last_skip_reason TEXT,                          -- e.g., 'missed_occurrence', 'unreadable_schedule'
+
+    -- Condition trigger state (set_condition_state). The runner evaluates the
+    -- expression; AIMFP persists the edge-trigger latch so a condition that is
+    -- still true does not fire again after a runner restart.
+    condition_latched INTEGER DEFAULT 0,            -- 1 once fired on a rise, 0 after a false evaluation
+    last_condition_eval_time DATETIME,              -- backs evaluate_every_seconds throttling across restarts
+
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 
@@ -458,4 +474,4 @@ CREATE TABLE IF NOT EXISTS schema_version (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.2');
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.3');

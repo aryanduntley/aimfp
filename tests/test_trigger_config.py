@@ -14,7 +14,9 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
+from aimfp.hooks.directives import is_due
 from aimfp.hooks.triggers import (
+    CONDITION_REPEAT_MODES,
     TIME_KINDS,
     TRIGGER_TYPES,
     WEEKDAY_TOKENS,
@@ -370,3 +372,59 @@ def test_triggers_module_does_not_import_watchdog():
         env={**os.environ, "PYTHONPATH": src},
     )
     assert result.returncode == 0, result.stderr.decode()
+
+
+# ============================================================================
+# Condition repeat semantics
+# ============================================================================
+
+@pytest.mark.parametrize("mode", ["on_rise", "while_true"])
+def test_condition_accepts_each_repeat_mode(mode):
+    result = validate_trigger_config(
+        "condition",
+        {"expression": "cpu_percent > 90", "evaluate_every_seconds": 60, "repeat": mode},
+    )
+    assert result.valid, result.errors
+
+
+def test_condition_without_repeat_is_still_valid():
+    result = validate_trigger_config("condition", {"expression": "cpu_percent > 90"})
+    assert result.valid
+    assert "repeat" not in result.config
+
+
+@pytest.mark.parametrize("bad", ["always", "WHILE_TRUE", "", True, 1, None, ["on_rise"]])
+def test_condition_rejects_bad_repeat_with_field_level_error(bad):
+    result = validate_trigger_config(
+        "condition", {"expression": "x", "repeat": bad})
+    assert not result.valid
+    assert len(result.errors) == 1
+    assert result.errors[0].startswith("trigger_config.repeat:")
+
+
+def test_repeat_is_not_accepted_on_other_trigger_types():
+    result = validate_trigger_config(
+        "event", {"event": "stove_on", "repeat": "while_true"})
+    assert not result.valid
+    assert any("trigger_config.repeat" in e for e in result.errors)
+
+
+def test_grammar_publishes_repeat_modes_and_default():
+    condition = trigger_config_grammar("condition")["condition"]
+    assert "repeat" in condition["optional"]
+    assert condition["repeat_modes"] == list(CONDITION_REPEAT_MODES)
+    assert condition["repeat_default"] == "on_rise"
+    assert CONDITION_REPEAT_MODES == ("on_rise", "while_true")
+
+
+def test_repeat_modes_exported_from_hooks_package():
+    import aimfp.hooks as hooks
+    assert hooks.CONDITION_REPEAT_MODES is CONDITION_REPEAT_MODES
+    assert "CONDITION_REPEAT_MODES" in hooks.__all__
+
+
+def test_is_due_still_returns_every_condition_directive():
+    # Repeat semantics are applied by the caller after evaluation; is_due's
+    # signature and verdict for conditions are unchanged.
+    assert is_due("condition", None, "2026-09-16T12:00:00")
+    assert is_due("condition", "2099-01-01T00:00:00", "2026-09-16T12:00:00")

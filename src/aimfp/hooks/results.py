@@ -35,6 +35,11 @@ class DueDirective:
     Carries trigger config, action config, and the implementation file path
     recorded at implement time, so the runner can dispatch without a second
     query back into the database.
+
+    condition_latched and last_condition_eval_time are the persisted
+    edge-trigger state for condition directives (see set_condition_state).
+    They are False/None for every other trigger type, and on a
+    user_directives.db that has not been migrated to schema 1.3 yet.
     """
     directive_id: int
     name: str
@@ -45,6 +50,8 @@ class DueDirective:
     implementation_file_path: Optional[str] = None
     next_scheduled_time: Optional[str] = None
     last_execution_time: Optional[str] = None
+    condition_latched: bool = False
+    last_condition_eval_time: Optional[str] = None
 
 
 @dataclass(frozen=True)

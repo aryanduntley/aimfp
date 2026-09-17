@@ -18,8 +18,14 @@ instead by next_scheduled_time falling into the past - the runner declares when
 it next expects to fire, and silence past that moment IS the evidence. That is
 why the PID and APScheduler steps were removed rather than implemented.
 
+SKIPS ARE THE OTHER SILENCE. A runner that is alive but never at the
+scheduled moment keeps moving next_scheduled_time forward, so it is never
+overdue, and a skip is neither an execution nor an error. The runner reports
+each one through record_directive_skip, and consecutive_skip_count - reset by
+every recorded execution - is what makes a directive 'skipping'.
+
 All classification logic is pure: assess_directive_health takes rows, a
-timestamp, and a threshold, so every verdict is testable without a database or
+timestamp, and thresholds, so every verdict is testable without a database or
 a clock.
 """
 
@@ -32,6 +38,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from ...database.connection import (
     _close_connection,
+    _get_table_info,
     _open_connection,
     database_exists,
     get_cached_project_root,
@@ -46,12 +53,20 @@ from ..utils import get_return_statements
 # is not better news for being on schedule.
 HEALTH_ERROR = 'error'
 HEALTH_OVERDUE = 'overdue'
+HEALTH_SKIPPING = 'skipping'
 HEALTH_DEGRADED = 'degraded'
 HEALTH_NEVER_RUN = 'never_run'
 HEALTH_OK = 'ok'
 
 HEALTH_ORDER = (
-    HEALTH_ERROR, HEALTH_OVERDUE, HEALTH_DEGRADED, HEALTH_NEVER_RUN, HEALTH_OK)
+    HEALTH_ERROR, HEALTH_OVERDUE, HEALTH_SKIPPING, HEALTH_DEGRADED,
+    HEALTH_NEVER_RUN, HEALTH_OK)
+
+# Optional directive_executions columns (user_directives schema 1.3). Read
+# only when present, so monitoring works on a database not yet migrated.
+_OPTIONAL_STAT_COLUMNS = (
+    'skip_count', 'consecutive_skip_count', 'last_skip_time', 'last_skip_reason',
+    'condition_latched', 'last_condition_eval_time')
 
 _NO_DATABASE = (
     "No user_directives.db for this project. Directive monitoring is Use Case 2 "
@@ -79,6 +94,10 @@ class DirectiveHealth:
     overdue_seconds: Optional[float] = None
     last_error_type: Optional[str] = None
     last_error_message: Optional[str] = None
+    skip_count: int = 0
+    consecutive_skip_count: int = 0
+    last_skip_time: Optional[str] = None
+    last_skip_reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -150,11 +169,12 @@ def assess_directive_health(
     rows: Tuple[Dict[str, Any], ...],
     now: str,
     error_rate_threshold: float = 0.5,
+    skip_threshold: int = 3,
 ) -> Tuple[DirectiveHealth, ...]:
     """
     Pure: Classify every directive's health from observed rows.
 
-    Takes `now` and the threshold as parameters, never reading a clock or a
+    Takes `now` and the thresholds as parameters, never reading a clock or a
     database, so every classification is testable directly.
 
     Args:
@@ -162,18 +182,22 @@ def assess_directive_health(
         now: ISO timestamp to evaluate overdue-ness against
         error_rate_threshold: Error rate at or above which a directive is
             reported degraded
+        skip_threshold: Consecutive skips at or above which a directive is
+            reported skipping
 
     Returns:
         One DirectiveHealth per row, in the order given
     """
     return tuple(
-        _classify_one(row, now, error_rate_threshold) for row in rows)
+        _classify_one(row, now, error_rate_threshold, skip_threshold)
+        for row in rows)
 
 
 def _classify_one(
     row: Dict[str, Any],
     now: str,
     error_rate_threshold: float,
+    skip_threshold: int,
 ) -> DirectiveHealth:
     """Pure: Apply the health precedence to one row."""
     total = row.get('total_executions') or 0
@@ -181,14 +205,26 @@ def _classify_one(
     rate = compute_error_rate(total, errors)
     overdue_seconds = _overdue_seconds(row.get('next_scheduled_time'), now)
     status = row.get('status') or 'unknown'
+    consecutive_skips = row.get('consecutive_skip_count') or 0
 
     health, detail = _verdict(
         status=status,
         total=total,
+        errors=errors,
         rate=rate,
         overdue_seconds=overdue_seconds,
         threshold=error_rate_threshold,
+        last_error_type=row.get('last_error_type'),
         last_error_message=row.get('last_error_message'),
+        skipping=_is_skipping(
+            consecutive_skips,
+            row.get('last_skip_time'),
+            row.get('last_execution_time'),
+            total,
+            skip_threshold,
+        ),
+        consecutive_skips=consecutive_skips,
+        last_skip_reason=row.get('last_skip_reason'),
     )
 
     return DirectiveHealth(
@@ -205,16 +241,51 @@ def _classify_one(
         overdue_seconds=overdue_seconds,
         last_error_type=row.get('last_error_type'),
         last_error_message=row.get('last_error_message'),
+        skip_count=row.get('skip_count') or 0,
+        consecutive_skip_count=consecutive_skips,
+        last_skip_time=row.get('last_skip_time'),
+        last_skip_reason=row.get('last_skip_reason'),
     )
+
+
+def _is_skipping(
+    consecutive_skips: int,
+    last_skip_time: Optional[str],
+    last_execution_time: Optional[str],
+    total: int,
+    skip_threshold: int,
+) -> bool:
+    """
+    Pure: True when skips are happening and runs are not.
+
+    consecutive_skips is already reset by every recorded execution, so the
+    timestamp comparison is a second guard for rows written by a runner that
+    recorded executions some other way. An unparseable last_skip_time counts
+    as newer: the counter is the primary evidence.
+    """
+    if consecutive_skips < max(skip_threshold, 1):
+        return False
+    if total <= 0 or not last_execution_time:
+        return True
+    skipped = _parse_iso(last_skip_time)
+    executed = _parse_iso(last_execution_time)
+    if skipped is None or executed is None:
+        return True
+    return skipped > executed
 
 
 def _verdict(
     status: str,
     total: int,
+    errors: int,
     rate: float,
     overdue_seconds: Optional[float],
     threshold: float,
+    last_error_type: Optional[str],
     last_error_message: Optional[str],
+    skipping: bool = False,
+    consecutive_skips: int = 0,
+    last_skip_reason: Optional[str] = None,
 ) -> Tuple[str, str]:
     """
     Pure: Choose the health state and its one-line explanation.
@@ -232,12 +303,29 @@ def _verdict(
             f"already; its runner may have died"
         )
 
+    if skipping:
+        since = "since its last run" if total > 0 else "and has never run"
+        reason = last_skip_reason or 'no reason recorded'
+        return HEALTH_SKIPPING, (
+            f"skipped {consecutive_skips} occurrences {since} (last: {reason}) - "
+            f"the host is probably not running at the scheduled time"
+        )
+
     if total > 0 and rate >= threshold:
         return HEALTH_DEGRADED, (
             f"error rate {rate:.0%} at or above the {threshold:.0%} threshold"
         )
 
     if status == 'active' and total <= 0:
+        if errors > 0:
+            last = ': '.join(
+                part for part in (last_error_type, last_error_message) if part)
+            plural = 'error' if errors == 1 else 'errors'
+            return HEALTH_NEVER_RUN, (
+                f"active, never executed, {errors} dispatch {plural} "
+                f"(last: {last or 'no detail recorded'}) - the runner is running "
+                f"but refusing or failing to dispatch it"
+            )
         return HEALTH_NEVER_RUN, (
             "active but never executed - the runner may not be deployed"
         )
@@ -399,6 +487,7 @@ def get_recent_directive_errors(
 def check_directive_health(
     project_root: Optional[str] = None,
     error_rate_threshold: float = 0.5,
+    skip_threshold: int = 3,
 ) -> HealthResult:
     """
     Assess every directive and report which need attention.
@@ -411,6 +500,8 @@ def check_directive_health(
         project_root: Project root, defaults to the session root
         error_rate_threshold: Error rate at or above which a directive is
             reported degraded
+        skip_threshold: Consecutive skipped occurrences at or above which a
+            directive is reported skipping
 
     Returns:
         HealthResult. `summary` is designed to render as one sentence at
@@ -427,7 +518,7 @@ def check_directive_health(
         return HealthResult(success=False, error=str(exc))
 
     verdicts = assess_directive_health(
-        rows, _now_iso(), error_rate_threshold)
+        rows, _now_iso(), error_rate_threshold, skip_threshold)
     summary = summarize_health(verdicts)
 
     return HealthResult(
@@ -457,18 +548,25 @@ def _effect_read_stats(
 
     A LEFT JOIN, so a directive that has never run still appears with null
     counts - which is exactly the never_run case the health check reports.
+
+    The schema 1.3 columns are selected only when the table has them; on an
+    older database they are simply absent from the rows, and the pure
+    classifiers treat absent as zero/None.
     """
     conn = None
     try:
         conn = _open_connection(db_path)
-        sql = """
+        present = {c['name'] for c in _get_table_info(conn, 'directive_executions')}
+        optional = ''.join(
+            f", de.{name}" for name in _OPTIONAL_STAT_COLUMNS if name in present)
+        sql = f"""
             SELECT ud.id, ud.name, ud.status, ud.trigger_type,
                    COALESCE(de.total_executions, 0) AS total_executions,
                    COALESCE(de.success_count, 0)    AS success_count,
                    COALESCE(de.error_count, 0)      AS error_count,
                    de.last_execution_time, de.next_scheduled_time,
                    de.last_error_time, de.last_error_type, de.last_error_message,
-                   de.avg_execution_time_ms, de.max_execution_time_ms
+                   de.avg_execution_time_ms, de.max_execution_time_ms{optional}
             FROM user_directives ud
             LEFT JOIN directive_executions de ON de.directive_id = ud.id
         """

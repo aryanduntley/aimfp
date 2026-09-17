@@ -39,7 +39,7 @@
           "description": "ISO timestamp to evaluate due-ness against. Defaults to the current time; a parameter so schedules are testable without moving the system clock."
         }
       ],
-      "purpose": "HOOK. Return the active directives the caller's runner may execute now. Time triggers are filtered by next_scheduled_time against `now`; event, condition and manual triggers are returned unfiltered because only the caller can judge them. Each DueDirective carries trigger_config, action_type, action_config and implementation_file_path, so the runner dispatches without a second query.",
+      "purpose": "HOOK. Return the active directives the caller's runner may execute now. Time triggers are filtered by next_scheduled_time against `now`; event, condition and manual triggers are returned unfiltered because only the caller can judge them. Each DueDirective carries trigger_config, action_type, action_config and implementation_file_path, so the runner dispatches without a second query. Each DueDirective also carries condition_latched and last_condition_eval_time, the persisted edge-trigger state for condition directives (False/None on a database not yet migrated to schema 1.3).",
       "error_handling": "Returns DueDirectivesResult(success=False) with an explanatory error when user_directives.db is absent \u2014 a Use Case 1 project must be askable without guarding. Never raises.",
       "is_tool": false,
       "is_sub_helper": false,
@@ -218,6 +218,88 @@
       ],
       "purpose": "HOOK. Let the caller's scheduler declare when it next expects to fire. This is the field that makes overdue detection possible at all \u2014 without it AIMFP cannot distinguish a directive idle by design from one whose runner has died, which is how the monitoring tools report a dead service without ever knowing a process id. Generated runners should call this every time they schedule the next run.",
       "error_handling": "Returns HookMutationResult(success=False) with an error when user_directives.db is absent. Never raises.",
+      "is_tool": false,
+      "is_sub_helper": false,
+      "is_hook": true,
+      "return_statements": [],
+      "target_database": "user_directives"
+    },
+    {
+      "name": "record_directive_skip",
+      "file_path": "hooks/directives.py",
+      "parameters": [
+        {
+          "name": "directive_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "Directive whose occurrence was skipped"
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Short classification, e.g. 'missed_occurrence', 'unreadable_schedule'"
+        },
+        {
+          "name": "project_root",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Absolute path to the project root"
+        },
+        {
+          "name": "next_scheduled_time",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "ISO timestamp of the next slot. Pass it to record the skip and declare the slot in one write."
+        }
+      ],
+      "purpose": "HOOK. Record an occurrence the runner deliberately did not run, such as a time slot it reached too late or a schedule it could not read. Missed occurrences are skipped, never caught up, but the skip must be visible so that 'silently did nothing' can be told apart from 'ran fine'. Increments skip_count and consecutive_skip_count, sets last_skip_time and last_skip_reason, and writes one outcome 'skipped' line to the execution log. It NEVER touches total_executions, success_count or error_count, because a skip is neither a run nor an error, so use this rather than record_directive_error. It never advances the schedule on its own; pass next_scheduled_time to declare the next slot in the same write. The next recorded execution resets consecutive_skip_count, and check_directive_health reads that counter to report 'skipping'.",
+      "error_handling": "Returns HookMutationResult(success=False) with an error when user_directives.db is absent, when it predates schema 1.3 (run migrate_databases), or when reason is blank. Never raises.",
+      "is_tool": false,
+      "is_sub_helper": false,
+      "is_hook": true,
+      "return_statements": [],
+      "target_database": "user_directives"
+    },
+    {
+      "name": "set_condition_state",
+      "file_path": "hooks/directives.py",
+      "parameters": [
+        {
+          "name": "directive_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "Condition directive just evaluated"
+        },
+        {
+          "name": "latched",
+          "type": "boolean",
+          "required": true,
+          "default": null,
+          "description": "The latch after this evaluation: false when the condition evaluated false, true when it evaluated true (including a rise whose dispatch authorization denied)"
+        },
+        {
+          "name": "project_root",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Absolute path to the project root"
+        },
+        {
+          "name": "evaluated_at",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "ISO timestamp of the evaluation; defaults to now. A tz-aware value is stored as naive local time."
+        }
+      ],
+      "purpose": "HOOK. Persist a condition directive's edge-trigger latch after an evaluation, so a condition that is still true does not fire again after a runner restart. The runner evaluates the expression and AIMFP stores only the outcome. Call it after every evaluation that actually ran, never for a tick throttled by evaluate_every_seconds. get_due_directives returns the state on DueDirective.condition_latched and DueDirective.last_condition_eval_time. By default a condition fires once per rise; only trigger_config repeat='while_true' fires on every true evaluation (see trigger_config_grammar).",
+      "error_handling": "Returns HookMutationResult(success=False) with an error when user_directives.db is absent, when it predates schema 1.3 (run migrate_databases), when latched is not a bool, or when evaluated_at is not an ISO timestamp. Never raises.",
       "is_tool": false,
       "is_sub_helper": false,
       "is_hook": true,
