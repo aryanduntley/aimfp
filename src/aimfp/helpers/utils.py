@@ -43,6 +43,7 @@ from ..database.connection import (
     clear_project_root_cache,
     _discover_project_root,
     # Connection management
+    DEFAULT_BUSY_TIMEOUT,
     _open_connection,
     _close_connection,
     _open_core_connection,
@@ -96,6 +97,7 @@ __all__ = [
     'clear_project_root_cache',
     '_discover_project_root',
     # Connection management
+    'DEFAULT_BUSY_TIMEOUT',
     '_open_connection',
     '_close_connection',
     '_open_core_connection',

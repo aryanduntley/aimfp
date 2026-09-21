@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
 
 from ._common import (
+    _open_connection,
     _open_project_connection,
     _open_directives_connection,
     get_project_db_path,
@@ -69,18 +70,29 @@ def _reconcile_stored_project_root(project_root: str) -> None:
         db_path = get_project_db_path(project_root)
         if not database_exists(db_path):
             return
-        conn = sqlite3.connect(db_path)
+        # Read on a read-only connection first. The common case is a match,
+        # and a no-op reconciliation must leave the database byte-identical —
+        # the read-write opener writes journal_mode into the file header, which
+        # would mutate a database this call has decided not to change.
+        probe = _open_connection(db_path, readonly=True)
         try:
-            row = conn.execute(
+            row = probe.execute(
                 "SELECT value FROM infrastructure WHERE type = 'project_root'"
             ).fetchone()
             stored = row[0] if row else None
-            if stored != project_root:
-                conn.execute(
-                    "UPDATE infrastructure SET value = ? WHERE type = 'project_root'",
-                    (project_root,)
-                )
-                conn.commit()
+        finally:
+            probe.close()
+
+        if stored == project_root:
+            return
+
+        conn = _open_connection(db_path)
+        try:
+            conn.execute(
+                "UPDATE infrastructure SET value = ? WHERE type = 'project_root'",
+                (project_root,)
+            )
+            conn.commit()
         finally:
             conn.close()
     except Exception:
@@ -213,8 +225,7 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
         project_schema_path = _get_schema_path("project.sql")
         infra_sql_path = _get_initialization_path("standard_infrastructure.sql")
 
-        conn = sqlite3.connect(project_db_path)
-        conn.row_factory = sqlite3.Row
+        conn = _open_connection(project_db_path)
         try:
             # Load and execute project schema
             with open(project_schema_path, 'r') as f:
@@ -252,8 +263,7 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
         step = 5
         prefs_schema_path = _get_schema_path("user_preferences.sql")
 
-        conn = sqlite3.connect(prefs_db_path)
-        conn.row_factory = sqlite3.Row
+        conn = _open_connection(prefs_db_path)
         try:
             with open(prefs_schema_path, 'r') as f:
                 schema_sql = f.read()

@@ -8,14 +8,20 @@ All MCP server code can import from here:
     from aimfp.database.state_operations import set_var, get_var, delete_var
 
 This is the MCP server's equivalent of the per-project state_operations
-template that AI creates for user projects.
+template that AI creates for user projects — but note the difference in scope.
+mcp_runtime.db lives in the INSTALLED PACKAGE directory, so a single file is
+shared by every session on every project, which makes it the most contended
+database AIMFP owns. Its connections therefore go through _open_connection
+(WAL + explicit busy timeout) like any other real database. The two sibling
+files named state_operations.py do not: .state/ is per-project and
+templates/state_db/ is a template that AIMFP never executes.
 """
 
 import json
 import sqlite3
 from typing import Optional, Any
 
-from .connection import Result, get_mcp_runtime_db_path
+from .connection import Result, get_mcp_runtime_db_path, _open_connection
 
 
 # ============================================================================
@@ -34,7 +40,7 @@ def set_var(var_name: str, value: Any, var_type: Optional[str] = None) -> Result
     Returns:
         Result with success status
     """
-    conn = sqlite3.connect(get_mcp_runtime_db_path())
+    conn = _open_connection(get_mcp_runtime_db_path())
     try:
         if isinstance(value, (dict, list)):
             serialized_value = json.dumps(value)
@@ -72,7 +78,7 @@ def get_var(var_name: str) -> Result:
     Returns:
         Result with deserialized value in data field, or error
     """
-    conn = sqlite3.connect(get_mcp_runtime_db_path())
+    conn = _open_connection(get_mcp_runtime_db_path())
     try:
         row = conn.execute(
             "SELECT var_value, var_type FROM variables WHERE var_name=?",
@@ -110,7 +116,7 @@ def delete_var(var_name: str) -> Result:
     Returns:
         Result with success status
     """
-    conn = sqlite3.connect(get_mcp_runtime_db_path())
+    conn = _open_connection(get_mcp_runtime_db_path())
     try:
         cursor = conn.execute("DELETE FROM variables WHERE var_name=?", (var_name,))
         conn.commit()
@@ -164,7 +170,7 @@ def list_vars(var_type: Optional[str] = None) -> Result:
     Returns:
         Result with list of variable names in data field
     """
-    conn = sqlite3.connect(get_mcp_runtime_db_path())
+    conn = _open_connection(get_mcp_runtime_db_path())
     try:
         if var_type:
             rows = conn.execute(

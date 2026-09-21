@@ -1066,6 +1066,52 @@ def sync_directives():
 
     conn.close()
 
+    finalize_shipped_db(DB_PATH)
+
+
+def finalize_shipped_db(db_path: str) -> None:
+    """Take the shipped database out of WAL mode, and prove it.
+
+    aimfp_core.db is read-only at runtime and ships inside the wheel. WAL is
+    recorded in the database file HEADER, so SQLite insists on creating the
+    -shm sidecar before any pragma runs — and on a read-only install
+    (root-owned site-packages, a read-only container layer) that fails the OPEN
+    outright rather than producing a lock error. Skipping pragmas at open time
+    cannot help; only rollback mode or immutable=1 can. We do both: the runtime
+    opens core.db immutable, and the artifact itself ships in rollback mode so
+    it is correct for any reader, including ones that are not AIMFP.
+
+    Sidecars are removed rather than left behind because the wheel must not
+    carry them (they are gitignored, and a stale -wal beside a rollback-mode
+    database is at best confusing).
+    """
+    print("\n📦 Finalizing shipped database...")
+
+    conn = sqlite3.connect(db_path)
+    try:
+        mode = conn.execute("PRAGMA journal_mode = DELETE").fetchone()[0]
+    finally:
+        conn.close()
+
+    for suffix in ("-wal", "-shm"):
+        sidecar = db_path + suffix
+        if os.path.exists(sidecar):
+            os.remove(sidecar)
+            print(f"   ✓ Removed {os.path.basename(sidecar)}")
+
+    # Byte 18 of the header is the file-format write version: 1 = rollback,
+    # 2 = WAL. Assert against the file rather than trusting the pragma's echo.
+    with open(db_path, "rb") as f:
+        header_byte = f.read(20)[18]
+
+    if mode.lower() != "delete" or header_byte != 1:
+        raise RuntimeError(
+            f"Shipped DB is still WAL (journal_mode={mode!r}, header byte 18="
+            f"{header_byte}). It would fail to open on a read-only install."
+        )
+
+    print(f"   ✓ journal_mode={mode}, header byte 18={header_byte} (rollback)")
+
 
 # ===================================
 # INTEGRITY VALIDATION LAYER

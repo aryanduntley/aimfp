@@ -25,6 +25,7 @@ from typing import Dict, Final
 
 # Import from utils.py (which re-exports from database/connection.py)
 from ..utils import (
+    DEFAULT_BUSY_TIMEOUT,
     _open_connection,
     _close_connection,
     get_core_db_path,
@@ -61,6 +62,7 @@ from ..utils import (
 # Re-export for convenience — orchestrator files import from _common only
 __all__ = [
     # Global utilities (from database/connection.py via utils.py)
+    'DEFAULT_BUSY_TIMEOUT',
     '_open_connection',
     '_close_connection',
     'get_core_db_path',

@@ -33,6 +33,7 @@ import os
 import re
 import sqlite3
 import subprocess
+from urllib.parse import quote
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Tuple, Optional, List, Dict, Any, Final
@@ -49,6 +50,16 @@ PROJECT_DB_NAME: Final[str] = "project.db"
 USER_PREFERENCES_DB_NAME: Final[str] = "user_preferences.db"
 USER_DIRECTIVES_DB_NAME: Final[str] = "user_directives.db"
 MCP_RUNTIME_DB_NAME: Final[str] = "mcp_runtime.db"
+
+# Busy timeout for every connection, in seconds. CPython's implicit default is
+# 5.0; this is not a throughput setting. A 1000-row insert transaction against a
+# real project.db measures ~0.003s, so contention DURATION is never what fails —
+# what fails is a writer stalled mid-transaction (suspend/resume, IO storm) while
+# a second process waits. 30s is ~10,000x the measured write and still short
+# enough that a genuine deadlock surfaces as a debuggable "database is locked"
+# inside an MCP client's patience window, rather than hanging the tool call.
+# It costs nothing when uncontended: the busy handler only runs when blocked.
+DEFAULT_BUSY_TIMEOUT: Final[float] = 30.0
 
 
 # ============================================================================
@@ -261,22 +272,76 @@ def database_exists(db_path: str) -> bool:
 # Connection Management
 # ============================================================================
 
-def _open_connection(db_path: str) -> sqlite3.Connection:
+def _open_connection(
+    db_path: str,
+    *,
+    timeout: float = DEFAULT_BUSY_TIMEOUT,
+    readonly: bool = False,
+    immutable: bool = False,
+) -> sqlite3.Connection:
     """
     Effect: Open database connection with row factory and performance pragmas.
 
     Row factory enables dict-like access to columns by name.
+
     Pragmas applied:
-        - WAL journal mode: better concurrent read/write performance
-        - synchronous=NORMAL: safe with WAL, faster than FULL
-        - temp_store=memory: temp tables in RAM instead of disk
-        - cache_size=10000: ~40MB page cache (10K × 4KB pages)
-        - foreign_keys=ON: enforce referential integrity
+        - WAL journal mode: better concurrent read/write performance.
+          PERSISTENT — this one is written into the database file header, and
+          is the only pragma here that mutates the file. Skipped when readonly.
+        - synchronous=NORMAL: safe with WAL, faster than FULL (per-connection)
+        - temp_store=memory: temp tables in RAM instead of disk (per-connection)
+        - cache_size=10000: ~40MB page cache, 10K × 4KB pages (per-connection)
+        - foreign_keys=ON: enforce referential integrity (per-connection)
+
+    The timeout is passed to sqlite3.connect rather than issued as a later
+    PRAGMA busy_timeout, because connect() installs the busy handler before any
+    pragma executes — including the journal_mode write, which itself needs a
+    lock.
+
+    readonly=True opens the file mode=ro and skips the journal_mode write, so
+    reading a database never reconfigures it. Use it for probes that inspect a
+    database they are not responsible for — notably a schema-version check on a
+    database that has not been migrated yet, which must not rewrite the header
+    of the thing it is only looking at.
+
+    readonly=True DOES NOT make a WAL-mode database openable on a read-only
+    filesystem. WAL is recorded in the file header, so SQLite demands the -shm
+    sidecar before any pragma runs and the open fails outright; skipping the
+    pragma is too late to help. That case needs immutable.
+
+    immutable=True implies readonly and additionally promises SQLite the file
+    cannot change while open, so it skips the -shm sidecar entirely and reads
+    the database with no locking at all. That is the ONLY way to open a
+    WAL-mode database on a read-only filesystem, and it is how aimfp_core.db is
+    opened: core.db ships inside the wheel and genuinely is immutable at
+    runtime. NEVER pass it for a database anything might write — the promise is
+    not checked, and a broken one yields stale or torn reads rather than an
+    error. Attached databases do NOT inherit it (verified), so ATTACHing a live
+    database to an immutable connection still reads fresh data.
+
     Caller is responsible for closing the connection.
+
+    Args:
+        db_path: Path to the database file
+        timeout: Busy timeout in seconds (see DEFAULT_BUSY_TIMEOUT)
+        readonly: Open mode=ro and leave the database's journal mode alone
+        immutable: Open mode=ro&immutable=1 — read-only AND promised unchanging
+
+    Returns:
+        Open connection with sqlite3.Row row factory
     """
-    conn = sqlite3.connect(db_path)
+    read_only = readonly or immutable
+    if read_only:
+        flags = "mode=ro&immutable=1" if immutable else "mode=ro"
+        conn = sqlite3.connect(
+            f"file:{quote(db_path)}?{flags}", uri=True, timeout=timeout
+        )
+    else:
+        conn = sqlite3.connect(db_path, timeout=timeout)
+
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
+    if not read_only:
+        conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA temp_store = MEMORY")
     conn.execute("PRAGMA cache_size = 10000")
@@ -303,7 +368,12 @@ def _open_core_connection() -> sqlite3.Connection:
     db_path = get_core_db_path()
     if not database_exists(db_path):
         raise FileNotFoundError(f"Core database not found: {db_path}")
-    return _open_connection(db_path)
+    # immutable: core.db ships in the wheel, is never written at runtime, and
+    # may sit on a read-only filesystem (root-owned site-packages, a read-only
+    # container layer). Without this, a WAL-mode core.db fails to OPEN there —
+    # not a lock error, a hard open failure — because SQLite needs the -shm
+    # sidecar before any pragma runs.
+    return _open_connection(db_path, immutable=True)
 
 
 def _open_project_connection(project_root: str) -> sqlite3.Connection:
@@ -529,7 +599,10 @@ def get_return_statements(helper_name: str) -> Tuple[str, ...]:
         if not database_exists(core_db):
             return ()
 
-        conn = _open_connection(core_db)
+        # _open_core_connection, not _open_connection: this runs on EVERY tool
+        # call, and a read-write open would rewrite core.db's journal mode into
+        # the header of an artifact that ships read-only in the wheel.
+        conn = _open_core_connection()
         try:
             cursor = conn.execute(
                 "SELECT return_statements FROM helper_functions WHERE name = ?",

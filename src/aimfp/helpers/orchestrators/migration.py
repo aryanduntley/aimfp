@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from ._common import (
+    DEFAULT_BUSY_TIMEOUT,
+    _open_connection,
     get_core_db_path,
     get_aimfp_project_dir,
     resolve_project_root,
@@ -64,17 +66,117 @@ _DB_CONFIG: Dict[str, Dict[str, str]] = {
 }
 
 
-def _get_db_version(db_path: str) -> str:
-    """Effect: Read schema_version from a database. Returns '0.0' if unreadable."""
+# A database predating schema versioning has no schema_version table. That
+# absence is the ONLY condition that legitimately reads as un-versioned.
+PRE_VERSIONING_VERSION = '0.0'
+
+
+def _get_db_version(db_path: str, timeout: float = DEFAULT_BUSY_TIMEOUT) -> str:
+    """
+    Effect: Read schema_version from a database.
+
+    Returns PRE_VERSIONING_VERSION only for a database that genuinely predates
+    schema versioning — one with no schema_version table. Every other failure
+    (locked, corrupt, permission denied) propagates to the caller.
+
+    Reporting an unreadable database as '0.0' is not a safe default, it is a
+    data-loss path. A current project.db that happened to be locked by a
+    concurrent writer would read as un-versioned, land in `pending`, and the
+    session-start return statement instructs the AI to call migrate_databases.
+    That rebuilds the database from an ATTACH snapshot and hands the AI a
+    return statement telling it to move the replacement over the original —
+    discarding everything the other writer committed in between. Callers
+    exclude absence with an isfile guard upstream, so the only cases reaching
+    here are readable, un-versioned, or broken.
+
+    Args:
+        db_path: Path to the database to probe
+        timeout: Busy timeout in seconds. Tests pass a small value to make
+            lock contention fail fast.
+
+    Returns:
+        Version string, or PRE_VERSIONING_VERSION when schema_version is absent
+
+    Raises:
+        sqlite3.Error: database unreadable for any reason other than a missing
+            schema_version table
+    """
+    conn = _open_connection(db_path, timeout=timeout, readonly=True)
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.execute("SELECT version FROM schema_version WHERE id = 1")
-        row = cursor.fetchone()
+        try:
+            row = conn.execute(
+                "SELECT version FROM schema_version WHERE id = 1"
+            ).fetchone()
+        except sqlite3.OperationalError as e:
+            if 'no such table' in str(e).lower():
+                return PRE_VERSIONING_VERSION
+            raise
+        return row['version'] if row else PRE_VERSIONING_VERSION
+    finally:
         conn.close()
-        return row['version'] if row else '0.0'
-    except Exception:
-        return '0.0'
+
+
+def _impossible_version_reason(db_path: str) -> Optional[str]:
+    """
+    Effect: Explain why a database reporting '0.0' cannot really be un-versioned.
+
+    Backstop for the destructive chain _get_db_version guards against. That
+    probe now raises instead of reporting an unreadable database as '0.0', so
+    this should be unreachable through it — which is the point. It holds even
+    if some future exception path reintroduces the swallow, and it is the last
+    check before migrate_databases rebuilds a database and hands the AI a
+    return statement telling it to move the replacement over the original.
+
+    A database carrying a schema_version table is a versioned database by
+    definition, so reading '0.0' off one is a contradiction: the table is
+    present but its row is missing or empty, which is damage rather than age.
+    A populated database with no schema_version table at all is the same kind
+    of contradiction in practice — AIMFP's schemas have created that table
+    since the beginning, so there is no era of AIMFP databases that legitimately
+    lack it.
+
+    Refusing is recoverable and leaves the database for inspection. Rebuilding
+    on a wrong premise is not.
+
+    Args:
+        db_path: Path to the database that reported PRE_VERSIONING_VERSION
+
+    Returns:
+        Reason string when the rebuild must be refused, else None
+    """
+    try:
+        conn = _open_connection(db_path, readonly=True)
+    except sqlite3.Error as e:
+        return f"Database could not be reopened for verification: {e}"
+
+    try:
+        tables = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+    except sqlite3.Error as e:
+        return f"Database table list could not be read: {e}"
+    finally:
+        conn.close()
+
+    if 'schema_version' in tables:
+        return (
+            "Database has a schema_version table but no readable version row. "
+            "That is damage, not an un-versioned database, and rebuilding would "
+            "discard the current contents. Refusing to migrate."
+        )
+
+    user_tables = tables - {'schema_version'}
+    if user_tables:
+        return (
+            f"Database has {len(user_tables)} tables but no schema_version "
+            "table. AIMFP schemas have always created one, so this is not an "
+            "old database. Refusing to migrate — inspect it first."
+        )
+
+    return None
 
 
 def _check_pending_migrations(project_root: str, aimfp_folder: str) -> Dict[str, Any]:
@@ -109,8 +211,7 @@ def _check_pending_migrations(project_root: str, aimfp_folder: str) -> Dict[str,
 
     # Read expected versions from core DB
     try:
-        conn = sqlite3.connect(core_db_path)
-        conn.row_factory = sqlite3.Row
+        conn = _open_connection(core_db_path, immutable=True)
         cursor = conn.execute("SELECT db_name, expected_version, minimum_version FROM expected_schema_versions")
         expected_rows = cursor.fetchall()
         conn.close()
@@ -151,7 +252,17 @@ def _check_pending_migrations(project_root: str, aimfp_folder: str) -> Dict[str,
             skipped.append({'db_name': db_name, 'reason': 'Database file does not exist'})
             continue
 
-        current_version = _get_db_version(db_path)
+        try:
+            current_version = _get_db_version(db_path)
+        except sqlite3.Error as e:
+            # Unreadable is not un-versioned. Never report a database whose
+            # version could not be read as pending — that routes it into the
+            # rebuild path in migrate_databases.
+            skipped.append({
+                'db_name': db_name,
+                'reason': f'Schema version unreadable, migration status unknown: {e}',
+            })
+            continue
 
         if current_version == expected_version:
             up_to_date.append({'db_name': db_name, 'version': current_version})
@@ -300,6 +411,17 @@ def migrate_databases(
         old_version = db_info['current_version']
         expected_version = db_info['expected_version']
 
+        # Last gate before a destructive rebuild: a database reporting '0.0'
+        # must actually look un-versioned, not merely unreadable.
+        if old_version == PRE_VERSIONING_VERSION:
+            refusal = _impossible_version_reason(old_db_path)
+            if refusal:
+                migration_check['skipped'].append({
+                    'db_name': db_name,
+                    'reason': refusal,
+                })
+                continue
+
         config = _DB_CONFIG[db_name]
         schema_file = config['schema_file']
 
@@ -321,6 +443,11 @@ def migrate_databases(
             with open(schema_path, 'r') as f:
                 schema_sql = f.read()
 
+            # DELIBERATELY NOT _open_connection. This is a freshly created,
+            # exclusively-owned temp file that ATTACHes the old database and
+            # sets PRAGMA foreign_keys = OFF two lines below — an opener that
+            # forces foreign_keys = ON would conflict with the rebuild. WAL and
+            # a busy timeout buy nothing on a throwaway nothing else can see.
             new_conn = sqlite3.connect(new_temp_path)
             new_conn.row_factory = sqlite3.Row
             new_conn.executescript(schema_sql)

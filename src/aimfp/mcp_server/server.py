@@ -15,7 +15,7 @@ import sqlite3
 from pathlib import Path
 from typing import Dict, Any, List, Final
 
-from ..database.connection import get_core_db_path
+from ..database.connection import get_core_db_path, _open_connection
 from .registry import TOOL_REGISTRY, is_registered_tool, _effect_import_tool_function
 from .schema import params_to_input_schema
 from .serialization import serialize_result, is_error_result
@@ -34,7 +34,7 @@ from .errors import (
 # ============================================================================
 
 SERVER_NAME: Final[str] = "aimfp"
-SERVER_VERSION: Final[str] = "1.54.0"
+SERVER_VERSION: Final[str] = "1.55.0"
 PROTOCOL_VERSION: Final[str] = "2025-06-18"
 
 
@@ -257,8 +257,7 @@ def _effect_load_and_cache_tools() -> None:
     """Effect: Load tool definitions from aimfp_core.db into module cache."""
     global _cached_tool_dicts
     db_path = get_core_db_path()
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    conn = _open_connection(db_path, immutable=True)
 
     try:
         placeholders = ",".join("?" for _ in TOOL_REGISTRY)

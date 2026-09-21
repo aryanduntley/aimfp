@@ -18,9 +18,12 @@ import sqlite3
 import tempfile
 import shutil
 
+import pytest
+
 from aimfp.helpers.orchestrators.migration import (
     _check_pending_migrations,
     _get_db_version,
+    _impossible_version_reason,
     _get_schema_path,
     migrate_databases,
 )
@@ -145,8 +148,62 @@ def test_get_db_version_returns_version():
         shutil.rmtree(tmp)
 
 
-def test_get_db_version_nonexistent_returns_default():
-    assert _get_db_version("/nonexistent/path.db") == "0.0"
+def test_get_db_version_unversioned_db_returns_default():
+    """A database that genuinely predates schema versioning has tables but no
+    schema_version table. That — and only that — reads as '0.0'."""
+    tmp = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(tmp, "ancient.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT)")
+        conn.commit()
+        conn.close()
+        assert _get_db_version(db_path) == "0.0"
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_get_db_version_unreadable_raises_not_zero():
+    """Unreadable is not un-versioned. Returning '0.0' here would make a
+    current database look pending and route it into a destructive rebuild."""
+    with pytest.raises(sqlite3.Error):
+        _get_db_version("/nonexistent/dir/path.db")
+
+
+def test_get_db_version_corrupt_raises_not_zero():
+    tmp = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(tmp, "corrupt.db")
+        with open(db_path, "wb") as f:
+            f.write(b"this is emphatically not a sqlite database" * 16)
+        with pytest.raises(sqlite3.Error):
+            _get_db_version(db_path)
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_get_db_version_locked_raises_not_zero():
+    """The threat model: a concurrent writer holds the write lock while the
+    session-start migration check probes the version."""
+    tmp = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(tmp, "locked.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE schema_version (id INTEGER PRIMARY KEY, version TEXT)")
+        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, '1.12')")
+        conn.commit()
+
+        holder = sqlite3.connect(db_path, timeout=0.1)
+        holder.execute("BEGIN EXCLUSIVE")
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                _get_db_version(db_path, timeout=0.1)
+        finally:
+            holder.rollback()
+            holder.close()
+            conn.close()
+    finally:
+        shutil.rmtree(tmp)
 
 
 # ============================================================================
@@ -188,6 +245,32 @@ def test_check_pending_skips_missing_db():
         shutil.rmtree(tmp)
 
 
+def test_check_pending_never_reports_unreadable_as_pending():
+    """THE regression guard for the data-loss chain: an unreadable project.db
+    must land in `skipped`, never in `pending`. Anything in `pending` is what
+    the session-start return statement tells the AI to hand to
+    migrate_databases, which rebuilds it and has the AI overwrite the original.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        aimfp_dir = _setup_project(tmp)
+        _create_old_prefs_db(aimfp_dir)
+        # project.db present but unreadable — the shape a lock or corruption
+        # presents to the probe.
+        with open(os.path.join(aimfp_dir, "project.db"), "wb") as f:
+            f.write(b"not a database" * 64)
+
+        result = _check_pending_migrations(tmp, ".aimfp-project")
+        assert result['checked'] is True
+        assert 'project' not in [p['db_name'] for p in result['pending']]
+        assert 'project' not in [u['db_name'] for u in result['up_to_date']]
+        skipped = {s['db_name']: s['reason'] for s in result['skipped']}
+        assert 'project' in skipped
+        assert 'unreadable' in skipped['project'].lower()
+    finally:
+        shutil.rmtree(tmp)
+
+
 def test_check_pending_all_current():
     tmp = tempfile.mkdtemp()
     try:
@@ -207,6 +290,79 @@ def test_check_pending_all_current():
         up_to_date_names = [u['db_name'] for u in result['up_to_date']]
         assert 'project' in up_to_date_names
         assert 'user_preferences' in up_to_date_names
+    finally:
+        shutil.rmtree(tmp)
+
+
+# ============================================================================
+# Backstop: migrate_databases refuses an impossible '0.0'
+# ============================================================================
+
+def test_migrate_refuses_db_with_schema_version_table_but_no_row():
+    """A schema_version table with no row is damage, not an old database.
+
+    Rebuilding on that premise would discard the current contents, so the
+    rebuild is refused and the database is left for inspection.
+    """
+    tmp = tempfile.mkdtemp()
+    try:
+        aimfp_dir = _setup_project(tmp)
+        _create_old_prefs_db(aimfp_dir)
+
+        db_path = os.path.join(aimfp_dir, "project.db")
+        conn = sqlite3.connect(db_path)
+        conn.executescript(
+            "CREATE TABLE schema_version (id INTEGER PRIMARY KEY, version TEXT);"
+            "CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);"
+        )
+        conn.commit()
+        conn.close()
+        before = open(db_path, "rb").read()
+
+        assert _get_db_version(db_path) == "0.0"
+        assert _impossible_version_reason(db_path) is not None
+
+        set_project_root(tmp)
+        try:
+            result = migrate_databases()
+        finally:
+            clear_project_root_cache()
+
+        assert result.success is True
+        assert 'project' not in [m['db_name'] for m in result.data['migrated']]
+        skipped = {s['db_name']: s['reason'] for s in result.data['skipped']}
+        assert 'project' in skipped
+        assert 'refusing to migrate' in skipped['project'].lower()
+        # Untouched on disk.
+        assert open(db_path, "rb").read() == before
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_impossible_version_reason_flags_populated_db_without_schema_version():
+    tmp = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(tmp, "populated.db")
+        conn = sqlite3.connect(db_path)
+        conn.executescript(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY);"
+            "CREATE TABLE notes (id INTEGER PRIMARY KEY);"
+        )
+        conn.commit()
+        conn.close()
+        reason = _impossible_version_reason(db_path)
+        assert reason is not None and "no schema_version" in reason
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_impossible_version_reason_allows_a_genuinely_empty_db():
+    """An empty database is not a contradiction — nothing to protect."""
+    tmp = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(tmp, "empty.db")
+        sqlite3.connect(db_path).close()
+        assert _impossible_version_reason(db_path) is None
     finally:
         shutil.rmtree(tmp)
 

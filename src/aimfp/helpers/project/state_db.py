@@ -19,7 +19,7 @@ from pathlib import Path
 
 from ..utils import get_return_statements
 from ...database.connection import Result
-from ._common import _resolve_fs_path
+from ._common import _open_connection, _resolve_fs_path
 
 
 # ============================================================================
@@ -111,7 +111,7 @@ def create_state_database(source_directory: str) -> Result:
     try:
         os.makedirs(state_dir, exist_ok=True)
 
-        conn = sqlite3.connect(db_path)
+        conn = _open_connection(db_path)
         try:
             conn.executescript(schema_sql)
         finally:

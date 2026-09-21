@@ -407,7 +407,16 @@ def batch_update_progress(
         conn = _open_project_connection(project_root)
         try:
             if transaction:
-                conn.execute("BEGIN")
+                # IMMEDIATE, not a plain deferred BEGIN. Each update below
+                # SELECTs the row and then UPDATEs it, so a deferred
+                # transaction takes its read snapshot first and only asks for
+                # the write lock afterwards. If a parallel writer commits in
+                # between, SQLite returns SQLITE_BUSY_SNAPSHOT *immediately* and
+                # does NOT invoke the busy handler — the snapshot is stale, so
+                # waiting cannot help and no busy timeout fixes it. Taking the
+                # write lock up front is the only thing that does. Same reason
+                # items_notes.py::update_items uses BEGIN IMMEDIATE.
+                conn.execute("BEGIN IMMEDIATE")
 
             for update in updates:
                 action = update.get('action', '')

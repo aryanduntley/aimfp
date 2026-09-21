@@ -68,7 +68,12 @@ def _count_tables(db_path: str) -> int:
         Number of tables, or 0 if database cannot be read
     """
     try:
-        conn = _open_connection(db_path)
+        # readonly: counting tables must not reconfigure the database (a
+        # read-write open rewrites journal_mode into the header, and this runs
+        # against aimfp_core.db, which ships read-only) and must not CREATE one
+        # — sqlite3.connect on a missing path would otherwise leave an empty
+        # database behind as the side effect of an inspection.
+        conn = _open_connection(db_path, readonly=True)
         cursor = conn.execute(
             "SELECT COUNT(*) as cnt FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         )

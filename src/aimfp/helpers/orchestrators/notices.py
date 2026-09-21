@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 from ._common import (
+    _open_connection,
     get_core_db_path,
     get_user_preferences_db_path,
     resolve_project_root,
@@ -92,22 +93,45 @@ def _effect_db_version(db_path: str) -> Optional[str]:
     """
     Effect: Read schema_version from a database.
 
+    None means "version not established" and is deliberately fail-closed: the
+    only caller uses it to decide whether a version-gated notice applies, and
+    an unknown version suppresses the notice. A suppressed notice is harmless
+    — it stays unacknowledged and fires on a later session.
+
+    This is the same shape as migration.py's _get_db_version but NOT the same
+    hazard, and the difference is worth stating because the shape invites
+    copying. There, conflating "unreadable" with "un-versioned" made a locked
+    database look pending and routed it into a destructive rebuild, so the
+    probe must raise. Here both answers suppress, so neither is wrong, and
+    raising would turn a transient lock into a failed notices lookup at
+    session start for no safety gain. The two cases are still separated below
+    so the distinction survives the next reader.
+
     Args:
         db_path: Path to the database
 
     Returns:
-        Version string, or None when unreadable
+        Version string, or None when the version cannot be established
     """
     if not database_exists(db_path):
         return None
     try:
-        conn = sqlite3.connect(db_path)
+        conn = _open_connection(db_path, readonly=True)
         try:
-            row = conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()
+            try:
+                row = conn.execute(
+                    "SELECT version FROM schema_version WHERE id = 1"
+                ).fetchone()
+            except sqlite3.OperationalError as e:
+                if 'no such table' in str(e).lower():
+                    # Un-versioned database: no notice can be gated on it.
+                    return None
+                raise
             return row[0] if row else None
         finally:
             conn.close()
     except sqlite3.Error:
+        # Locked, corrupt, or unreadable. Fail closed — see docstring.
         return None
 
 
@@ -129,8 +153,7 @@ def _effect_unacknowledged_notices(
         (notice dicts, error message or None)
     """
     try:
-        conn = sqlite3.connect(core_db_path)
-        conn.row_factory = sqlite3.Row
+        conn = _open_connection(core_db_path, immutable=True)
         try:
             conn.execute("ATTACH DATABASE ? AS prefs", (prefs_db_path,))
             try:
@@ -167,7 +190,7 @@ def _effect_acknowledge(prefs_db_path: str, notice_key: str, outcome: Optional[s
         notice_key: Notice that was delivered
         outcome: Optional record of what the user decided
     """
-    conn = sqlite3.connect(prefs_db_path)
+    conn = _open_connection(prefs_db_path)
     try:
         conn.execute(
             """

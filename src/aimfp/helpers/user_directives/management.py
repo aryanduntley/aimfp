@@ -25,6 +25,7 @@ from ..utils import get_return_statements, rows_to_tuple, row_to_dict
 
 # Import common user_directives utilities (DRY principle)
 from ._common import (
+    _open_connection,
     get_cached_project_root,
     get_user_directives_db_path,
     _open_directives_connection,
@@ -134,8 +135,7 @@ def init_user_directives_db() -> MutationResult:
         with open(schema_path, 'r') as f:
             schema_sql = f.read()
 
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        conn = _open_connection(db_path)
         try:
             conn.executescript(schema_sql)
             conn.commit()

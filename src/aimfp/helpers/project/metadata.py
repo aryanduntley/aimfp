@@ -31,7 +31,7 @@ from pathlib import Path
 from ..utils import get_return_statements
 
 # Import common project utilities (DRY principle)
-from ._common import get_cached_project_root, _open_project_connection, _resolve_fs_path
+from ._common import get_cached_project_root, _open_connection, _open_project_connection, _resolve_fs_path
 from ..utils import resolve_project_root, get_project_db_path, database_exists
 
 
@@ -862,25 +862,35 @@ def reconcile_stored_source_directory(project_root: str) -> None:
         db_path = get_project_db_path(project_root)
         if not database_exists(db_path):
             return
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row  # _get_*_value access rows by column name
+        # Decide on a read-only connection. Most calls heal nothing, and a
+        # no-op must leave the database byte-identical — the read-write opener
+        # writes journal_mode into the file header. Companion
+        # _reconcile_stored_project_root does the same.
+        probe = _open_connection(db_path, readonly=True)  # row factory set by the opener
         try:
-            stored = _get_source_dir_value(conn)
+            stored = _get_source_dir_value(probe)
             if not stored or not stored.startswith('/'):
                 return  # unset or already relative — nothing to heal
-            stored_root = _get_project_root_value(conn)
-            rel = _make_relative_source_dir(stored, stored_root) if stored_root else stored
-            if rel.startswith('/'):
-                rel = _make_relative_source_dir(stored, project_root)
-            if rel.startswith('/'):
-                rel = os.path.basename(stored.rstrip('/'))
-            if rel and rel != stored:
-                conn.execute(
-                    "UPDATE infrastructure SET value = ?, updated_at = CURRENT_TIMESTAMP "
-                    "WHERE type = ?",
-                    (rel, INFRASTRUCTURE_TYPE_SOURCE_DIR)
-                )
-                conn.commit()
+            stored_root = _get_project_root_value(probe)
+        finally:
+            probe.close()
+
+        rel = _make_relative_source_dir(stored, stored_root) if stored_root else stored
+        if rel.startswith('/'):
+            rel = _make_relative_source_dir(stored, project_root)
+        if rel.startswith('/'):
+            rel = os.path.basename(stored.rstrip('/'))
+        if not rel or rel == stored:
+            return
+
+        conn = _open_connection(db_path)
+        try:
+            conn.execute(
+                "UPDATE infrastructure SET value = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE type = ?",
+                (rel, INFRASTRUCTURE_TYPE_SOURCE_DIR)
+            )
+            conn.commit()
         finally:
             conn.close()
     except Exception:
