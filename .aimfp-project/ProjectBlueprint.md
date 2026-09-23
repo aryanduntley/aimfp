@@ -277,6 +277,24 @@ and publish on a `v*` tag via the trusted-publisher workflow.
   `asdict`); signature changes need a svamanas update. Check with
   `tests/test_embedding_hooks.py` plus svamanas `tests/test_code_brain_unit.py`. The
   hook write-up lives in `docs/` (gitignored) — this bullet is the durable record.
+  **Scope split (2026-09-22):** in-process is for svamanas's OWN brain only, whose home
+  stays bound as the cached root. svamanas reaches USER projects through a per-project
+  child `python -m aimfp` (stdio, working directory = project root), so the child's
+  cached root is that project. That is why `get_return_statements` and
+  `helpers/user_directives/*` deliberately take no `project_root`: the child process
+  replaced that request. A child must open with `aimfp_run`/`aimfp_status`, the only
+  calls that discover the root.
+- **Root discovery: the nearest project wins.** `_discover_project_root` walks from the
+  working directory up to the git top-level (inclusive), and the first
+  `.aimfp-project/project.db` wins. It never walks above the top-level; a linked
+  worktree's top-level is the worktree, so worktree isolation holds. Checking the
+  top-level first (before 2026-09-22) bound a nested project (`outer/calc`) to its
+  parent's DB with no error.
+- **SQL comments live in `sqlite_master`.** CHECK parsing must strip `--` comments
+  first; a `)` in one used to truncate the value list. There is ONE parser,
+  `database/connection.py::_parse_check_constraint`, behind all four
+  `*_allowed_check_constraints` tools; `tests/test_check_constraint_tools.py` sweeps
+  every shipped CHECK field.
 - **`docs/` and `CLAUDE.md` are gitignored.** Anything that must survive a fresh
   clone belongs in `.aimfp-project/`, `README.md`, or the databases.
 
@@ -491,7 +509,27 @@ project.
 
 ## 12. Evolution History
 
-### UC2 runtime hooks — 2026-09-15 (current)
+### svamanas scope split, deletion trail, root discovery — 2026-09-22 (current, 1.56.0)
+
+From svamanas's scope-and-deletion feedback, plus what its child-process test found.
+- **Scope split:** user projects go through a per-project child process (see §6). The
+  proposed `get_return_statements(project_root=)` was dropped, and so was
+  `project_root` threading through `helpers/user_directives/crud.py`. The
+  per-project supportive-context addendum was declined.
+- **Root discovery: the nearest project wins** (task 31, see §6). This was a bug in
+  the standalone MCP server too.
+- **`user_directives.db` deletion trail** (task 32): `delete_user_custom_entry(table,
+  record_id, note_reason=None, note_source='ai')` writes one `entry_deletion` note in the
+  delete's transaction. It sets `reference_type`=table and `reference_id`, plus
+  `reference_name` when the row has a name. `metadata_json` = `{source, cascade:{table:[ids]}}`,
+  where `cascade` lists every row ON DELETE CASCADE removed. Schema 1.3 → 1.4. An
+  unmigrated DB still deletes, without a note, and says to migrate.
+- **One CHECK parser** (tasks 32–33): the comment bug was fixed and three duplicates
+  removed. `'NULL'` is no longer offered as an allowed value.
+- Removed the unused `_get_custom_return_statements`; the custom return statements
+  feature is unchanged. Tests 2466 → 2541.
+
+### UC2 runtime hooks — 2026-09-15
 
 Closed the last open question in the UC2 Automation Flow: **who executes a user
 directive, and how does AIMFP find out what happened?** Settled as "not AIMFP" —

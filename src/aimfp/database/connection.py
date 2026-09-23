@@ -153,20 +153,40 @@ def _has_project_db(root: str) -> bool:
     return aimfp_dir.is_dir() and os.path.exists(str(aimfp_dir / PROJECT_DB_NAME))
 
 
+def _discovery_candidates(cwd: Path, toplevel: Optional[Path]) -> Tuple[Path, ...]:
+    """
+    Pure: Directories to probe for .aimfp-project, nearest first.
+
+    Inside a git tree: CWD, then each parent up to and including the top-level.
+    Outside git: CWD only. If CWD is somehow not under the reported top-level,
+    probe CWD then the top-level.
+    """
+    if toplevel is None:
+        return (cwd,)
+    if not cwd.is_relative_to(toplevel):
+        return (cwd, toplevel)
+    depth = len(cwd.relative_to(toplevel).parts)
+    return (cwd,) + tuple(cwd.parents)[:depth]
+
+
 def _discover_project_root() -> Optional[str]:
     """
     Effect: Discover the LIVE project root from the server's CWD.
 
-    Worktree-aware: when CWD lies inside a git working tree, the root resolves to
-    that tree's top-level (``git rev-parse --show-toplevel``). For a linked git
-    worktree this is the WORKTREE path, so a server launched inside a worktree
-    binds to the WORKTREE's own .aimfp-project/project.db — not the shared main
-    checkout's. This is the fix for the worktree-isolation bug: parallel workers
-    must each read/write their own worktree's project.db, never race main's.
+    NEAREST WINS: walks from CWD up to the git top-level (inclusive) and binds to
+    the first directory holding .aimfp-project/project.db. A nested AIMFP project
+    inside another AIMFP-tracked repo (outer/calc, both initialized, calc with no
+    git repo of its own) therefore binds to calc — checking the top-level first
+    silently bound it to outer's project.db.
+
+    Worktree-aware: for a linked git worktree the top-level is the WORKTREE path
+    (``git rev-parse --show-toplevel``), so the walk never leaves the worktree
+    and a server launched inside it binds to the WORKTREE's own project.db — not
+    the shared main checkout's (the worktree-isolation bug).
 
     Resolution order:
-        1. git top-level of CWD, if it holds .aimfp-project/project.db
-        2. CWD itself, if it holds .aimfp-project/project.db (non-git / single tree)
+        1. CWD, then each parent up to the git top-level, first with project.db
+        2. Outside git: CWD itself, if it holds project.db
         3. None (project not initialized)
 
     Returns the LIVE on-disk root, NOT the stored infrastructure.project_root
@@ -174,18 +194,18 @@ def _discover_project_root() -> Optional[str]:
     the bug). Callers that surface the stored value reconcile it to this live
     root (see aimfp_run -> _reconcile_stored_project_root).
 
-    Does NOT walk up parent directories beyond the git top-level — the MCP server
-    is started in the project (or worktree) directory by the AI client.
+    Does NOT walk above the git top-level — the MCP server is started in the
+    project (or worktree) directory by the AI client.
     """
-    toplevel = _git_toplevel(str(Path.cwd()))
-    if toplevel is not None and _has_project_db(toplevel):
-        return toplevel
-
-    cwd = str(Path.cwd())
-    if _has_project_db(cwd):
-        return cwd
-
-    return None
+    cwd = Path.cwd().resolve()
+    toplevel = _git_toplevel(str(cwd))
+    candidates = _discovery_candidates(
+        cwd, Path(toplevel).resolve() if toplevel is not None else None
+    )
+    return next(
+        (str(candidate) for candidate in candidates if _has_project_db(str(candidate))),
+        None,
+    )
 
 
 # ============================================================================
@@ -562,9 +582,13 @@ def _parse_check_constraint(sql: str, field_name: str) -> Optional[Tuple[str, ..
     Pure: Parse CHECK constraint values from CREATE TABLE SQL.
 
     Extracts values from CHECK (field IN ('val1', 'val2', ...)) patterns.
+    SQL line comments are stripped first: sqlite_master keeps them verbatim,
+    and a ')' inside one (user_directives notes.note_type has several) ended
+    the value list early, so the whole match failed.
     """
+    uncommented = re.sub(r"--[^\n]*", "", sql)
     pattern = rf"CHECK\s*\(\s*{re.escape(field_name)}\s+IN\s*\(([^)]+)\)\s*\)"
-    match = re.search(pattern, sql, re.IGNORECASE)
+    match = re.search(pattern, uncommented, re.IGNORECASE)
     if not match:
         return None
     values_str = match.group(1)

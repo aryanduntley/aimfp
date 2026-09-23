@@ -25,7 +25,7 @@ Imported from utils.py (global):
 
 import os
 import sqlite3
-from typing import Final, Tuple
+from typing import Final
 
 # Import global utilities (DRY - avoid duplication)
 from ..utils import (  # noqa: F401 - re-exported for convenience
@@ -211,37 +211,3 @@ def _is_tracking_enabled(conn: sqlite3.Connection, feature_name: str) -> bool:
     row = cursor.fetchone()
     return bool(row['enabled']) if row else False
 
-
-# ============================================================================
-# Custom Return Statements Sub-Helper
-# ============================================================================
-
-def _get_custom_return_statements(helper_name: str) -> Tuple[str, ...]:
-    """
-    Effect: Get active custom return statements for a helper from user_preferences.db.
-
-    Called internally by get_return_statements() in connection.py to merge
-    user-defined return statements with core statements from aimfp_core.db.
-
-    Args:
-        helper_name: Helper function name to get custom statements for
-
-    Returns:
-        Tuple of custom return statement strings, or empty tuple on any error.
-        Graceful degradation: never raises, always returns a tuple.
-    """
-    try:
-        project_root = get_cached_project_root()
-        conn = _open_preferences_connection(project_root)
-        try:
-            cursor = conn.execute(
-                "SELECT statement FROM custom_return_statements "
-                "WHERE helper_name = ? AND active = 1 ORDER BY id",
-                (helper_name,)
-            )
-            rows = cursor.fetchall()
-            return tuple(row['statement'] for row in rows)
-        finally:
-            conn.close()
-    except Exception:
-        return ()

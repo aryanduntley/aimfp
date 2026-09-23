@@ -201,6 +201,55 @@ def test_plain_git_repo_resolves_to_root(main_repo, monkeypatch):
     assert _discover_project_root() == R
 
 
+def test_nested_project_binds_to_nearest(main_repo, monkeypatch):
+    """A nested AIMFP project with no git repo of its own binds to itself.
+
+    Regression: discovery tried the git top-level first, so R/calc (initialized,
+    inside initialized repo R) bound to R's project.db and wrote the wrong DB.
+    """
+    base, R, _ = main_repo
+    calc = os.path.join(R, "calc")
+    _make_project_db(calc, calc)
+    monkeypatch.chdir(calc)
+    clear_project_root_cache()
+    assert _git_toplevel(calc) == R
+    assert _discover_project_root() == calc
+
+
+def test_subdir_of_nested_project_climbs_to_it(main_repo, monkeypatch):
+    """From R/calc/src the walk stops at calc, not the top-level R."""
+    base, R, _ = main_repo
+    calc = os.path.join(R, "calc")
+    _make_project_db(calc, calc)
+    src = os.path.join(calc, "src")
+    os.makedirs(src)
+    monkeypatch.chdir(src)
+    clear_project_root_cache()
+    assert _discover_project_root() == calc
+
+
+def test_uninitialized_subdir_climbs_to_toplevel(main_repo, monkeypatch):
+    """An uninitialized subdirectory still resolves to the initialized top-level."""
+    base, R, _ = main_repo
+    sub = os.path.join(R, "pkg", "mod")
+    os.makedirs(sub)
+    monkeypatch.chdir(sub)
+    clear_project_root_cache()
+    assert _discover_project_root() == R
+
+
+def test_worktree_subdir_binds_to_worktree(main_repo, monkeypatch):
+    """From a subdirectory of a linked worktree, the walk stops at the worktree."""
+    base, R, _ = main_repo
+    W = os.path.join(base, "wt1")
+    _git(R, "worktree", "add", "-q", W, "-b", "w1")
+    sub = os.path.join(W, "deep")
+    os.makedirs(sub)
+    monkeypatch.chdir(sub)
+    clear_project_root_cache()
+    assert _discover_project_root() == W
+
+
 def test_non_git_dir_falls_back_to_cwd(monkeypatch):
     """A non-git directory with .aimfp-project still resolves via cwd."""
     root = tempfile.mkdtemp(prefix="aimfp_nogit_")

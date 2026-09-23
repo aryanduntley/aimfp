@@ -378,7 +378,8 @@ def add_user_directive_note(
         content: Note content/message
         note_type: 'implementation', 'validation', 'execution', 'dependency',
                    'error', 'optimization', 'user_feedback', 'lifecycle',
-                   'testing', 'general'
+                   'testing', 'general', 'deferred', 'completed', 'obsolete',
+                   'entry_deletion' (normally written by delete_user_custom_entry)
         reference_type: Type of reference ('directive', 'helper', 'dependency', 'file')
         reference_name: Name of referenced entity
         reference_id: Optional ID linking to user_directives, helper_functions, etc.

@@ -18,6 +18,7 @@ Helpers in this file:
 - search_user_directives: Search directives with multiple optional filters
 """
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict, Any, List
@@ -26,10 +27,14 @@ from ..utils import get_return_statements, rows_to_tuple
 
 # Import common user_directives utilities (DRY principle)
 from ._common import (
+    VALID_NOTE_SOURCES,
     get_cached_project_root,
     _open_directives_connection,
     _table_exists,
     _record_exists,
+    _notes_accept_entry_deletion,
+    _collect_cascade_ids,
+    _row_name,
 )
 
 # The insert-time gate. trigger_config is the one column where a bad value
@@ -459,16 +464,64 @@ def update_user_custom_entry(
         )
 
 
+def _deletion_note(
+    table: str,
+    record_id: int,
+    name: Optional[str],
+    note_reason: Optional[str],
+    note_source: str,
+    cascade: Dict[str, Tuple[int, ...]],
+) -> Tuple[str, str]:
+    """
+    Pure: (content, metadata_json) for an entry_deletion note.
+
+    metadata_json carries the source and every row the delete's ON DELETE
+    CASCADE removes, as {table: [ids]}, so a consumer tracking deletions needs
+    one note per delete and no knowledge of the foreign-key graph.
+    """
+    label = f"{table} id={record_id}" + (f" ({name})" if name else "")
+    cascaded = (
+        "; cascade removed " + ", ".join(
+            f"{len(ids)} {child}" for child, ids in sorted(cascade.items())
+        )
+        if cascade else ""
+    )
+    content = (
+        f"Deleted {label}. Reason: {note_reason or 'no reason given'}{cascaded}"
+    )
+    metadata = {
+        "source": note_source,
+        "cascade": {child: list(ids) for child, ids in sorted(cascade.items())},
+    }
+    return content, json.dumps(metadata)
+
+
 def delete_user_custom_entry(
     table: str,
-    record_id: int
+    record_id: int,
+    note_reason: Optional[str] = None,
+    note_source: str = 'ai'
 ) -> MutationResult:
     """
-    Delete entry from user_directives database table.
+    Delete entry from user_directives database table, leaving a deletion trail.
+
+    Writes one entry_deletion note (reference_type=table, reference_id=record_id,
+    reference_name=the row's name when it has one) IN THE SAME TRANSACTION as
+    the delete, so a consumer keeping a cursor over entry_deletion notes sees
+    every delete from every client. A missing reason still writes the note:
+    the trail is the point, not the prose. metadata_json lists the rows that
+    ON DELETE CASCADE removes with it (deleting a directive also removes its
+    executions, dependencies, implementations, relationships and helper links).
+
+    On a user_directives.db still at schema 1.3 (before migrate_databases) the
+    notes CHECK rejects 'entry_deletion'; the delete still happens, without a
+    note, and the message says to migrate.
 
     Args:
         table: Table name in user_directives.db
         record_id: ID of record to delete
+        note_reason: Why the row was deleted (optional; recorded in the note)
+        note_source: Who deleted it: 'ai', 'user', or 'directive' (default 'ai')
 
     Returns:
         MutationResult with success/error
@@ -476,9 +529,17 @@ def delete_user_custom_entry(
     Example:
         >>> result = delete_user_custom_entry(
         ...     "user_directives",
-        ...     5
+        ...     5,
+        ...     note_reason="Removed from the directive source file"
         ... )
     """
+    if note_source not in VALID_NOTE_SOURCES:
+        return MutationResult(
+            success=False,
+            error=f"Invalid note_source: {note_source}. Must be one of: "
+                  f"{', '.join(sorted(VALID_NOTE_SOURCES))}"
+        )
+
     project_root = get_cached_project_root()
     conn = _open_directives_connection(project_root)
 
@@ -499,6 +560,19 @@ def delete_user_custom_entry(
                 error=f"Record with id {record_id} not found in {table}"
             )
 
+        trail = _notes_accept_entry_deletion(conn)
+        if trail:
+            name = _row_name(conn, table, record_id)
+            content, metadata_json = _deletion_note(
+                table, record_id, name, note_reason, note_source,
+                _collect_cascade_ids(conn, table, (record_id,)),
+            )
+            conn.execute(
+                "INSERT INTO notes (content, note_type, severity, reference_type, "
+                "reference_name, reference_id, metadata_json) "
+                "VALUES (?, 'entry_deletion', 'info', ?, ?, ?, ?)",
+                (content, table, name, record_id, metadata_json)
+            )
         conn.execute(f"DELETE FROM {table} WHERE id = ?", (record_id,))
         conn.commit()
         conn.close()
@@ -506,11 +580,17 @@ def delete_user_custom_entry(
         return MutationResult(
             success=True,
             id=record_id,
-            message=f"Entry deleted from {table}",
+            message=(
+                f"Entry deleted from {table}; entry_deletion note written"
+                if trail else
+                f"Entry deleted from {table}. No entry_deletion note was written: "
+                "user_directives.db predates schema 1.4 - run migrate_databases"
+            ),
             return_statements=get_return_statements("delete_user_custom_entry")
         )
 
     except Exception as e:
+        conn.rollback()
         conn.close()
         return MutationResult(
             success=False,

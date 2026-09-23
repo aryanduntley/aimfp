@@ -12,12 +12,11 @@ Helpers in this file:
 - validate_action_config: Check an action_config against AIMFP's envelope
 """
 
-import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
-from ..utils import get_return_statements
+from ..utils import get_return_statements, _parse_check_constraint
 
 # Import common user_directives utilities (DRY principle)
 from ._common import get_cached_project_root, _open_directives_connection
@@ -46,48 +45,7 @@ class CheckConstraintResult:
     return_statements: Tuple[str, ...] = ()
 
 
-# ============================================================================
-# Pure Functions - Schema Parsing
-# ============================================================================
-
-def _extract_check_constraint_values(create_table_sql: str, field_name: str) -> Optional[Tuple[str, ...]]:
-    """
-    Pure: Extract allowed values from CHECK constraint for a field.
-
-    Args:
-        create_table_sql: CREATE TABLE SQL statement
-        field_name: Field name to extract values for
-
-    Returns:
-        Tuple of allowed values or None if not found
-    """
-    # Pattern to match CHECK (field IN ('value1', 'value2', ...))
-    # This handles both inline and separate CHECK constraints
-    pattern = rf"CHECK\s*\(\s*{field_name}\s+IN\s*\(([^)]+)\)\s*\)"
-
-    match = re.search(pattern, create_table_sql, re.IGNORECASE)
-    if not match:
-        return None
-
-    # Extract the values string
-    values_str = match.group(1)
-
-    # Parse values - they should be quoted strings
-    value_pattern = r"'([^']+)'|\"([^\"]+)\"|NULL"
-    matches = re.findall(value_pattern, values_str)
-
-    # Flatten matches (either first or second group will be populated)
-    values = []
-    for match_tuple in matches:
-        if match_tuple[0]:
-            values.append(match_tuple[0])
-        elif match_tuple[1]:
-            values.append(match_tuple[1])
-        else:  # NULL
-            values.append('NULL')
-
-    return tuple(values) if values else None
-
+# CHECK parsing is shared: database/connection.py _parse_check_constraint.
 
 # ============================================================================
 # Effect Functions - Database Operations
@@ -180,7 +138,7 @@ def user_directives_allowed_check_constraints(
             )
 
         # Extract CHECK constraint values
-        values = _extract_check_constraint_values(table_schema, field)
+        values = _parse_check_constraint(table_schema, field)
         if values is None:
             conn.close()
             return CheckConstraintResult(

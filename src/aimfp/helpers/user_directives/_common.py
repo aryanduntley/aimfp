@@ -26,12 +26,14 @@ Imported from utils.py (global):
 """
 
 import sqlite3
-from typing import Final
+from typing import Dict, Final, FrozenSet, Optional, Tuple
 
 # Import global utilities (DRY - avoid duplication)
 from ..utils import (  # noqa: F401 - re-exported for convenience
     _open_connection,
     _open_directives_connection,
+    _get_table_sql,
+    _parse_check_constraint,
     get_cached_project_root,
     get_user_directives_db_path,
 )
@@ -78,8 +80,14 @@ VALID_NOTE_TYPES: Final[frozenset[str]] = frozenset([
     'testing',
     'general',
     # Deferred work tracking
-    'deferred', 'completed', 'obsolete'
+    'deferred', 'completed', 'obsolete',
+    # Deletion trail: written by delete_user_custom_entry (schema 1.4)
+    'entry_deletion'
 ])
+
+# Who a deletion trail credits (delete_user_custom_entry note_source).
+# Stored in metadata_json: this notes table has no source column.
+VALID_NOTE_SOURCES: Final[frozenset[str]] = frozenset(['ai', 'user', 'directive'])
 
 # Severity levels (shared across databases)
 VALID_SEVERITY_LEVELS: Final[frozenset[str]] = frozenset([
@@ -166,6 +174,100 @@ def _record_exists(conn: sqlite3.Connection, table: str, record_id: int) -> bool
     """
     cursor = conn.execute(f"SELECT id FROM {table} WHERE id = ?", (record_id,))
     return cursor.fetchone() is not None
+
+
+def _notes_accept_entry_deletion(conn: sqlite3.Connection) -> bool:
+    """
+    Effect: True if this database's notes CHECK allows 'entry_deletion'.
+
+    False on a user_directives.db still at schema 1.3 (before migrate_databases),
+    where inserting the note would violate the CHECK and abort the delete.
+    """
+    allowed = _parse_check_constraint(_get_table_sql(conn, 'notes') or '', 'note_type')
+    return allowed is not None and 'entry_deletion' in allowed
+
+
+def _cascade_edges(conn: sqlite3.Connection, parent_table: str) -> Tuple[Tuple[str, str, str], ...]:
+    """
+    Effect: (child_table, child_column, parent_column) for every ON DELETE CASCADE
+    foreign key that points at parent_table.
+    """
+    tables = tuple(
+        row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        )
+    )
+    return tuple(
+        (child, fk[3], fk[4] or 'id')
+        for child in tables
+        for fk in conn.execute(f"PRAGMA foreign_key_list({child})").fetchall()
+        if fk[2] == parent_table and str(fk[6]).upper() == 'CASCADE'
+    )
+
+
+def _merge_id_maps(
+    maps: Tuple[Dict[str, Tuple[int, ...]], ...]
+) -> Dict[str, Tuple[int, ...]]:
+    """Pure: Union {table: ids} maps; ids sorted and de-duplicated per table."""
+    tables = sorted({table for m in maps for table in m})
+    return {
+        table: tuple(sorted({i for m in maps for i in m.get(table, ())}))
+        for table in tables
+    }
+
+
+def _collect_cascade_ids(
+    conn: sqlite3.Connection,
+    table: str,
+    record_ids: Tuple[int, ...],
+    seen: FrozenSet[Tuple[str, int]] = frozenset(),
+) -> Dict[str, Tuple[int, ...]]:
+    """
+    Effect: Row ids that ON DELETE CASCADE will remove when record_ids are deleted
+    from table, keyed by child table, followed recursively. Read-only; call it
+    BEFORE the delete. The deleted rows themselves are not included.
+
+    Lets a deletion trail name every row that disappears, so a consumer never
+    needs the foreign-key graph to learn that deleting a directive also removed
+    its executions, dependencies, implementations, relationships and helpers.
+    """
+    if not record_ids:
+        return {}
+    visited = seen | frozenset((table, rid) for rid in record_ids)
+    placeholders = ",".join("?" * len(record_ids))
+    direct = tuple(
+        (child, tuple(
+            row[0] for row in conn.execute(
+                f"SELECT id FROM {child} WHERE {child_col} IN "
+                f"(SELECT {parent_col} FROM {table} WHERE id IN ({placeholders}))",
+                record_ids,
+            )
+            if (child, row[0]) not in visited
+        ))
+        for child, child_col, parent_col in _cascade_edges(conn, table)
+    )
+    direct_map = _merge_id_maps(tuple({child: ids} for child, ids in direct))
+    nested = tuple(
+        _collect_cascade_ids(
+            conn, child, ids,
+            visited | frozenset((child, i) for i in ids),
+        )
+        for child, ids in direct_map.items()
+    )
+    return {
+        child: ids
+        for child, ids in _merge_id_maps((direct_map,) + nested).items()
+        if ids
+    }
+
+
+def _row_name(conn: sqlite3.Connection, table: str, record_id: int) -> Optional[str]:
+    """Effect: The row's 'name' column value, or None if the table has no name column."""
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if 'name' not in columns:
+        return None
+    row = conn.execute(f"SELECT name FROM {table} WHERE id = ?", (record_id,)).fetchone()
+    return row[0] if row else None
 
 
 def _directive_exists_by_id(conn: sqlite3.Connection, directive_id: int) -> bool:

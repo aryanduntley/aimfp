@@ -390,7 +390,9 @@ CREATE TABLE IF NOT EXISTS notes (
         -- Deferred work tracking
         'deferred',        -- Placeholder code, TODOs, stubs, intentionally incomplete work
         'completed',       -- Resolved deferred items, closed follow-ups
-        'obsolete'         -- Deferred items no longer relevant (code refactored, task re-scoped)
+        'obsolete',        -- Deferred items no longer relevant (code refactored, task re-scoped)
+        -- Deletion trail, written by delete_user_custom_entry since schema 1.4
+        'entry_deletion'   -- A row was deleted; metadata_json lists the rows its cascade removed
     )),
     reference_type TEXT,                        -- e.g., 'directive', 'helper', 'dependency', 'file'
     reference_name TEXT,                        -- e.g., directive name, helper name, file path
@@ -474,4 +476,4 @@ CREATE TABLE IF NOT EXISTS schema_version (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.3');
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.4');

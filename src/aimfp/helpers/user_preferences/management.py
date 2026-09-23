@@ -1212,8 +1212,9 @@ def get_custom_return_statements(
     """
     Get all active custom return statements for a helper function (sub-helper).
 
-    Called internally by get_return_statements() for merging with core statements.
-    Also available for AI to inspect what custom return statements exist for a helper.
+    Read-only inspection of what custom return statements exist for a helper.
+    The runtime merge into tool results happens in database/connection.py
+    get_return_statements(), which queries custom_return_statements directly.
 
     Args:
         helper_name: Helper function name to get custom statements for
