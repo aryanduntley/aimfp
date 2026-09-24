@@ -113,9 +113,183 @@ def resolve_project_root() -> str:
 
 
 def clear_project_root_cache() -> None:
-    """Effect: Clear the cache (for testing)."""
+    """Effect: Clear the cache (for testing). Leaves the project-dir override alone."""
     global _cached_project_root
     _cached_project_root = None
+
+
+# ============================================================================
+# Project Folder Override (hook F — one slot per process)
+# ============================================================================
+#
+# One root per process may keep its project databases under a folder other
+# than .aimfp-project (svamanas keeps its own brain in .svamanas/brain). The
+# slot lives in this process only — never an environment variable — so child
+# processes (svamanas's per-project `python -m aimfp`) always see the default.
+# Every other root resolves to .aimfp-project exactly as before.
+#
+# Set in-process by an embedder, or by `python -m aimfp --project-dir <rel>`
+# for the folder the server starts in. While set, root discovery looks ONLY at
+# the override root (see _discover_project_root).
+
+@dataclass(frozen=True)
+class ProjectDirOverride:
+    """Immutable project-folder override: which root, and its relative folder."""
+    root: str           # absolute root as given
+    resolved_root: str  # realpath of root, for symlink-proof matching
+    rel_path: str       # validated POSIX relative path, e.g. '.svamanas/brain'
+
+
+_project_dir_override: Optional[ProjectDirOverride] = None
+
+
+def normalize_project_dir_path(rel_path: str) -> str:
+    """
+    Pure: Validate and normalize a project-folder relative path.
+
+    Accepts a single folder ('.svamanas-brain') or a subpath
+    ('.svamanas/brain'). Backslashes are treated as separators and redundant
+    '.' segments are dropped.
+
+    Raises:
+        ValueError: empty, '.', absolute, contains '..', or inside .git
+    """
+    if not isinstance(rel_path, str) or not rel_path.strip():
+        raise ValueError("project dir path must be a non-empty relative path")
+    unified = rel_path.strip().replace('\\', '/')
+    if unified.startswith('/') or re.match(r'^[A-Za-z]:', unified):
+        raise ValueError(f"project dir path must be relative, got {rel_path!r}")
+    parts = tuple(part for part in unified.split('/') if part not in ('', '.'))
+    if not parts:
+        raise ValueError(f"project dir path must name a folder, got {rel_path!r}")
+    if '..' in parts:
+        raise ValueError(f"project dir path must not contain '..', got {rel_path!r}")
+    if parts[0] == '.git':
+        raise ValueError(f"project dir path must not be inside .git, got {rel_path!r}")
+    return '/'.join(parts)
+
+
+def set_project_dir_override(project_root: str, rel_path: str) -> None:
+    """
+    Effect: Make ``project_root`` keep its project folder at ``rel_path``.
+
+    One slot per process. Setting the same root and path again is a no-op;
+    a different root or path while the slot is held raises, so a forgotten
+    clear surfaces as an error instead of silently re-pointing a brain.
+    clear_project_root_cache() does NOT clear this — call
+    clear_project_dir_override().
+
+    Raises:
+        ValueError: invalid rel_path, or the slot is held by another root/path
+    """
+    global _project_dir_override
+    normalized = normalize_project_dir_path(rel_path)
+    root = os.path.abspath(project_root)
+    resolved = os.path.realpath(root)
+    current = _project_dir_override
+    if current is not None:
+        if current.resolved_root == resolved and current.rel_path == normalized:
+            return
+        raise ValueError(
+            f"project dir override already set ({current.root} -> {current.rel_path}); "
+            "call clear_project_dir_override() first"
+        )
+    _project_dir_override = ProjectDirOverride(
+        root=root, resolved_root=resolved, rel_path=normalized
+    )
+
+
+def clear_project_dir_override() -> None:
+    """Effect: Release the project-folder override slot. Safe when unset."""
+    global _project_dir_override
+    _project_dir_override = None
+
+
+def get_project_dir_override() -> Optional[ProjectDirOverride]:
+    """Effect: Read the current override slot (None when unset)."""
+    return _project_dir_override
+
+
+def _override_applies(project_root: str) -> bool:
+    """Effect: True when ``project_root`` is the override root (symlinks resolved)."""
+    current = _project_dir_override
+    if current is None:
+        return False
+    root = str(project_root)
+    if root == current.root or root == current.resolved_root:
+        return True
+    return os.path.realpath(root) == current.resolved_root
+
+
+def get_project_dir_name(project_root: str) -> str:
+    """
+    Effect: The project folder RELATIVE to ``project_root``.
+
+    '.aimfp-project' unless ``project_root`` holds the override slot. Use this
+    where a relative path is needed (git paths, stored settings); use
+    get_aimfp_project_dir for an absolute one.
+    """
+    if _override_applies(project_root):
+        return _project_dir_override.rel_path
+    return AIMFP_PROJECT_DIR
+
+
+PROJECT_DIR_FLAG: Final[str] = "--project-dir"
+
+
+def extract_project_dir_arg(argv: Tuple[str, ...]) -> Optional[str]:
+    """
+    Pure: The value of --project-dir in a CLI argv ('--project-dir X' or
+    '--project-dir=X'), or None when the flag is absent.
+
+    Raises:
+        ValueError: the flag is given without a value
+    """
+    for index, arg in enumerate(argv):
+        if arg.startswith(PROJECT_DIR_FLAG + "="):
+            value = arg[len(PROJECT_DIR_FLAG) + 1:]
+            if not value:
+                raise ValueError(f"{PROJECT_DIR_FLAG} needs a relative path")
+            return value
+        if arg == PROJECT_DIR_FLAG:
+            if index + 1 >= len(argv) or argv[index + 1].startswith("--"):
+                raise ValueError(f"{PROJECT_DIR_FLAG} needs a relative path")
+            return argv[index + 1]
+    return None
+
+
+def project_dir_cli_args(project_root: str) -> Tuple[str, ...]:
+    """
+    Effect: CLI args that carry this root's override into a child process.
+
+    ('--project-dir', '<rel>') when ``project_root`` holds the slot, else ().
+    The slot is never an environment variable, so a child AIMFP process (the
+    watchdog daemon) only honours it when passed explicitly like this.
+    """
+    if _override_applies(project_root):
+        return (PROJECT_DIR_FLAG, _project_dir_override.rel_path)
+    return ()
+
+
+def resolve_project_relative(project_root: str, configured: str) -> str:
+    """
+    Effect: Resolve a stored project-relative path to an absolute one.
+
+    Settings written at init store the default folder literally
+    (backup_path='.aimfp-project', log dirs '.aimfp-project/logs/...'). A
+    value that is, or starts with, '.aimfp-project' is re-rooted onto this
+    root's actual project folder, so an overridden root never recreates a stray
+    .aimfp-project/. Absolute values are returned as given; anything else is
+    joined to project_root.
+    """
+    if os.path.isabs(configured):
+        return configured
+    unified = configured.replace('\\', '/')
+    if unified == AIMFP_PROJECT_DIR or unified.startswith(AIMFP_PROJECT_DIR + '/'):
+        rest = unified[len(AIMFP_PROJECT_DIR):].lstrip('/')
+        base = get_aimfp_project_dir(project_root)
+        return os.path.join(base, rest) if rest else base
+    return os.path.join(project_root, configured)
 
 
 def _git_toplevel(start_dir: str) -> Optional[str]:
@@ -148,8 +322,8 @@ def _git_toplevel(start_dir: str) -> Optional[str]:
 
 
 def _has_project_db(root: str) -> bool:
-    """Effect: True if ``root`` holds an initialized .aimfp-project/project.db."""
-    aimfp_dir = Path(root) / AIMFP_PROJECT_DIR
+    """Effect: True if ``root`` holds an initialized project folder with project.db."""
+    aimfp_dir = Path(get_aimfp_project_dir(root))
     return aimfp_dir.is_dir() and os.path.exists(str(aimfp_dir / PROJECT_DB_NAME))
 
 
@@ -196,7 +370,14 @@ def _discover_project_root() -> Optional[str]:
 
     Does NOT walk above the git top-level — the MCP server is started in the
     project (or worktree) directory by the AI client.
+
+    PROJECT-DIR OVERRIDE: while the slot is set (python -m aimfp --project-dir,
+    or an embedder), ONLY the override root is probed — no walk, no fallback
+    to a parent's .aimfp-project. A missing brain reads as not-initialized.
     """
+    override = _project_dir_override
+    if override is not None:
+        return override.root if _has_project_db(override.root) else None
     cwd = Path.cwd().resolve()
     toplevel = _git_toplevel(str(cwd))
     candidates = _discovery_candidates(
@@ -263,23 +444,29 @@ def get_mcp_runtime_db_path() -> str:
 # ============================================================================
 
 def get_aimfp_project_dir(project_root: str) -> str:
-    """Pure: Get absolute path to .aimfp-project directory."""
-    return str(Path(project_root) / AIMFP_PROJECT_DIR)
+    """
+    Effect: Absolute path to the project folder for ``project_root``.
+
+    <root>/.aimfp-project, or <root>/<override> when this root holds the
+    project-dir override slot. The ONE place a project folder path is built —
+    never join AIMFP_PROJECT_DIR by hand.
+    """
+    return str(Path(project_root) / get_project_dir_name(project_root))
 
 
 def get_project_db_path(project_root: str) -> str:
-    """Pure: Get absolute path to project.db for a given project."""
-    return str(Path(project_root) / AIMFP_PROJECT_DIR / PROJECT_DB_NAME)
+    """Effect: Get absolute path to project.db for a given project."""
+    return str(Path(get_aimfp_project_dir(project_root)) / PROJECT_DB_NAME)
 
 
 def get_user_preferences_db_path(project_root: str) -> str:
-    """Pure: Get absolute path to user_preferences.db for a given project."""
-    return str(Path(project_root) / AIMFP_PROJECT_DIR / USER_PREFERENCES_DB_NAME)
+    """Effect: Get absolute path to user_preferences.db for a given project."""
+    return str(Path(get_aimfp_project_dir(project_root)) / USER_PREFERENCES_DB_NAME)
 
 
 def get_user_directives_db_path(project_root: str) -> str:
-    """Pure: Get absolute path to user_directives.db for a given project."""
-    return str(Path(project_root) / AIMFP_PROJECT_DIR / USER_DIRECTIVES_DB_NAME)
+    """Effect: Get absolute path to user_directives.db for a given project."""
+    return str(Path(get_aimfp_project_dir(project_root)) / USER_DIRECTIVES_DB_NAME)
 
 
 

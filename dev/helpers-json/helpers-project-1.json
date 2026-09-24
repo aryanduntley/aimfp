@@ -141,7 +141,10 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of integer IDs - **MUST contain at least one ID**"
+          "description": "Array of integer IDs - **MUST contain at least one ID**",
+          "items": {
+            "type": "integer"
+          }
         }
       ],
       "purpose": "Get records by ID(s) - **EMPTY ARRAY NOT ALLOWED**",
@@ -469,7 +472,10 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of goal strings (e.g., ['Fast computation', 'No OOP'])"
+          "description": "Array of goal strings (e.g., ['Fast computation', 'No OOP'])",
+          "items": {
+            "type": "string"
+          }
         },
         {
           "name": "status",
@@ -597,7 +603,10 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "Array of goal strings (NULL = don't update)"
+          "description": "Array of goal strings (NULL = don't update)",
+          "items": {
+            "type": "string"
+          }
         },
         {
           "name": "status",
@@ -881,7 +890,9 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_type": "SourceDirResult",
-      "return_statements": [],
+      "return_statements": [
+        "data is the RECORDED project root. If stored_root_mismatch is present, the project was moved or copied (or this is a git worktree): this session already uses the live folder's database, and aimfp_run(is_new_session=true) updates the record. Do not write the stored path back."
+      ],
       "target_database": "project",
       "used_by_directives": [],
       "implementation_notes": [

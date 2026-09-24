@@ -29,7 +29,7 @@ from ..utils import (
     _open_connection,
     get_return_statements,
 )
-from ._common import _HIERARCHY_TABLES, _table_has_column, PROJECT_DB_REL_PATH
+from ._common import _HIERARCHY_TABLES, _table_has_column, project_db_rel_path
 
 # Running-schema version the package expects (kept in step with project.sql's
 # schema_version seed). A recorded version below this means a migration is pending.
@@ -63,7 +63,8 @@ def _project_db_clean(project_root: str) -> bool:
     """Effect: True if project.db has no uncommitted changes (staged or unstaged)."""
     try:
         result = subprocess.run(
-            ["git", "-C", project_root, "status", "--porcelain", "--", PROJECT_DB_REL_PATH],
+            ["git", "-C", project_root, "status", "--porcelain", "--",
+             project_db_rel_path(project_root)],
             capture_output=True, text=True, check=False,
         )
     except (FileNotFoundError, OSError):

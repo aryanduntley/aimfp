@@ -9,7 +9,7 @@ and the watchdog subprocess (fallback when started manually).
 import json
 import os
 
-from ..database.connection import _effect_query_one
+from ..database.connection import _effect_query_one, get_project_dir_name
 from ..wrappers.file_ops import _effect_read_file
 from .config import (
     get_project_db_path,
@@ -18,6 +18,7 @@ from .config import (
     get_watchdogignore_path,
     build_exclusion_sets,
     parse_watchdogignore,
+    project_folder_ignore_patterns,
 )
 from .analyzers import (
     _effect_get_all_finalized_file_paths,
@@ -87,15 +88,19 @@ def _read_watchdogignore(project_root: str) -> tuple[str, ...]:
     """
     Effect: Read and parse the project's .watchdogignore file.
 
-    Returns an empty tuple if the file is absent or unreadable.
+    The root's own project folder is appended when it is a project-dir
+    override (see project_folder_ignore_patterns), so every caller of this —
+    watcher, reconciliation, catalog scan — skips it. Returns just those
+    patterns if the file is absent or unreadable.
     """
+    own_folder = project_folder_ignore_patterns(get_project_dir_name(project_root))
     path = get_watchdogignore_path(project_root)
     if not os.path.isfile(path):
-        return ()
+        return own_folder
     content = _effect_read_file(path)
     if content is None:
-        return ()
-    return parse_watchdogignore(content)
+        return own_folder
+    return parse_watchdogignore(content) + own_folder
 
 
 # ============================================================================

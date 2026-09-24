@@ -27,8 +27,9 @@ surface stays the ordinary one.
 
 import ast
 import os
+import sqlite3
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple
 
 from ..utils import get_return_statements, get_cached_project_root, _open_project_connection
 from ...watchdog.config import detect_language
@@ -171,6 +172,34 @@ def extract_function_calls(tree: ast.Module) -> Dict[str, Tuple[Tuple[str, Optio
     return calls
 
 
+def extract_referenced_names(tree: ast.Module) -> Dict[str, FrozenSet[str]]:
+    """
+    Pure: Map each top-level function to every name it references — bare names,
+    attribute names (``mod.fn`` gives 'fn'), and the original name behind any
+    ``from x import fn as alias`` used inside it.
+
+    Broader than extract_function_calls on purpose: a function passed as a
+    callback (``map(fn, xs)``) is referenced without being called. A tracked
+    call edge whose target name is absent from this set cannot still exist.
+    """
+    aliases: Dict[str, str] = {
+        alias.asname: alias.name
+        for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+        for alias in node.names if alias.asname
+    }
+    referenced: Dict[str, FrozenSet[str]] = {}
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        names = frozenset(
+            inner.id if isinstance(inner, ast.Name) else inner.attr
+            for inner in ast.walk(node)
+            if isinstance(inner, (ast.Name, ast.Attribute))
+        )
+        referenced[node.name] = names | frozenset(aliases[n] for n in names if n in aliases)
+    return referenced
+
+
 def resolve_target(
     name: str,
     base: Optional[str],
@@ -250,10 +279,14 @@ def resolve_target(
 # Effect Functions
 # ============================================================================
 
-def _effect_tracked_functions(project_root: str) -> Tuple[Dict[str, Dict[str, int]], Dict[str, List[int]], Dict[int, str], Tuple[str, ...]]:
+TrackedIndex = Tuple[Dict[str, Dict[str, int]], Dict[str, List[int]], Dict[int, str], Tuple[str, ...]]
+
+
+def query_tracked_functions(conn: sqlite3.Connection) -> TrackedIndex:
     """
     Effect: Load every tracked function and every tracked file path, indexed for
-    resolution.
+    resolution, through the caller's connection (so rows written earlier in the
+    same, still-open transaction are included — reconcile_paths relies on this).
 
     All file paths are returned, not just those owning functions: re-export
     modules (a package's ``utils.py`` or ``__init__.py``) define no functions of
@@ -261,23 +294,16 @@ def _effect_tracked_functions(project_root: str) -> Tuple[Dict[str, Dict[str, in
     Indexing only function-bearing files makes every call routed through a
     re-export unresolvable.
 
-    Args:
-        project_root: Project root directory
-
     Returns:
         (by_file, by_name, id_to_path, all_paths) lookup tables
     """
-    conn = _open_project_connection(project_root)
-    try:
-        rows = conn.execute(
-            """
-            SELECT fn.id, fn.name, f.path
-            FROM functions fn JOIN files f ON f.id = fn.file_id
-            """
-        ).fetchall()
-        path_rows = conn.execute("SELECT path FROM files").fetchall()
-    finally:
-        conn.close()
+    rows = conn.execute(
+        """
+        SELECT fn.id, fn.name, f.path
+        FROM functions fn JOIN files f ON f.id = fn.file_id
+        """
+    ).fetchall()
+    path_rows = conn.execute("SELECT path FROM files").fetchall()
 
     by_file: Dict[str, Dict[str, int]] = {}
     by_name: Dict[str, List[int]] = {}
@@ -289,6 +315,107 @@ def _effect_tracked_functions(project_root: str) -> Tuple[Dict[str, Dict[str, in
         id_to_path[row["id"]] = row["path"]
 
     return (by_file, by_name, id_to_path, tuple(r["path"] for r in path_rows))
+
+
+def _effect_tracked_functions(project_root: str) -> TrackedIndex:
+    """Effect: query_tracked_functions on a fresh connection."""
+    conn = _open_project_connection(project_root)
+    try:
+        return query_tracked_functions(conn)
+    finally:
+        conn.close()
+
+
+@dataclass(frozen=True)
+class CallEdges:
+    """Edges resolved for a set of calling files, before anything is written."""
+    edges: Tuple[Tuple[Any, ...], ...]
+    resolved_by: Dict[str, int]
+    unresolved: Tuple[str, ...]
+    files_analyzed: int
+
+
+def build_call_edges(
+    project_root: str,
+    tracked: TrackedIndex,
+    include_caller: Callable[[str], bool],
+) -> CallEdges:
+    """
+    Effect: Resolve call edges for every tracked Python file accepted by
+    include_caller (reads source files; writes nothing).
+
+    Every tracked Python file is parsed for its import bindings — following a
+    re-export needs the bindings of a file outside the caller set — but only
+    accepted files contribute calling edges. Edges are unique per
+    (source, target); self-calls and ambiguous targets are dropped.
+    """
+    by_file, by_name, id_to_path, all_paths = tracked
+    edges: List[Tuple[Any, ...]] = []
+    seen: Set[Tuple[int, int]] = set()
+    reasons: Dict[str, int] = {}
+    unresolved: List[str] = []
+
+    # Pass 1: parse every tracked Python file and index its import bindings.
+    # The whole index must exist before resolution, because following a
+    # re-export needs the bindings of a file that may not be analyzed yet —
+    # and re-export targets sit outside the caller set more often than not.
+    trees: Dict[str, ast.Module] = {}
+    bindings_index: Dict[str, Dict[str, str]] = {}
+
+    for path in sorted(all_paths):
+        if detect_language(path) != 'python':
+            continue
+        source = _effect_read_source(os.path.join(project_root, path))
+        if source is None:
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        trees[path] = tree
+        bindings_index[path] = extract_import_bindings(tree, path)
+
+    # Pass 2: resolve calls, on the calling side only for accepted files.
+    analyzed = 0
+    for path, tree in sorted(trees.items()):
+        if not include_caller(path):
+            continue
+
+        analyzed += 1
+        bindings = bindings_index[path]
+        local_functions = by_file.get(path, {})
+
+        for caller, calls in extract_function_calls(tree).items():
+            source_id = local_functions.get(caller)
+            if source_id is None:
+                continue
+
+            for name, base in calls:
+                target_id, reason = resolve_target(
+                    name, base, path, bindings, by_file, by_name, bindings_index
+                )
+                if target_id is None:
+                    if reason == 'ambiguous':
+                        unresolved.append(f"{path}:{caller} -> {name}")
+                    continue
+                if target_id == source_id or (source_id, target_id) in seen:
+                    continue
+
+                seen.add((source_id, target_id))
+                reasons[reason] = reasons.get(reason, 0) + 1
+                edges.append((
+                    source_id,
+                    target_id,
+                    'call',
+                    f"{caller} calls {name} ({os.path.basename(id_to_path[target_id])})",
+                ))
+
+    return CallEdges(
+        edges=tuple(edges),
+        resolved_by=reasons,
+        unresolved=tuple(unresolved),
+        files_analyzed=analyzed,
+    )
 
 
 # ============================================================================
@@ -321,82 +448,27 @@ def scan_call_graph(
     project_root = project_root or get_cached_project_root()
 
     try:
-        by_file, by_name, id_to_path, all_paths = _effect_tracked_functions(project_root)
-        if not by_file:
+        tracked = _effect_tracked_functions(project_root)
+        if not tracked[0]:
             return CallGraphResult(
                 success=False,
                 error="No tracked functions found. Run catalog_files and catalog_functions first.",
             )
 
         prefix = module_path.strip('/') if module_path else None
-        edges: List[Tuple[Any, ...]] = []
-        seen: Set[Tuple[int, int]] = set()
-        reasons: Dict[str, int] = {}
-        unresolved: List[str] = []
-
-        # Pass 1: parse every tracked Python file and index its import bindings.
-        # The whole index must exist before resolution, because following a
-        # re-export needs the bindings of a file that may not be analyzed yet —
-        # and re-export targets sit outside module_path more often than not.
-        trees: Dict[str, ast.Module] = {}
-        bindings_index: Dict[str, Dict[str, str]] = {}
-
-        for path in sorted(all_paths):
-            if detect_language(path) != 'python':
-                continue
-            source = _effect_read_source(os.path.join(project_root, path))
-            if source is None:
-                continue
-            try:
-                tree = ast.parse(source)
-            except SyntaxError:
-                continue
-            trees[path] = tree
-            bindings_index[path] = extract_import_bindings(tree, path)
-
-        # Pass 2: resolve calls, narrowed to module_path on the calling side only.
-        analyzed = 0
-        for path, tree in sorted(trees.items()):
-            if prefix and not path.startswith(prefix):
-                continue
-
-            analyzed += 1
-            bindings = bindings_index[path]
-            local_functions = by_file.get(path, {})
-
-            for caller, calls in extract_function_calls(tree).items():
-                source_id = local_functions.get(caller)
-                if source_id is None:
-                    continue
-
-                for name, base in calls:
-                    target_id, reason = resolve_target(
-                        name, base, path, bindings, by_file, by_name, bindings_index
-                    )
-                    if target_id is None:
-                        if reason == 'ambiguous':
-                            unresolved.append(f"{path}:{caller} -> {name}")
-                        continue
-                    if target_id == source_id or (source_id, target_id) in seen:
-                        continue
-
-                    seen.add((source_id, target_id))
-                    reasons[reason] = reasons.get(reason, 0) + 1
-                    edges.append((
-                        source_id,
-                        target_id,
-                        'call',
-                        f"{caller} calls {name} ({os.path.basename(id_to_path[target_id])})",
-                    ))
+        found = build_call_edges(
+            project_root, tracked,
+            lambda path: not prefix or path.startswith(prefix),
+        )
 
         return CallGraphResult(
             success=True,
-            interactions=tuple(edges),
-            edge_count=len(edges),
-            resolved_by=reasons,
-            unresolved_count=len(unresolved),
-            unresolved_sample=tuple(unresolved[:20]),
-            files_analyzed=analyzed,
+            interactions=found.edges,
+            edge_count=len(found.edges),
+            resolved_by=found.resolved_by,
+            unresolved_count=len(found.unresolved),
+            unresolved_sample=found.unresolved[:20],
+            files_analyzed=found.files_analyzed,
             return_statements=get_return_statements("scan_call_graph"),
         )
 

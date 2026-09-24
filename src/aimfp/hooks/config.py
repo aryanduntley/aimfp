@@ -20,7 +20,6 @@ database/connection.py, which is stdlib-only. Nothing here may import the
 watchdog, the directive loader, or the MCP server.
 """
 
-import os
 import sqlite3
 from typing import Any, Optional
 
@@ -29,6 +28,7 @@ from ..database.connection import (
     _open_connection,
     database_exists,
     get_user_directives_db_path,
+    resolve_project_relative,
 )
 from .results import LogConfig
 
@@ -135,11 +135,13 @@ def _row_value(row: Any, column: str) -> Optional[Any]:
 
 def resolve_log_path(project_root: str, configured: str) -> str:
     """
-    Pure: Resolve a configured log location against the project root.
+    Effect: Resolve a configured log location against the project root.
 
     logging_config stores project-relative paths by default
     ('.aimfp-project/logs/execution/'), but an absolute path set by a user
-    must be honored as given.
+    must be honored as given. The default folder re-roots onto the root's
+    actual project folder, so a project-dir override holds
+    (resolve_project_relative).
 
     Args:
         project_root: Absolute path to the project root
@@ -148,9 +150,7 @@ def resolve_log_path(project_root: str, configured: str) -> str:
     Returns:
         Absolute path
     """
-    if os.path.isabs(configured):
-        return configured
-    return os.path.join(project_root, configured)
+    return resolve_project_relative(project_root, configured)
 
 
 # ============================================================================

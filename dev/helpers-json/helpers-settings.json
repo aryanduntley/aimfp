@@ -120,7 +120,10 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of integer IDs - **MUST contain at least one ID**"
+          "description": "Array of integer IDs - **MUST contain at least one ID**",
+          "items": {
+            "type": "integer"
+          }
         }
       ],
       "purpose": "Get records by ID(s) - **EMPTY ARRAY NOT ALLOWED**",
@@ -370,7 +373,11 @@
           },
           "description": "Load active preferences for directive before execution - returns preference key-value pairs for current directive context"
         }
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
     },
     {
       "name": "add_directive_preference",

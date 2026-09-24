@@ -631,6 +631,10 @@ def sync_helper_functions(conn: sqlite3.Connection) -> int:
         else:
             return_statements = json.dumps([])
 
+        annotations = (
+            json.dumps(helper['annotations']) if helper.get('annotations') else None
+        )
+
         if existing:
             # Update existing helper with latest data from JSON
             cur.execute("""
@@ -643,7 +647,8 @@ def sync_helper_functions(conn: sqlite3.Connection) -> int:
                     is_sub_helper = ?,
                     is_hook = ?,
                     return_statements = ?,
-                    target_database = ?
+                    target_database = ?,
+                    annotations = ?
                 WHERE name = ?
             """, (
                 helper.get('file_path'),
@@ -655,6 +660,7 @@ def sync_helper_functions(conn: sqlite3.Connection) -> int:
                 1 if helper.get('is_hook', False) else 0,
                 return_statements,
                 helper.get('target_database'),
+                annotations,
                 name
             ))
             updated += 1
@@ -663,8 +669,8 @@ def sync_helper_functions(conn: sqlite3.Connection) -> int:
             cur.execute("""
                 INSERT INTO helper_functions
                 (name, file_path, parameters, purpose, error_handling, is_tool, is_sub_helper,
-                 is_hook, return_statements, target_database)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 is_hook, return_statements, target_database, annotations)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 name,
                 helper.get('file_path'),
@@ -675,7 +681,8 @@ def sync_helper_functions(conn: sqlite3.Connection) -> int:
                 1 if helper.get('is_sub_helper', False) else 0,
                 1 if helper.get('is_hook', False) else 0,
                 return_statements,
-                helper.get('target_database')
+                helper.get('target_database'),
+                annotations
             ))
             inserted += 1
 

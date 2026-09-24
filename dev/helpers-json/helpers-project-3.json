@@ -30,7 +30,27 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "Function parameters"
+          "description": "Function parameters",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "required": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
         },
         {
           "name": "returns",
@@ -47,16 +67,16 @@
           "description": "If true, skip ID embedding in name (for MCP tools, private functions excluded). Sets id_in_name=0 in database."
         }
       ],
-      "purpose": "Reserve a function ID before writing code. Include purpose, parameters, and returns \u2014 null fields make functions invisible to future sessions.",
+      "purpose": "Reserve a function ID before writing code. Include purpose, parameters, and returns — null fields make functions invisible to future sessions.",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
         "Use returned ID for function naming: {name}_id_{id}",
-        "MANDATORY: Include purpose, parameters, and returns fields NOW. These are the AI's primary lookup mechanism across sessions. Null fields make functions invisible to future discovery \u2014 the DB becomes just a filename index. If unsure of the signature, plan the function first, then reserve. Example: purpose='Build coin selection entry from raw data', parameters='coin: CoinEntry', returns='CoinSelectionEntry'",
+        "MANDATORY: Include purpose, parameters, and returns fields NOW. These are the AI's primary lookup mechanism across sessions. Null fields make functions invisible to future discovery — the DB becomes just a filename index. If unsure of the signature, plan the function first, then reserve. Example: purpose='Build coin selection entry from raw data', parameters='coin: CoinEntry', returns='CoinSelectionEntry'",
         "Ensure the parent file (file_id) has been reserved via reserve_file. Files and functions must both be tracked.",
         "After finalization, ensure interactions are added where needed. See directive project_update_db (Branch 6: update_interactions_table) for interaction tracking workflow.",
-        "Next: write function code with ID in name \u2192 finalize_function(function_id, name, file_id)"
+        "Next: write function code with ID in name → finalize_function(function_id, name, file_id)"
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -93,7 +113,54 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of function objects [{name, file_id, purpose, parameters, returns, skip_id_naming?}, ...]"
+          "description": "Array of function objects [{name, file_id, purpose, parameters, returns, skip_id_naming?}, ...]",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "file_id": {
+                "type": "integer"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "parameters": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "required": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "returns": {
+                "type": "object"
+              },
+              "skip_id_naming": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "file_id"
+            ]
+          }
         }
       ],
       "purpose": "Batch-reserve function IDs before writing multiple functions. Include purpose/parameters/returns for every function.",
@@ -102,10 +169,10 @@
       "is_sub_helper": false,
       "return_statements": [
         "Use returned IDs for function naming: {name}_id_{id}",
-        "MANDATORY: Include purpose, parameters, and returns fields for EVERY function. These are the AI's primary lookup mechanism across sessions. Null fields make functions invisible to future discovery \u2014 the DB becomes just a filename index. If unsure of signatures, plan functions first, then reserve.",
+        "MANDATORY: Include purpose, parameters, and returns fields for EVERY function. These are the AI's primary lookup mechanism across sessions. Null fields make functions invisible to future discovery — the DB becomes just a filename index. If unsure of signatures, plan functions first, then reserve.",
         "Ensure all parent files (file_ids) have been reserved via reserve_file/reserve_files. Files and functions must both be tracked.",
         "After finalization, ensure interactions are added where needed. See directive project_update_db (Branch 6: update_interactions_table) for interaction tracking workflow.",
-        "Next: write function code with IDs in names \u2192 finalize_functions([{function_id, name, file_id}, ...])"
+        "Next: write function code with IDs in names → finalize_functions([{function_id, name, file_id}, ...])"
       ],
       "target_database": "project",
       "used_by_directives": [],
@@ -154,7 +221,27 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "Function parameters"
+          "description": "Function parameters",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "required": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
         },
         {
           "name": "returns",
@@ -176,10 +263,11 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "WARNING: Verify purpose, parameters, and returns are populated. Functions with null fields are incomplete tracking entries \u2014 future AI sessions cannot look them up by signature. If any field is null, populate it NOW via update_function(). This is your last chance before the function is considered 'tracked'.",
+        "WARNING: Verify purpose, parameters, and returns are populated. Functions with null fields are incomplete tracking entries — future AI sessions cannot look them up by signature. If any field is null, populate it NOW via update_function(). This is your last chance before the function is considered 'tracked'.",
         "Verify parent file has been finalized via finalize_file. Both file and function must be finalized for complete tracking.",
-        "BLOCKED: Do NOT proceed to next task or mark work complete until interactions are added for this function. If this function calls, chains, borrows from, composes with, or pipes to ANY other tracked function, those interactions MUST be recorded via add_interaction or add_interactions. A finalized function that imports from other tracked files with zero recorded interactions = incomplete tracking. Interactions are how the AI understands the dependency graph \u2014 without them, refactoring impact analysis is blind.",
-        "TYPES_FUNCTIONS CHECK: Scan this function's parameters and returns for tracked type names. If it consumes or produces a tracked type, add the relationship via add_types_functions. Auto-infer role: returns type only \u2192 'factory'; params AND returns same type \u2192 'transformer'; params with boolean/Result return \u2192 'validator'; params only \u2192 'accessor'. This is how the AI answers 'what functions use TypeX?' without scanning all files.",
+        "NAME CHECK: if warnings[] is non-empty, a finalized name is not defined in its file's source (checked for Python). Make them match before continuing: rename the tracked function via update_function, or rename it in the code.",
+        "BLOCKED: Do NOT proceed to next task or mark work complete until interactions are added for this function. If this function calls, chains, borrows from, composes with, or pipes to ANY other tracked function, those interactions MUST be recorded via add_interaction or add_interactions. A finalized function that imports from other tracked files with zero recorded interactions = incomplete tracking. Interactions are how the AI understands the dependency graph — without them, refactoring impact analysis is blind.",
+        "TYPES_FUNCTIONS CHECK: Scan this function's parameters and returns for tracked type names. If it consumes or produces a tracked type, add the relationship via add_types_functions. Auto-infer role: returns type only → 'factory'; params AND returns same type → 'transformer'; params with boolean/Result return → 'validator'; params only → 'accessor'. This is how the AI answers 'what functions use TypeX?' without scanning all files.",
         "If called during project_reserve_finalize: follow project_update_db directive to sync function dependencies."
       ],
       "target_database": "project",
@@ -226,7 +314,58 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of function objects [{function_id, name, file_id, purpose, parameters, returns, skip_id_naming?}, ...]"
+          "description": "Array of function objects [{function_id, name, file_id, purpose, parameters, returns, skip_id_naming?}, ...]",
+          "items": {
+            "type": "object",
+            "properties": {
+              "function_id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "file_id": {
+                "type": "integer"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "parameters": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "required": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "returns": {
+                "type": "object"
+              },
+              "skip_id_naming": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "function_id",
+              "name",
+              "file_id"
+            ]
+          }
         }
       ],
       "purpose": "Batch-finalize multiple reserved functions after writing them. Triggers interaction and type-function checks for all.",
@@ -234,10 +373,11 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "WARNING: Verify purpose, parameters, and returns are populated for ALL functions. Functions with null fields are incomplete tracking entries \u2014 future AI sessions cannot look them up by signature. If any field is null, populate it NOW via update_function(). This is your last chance before functions are considered 'tracked'.",
+        "WARNING: Verify purpose, parameters, and returns are populated for ALL functions. Functions with null fields are incomplete tracking entries — future AI sessions cannot look them up by signature. If any field is null, populate it NOW via update_function(). This is your last chance before functions are considered 'tracked'.",
         "Verify all parent files have been finalized via finalize_file/finalize_files. Both files and functions must be finalized for complete tracking.",
-        "BLOCKED: Do NOT proceed to next task or mark work complete until interactions are added for ALL finalized functions. For EVERY function that calls, chains, borrows from, composes with, or pipes to ANY other tracked function, those interactions MUST be recorded via add_interaction or add_interactions (batch). Finalized functions that import from other tracked files with zero recorded interactions = incomplete tracking. Do NOT batch-finalize functions and move on without interaction planning \u2014 the finalize \u2192 interact flow is atomic.",
-        "TYPES_FUNCTIONS CHECK: Scan ALL finalized functions' parameters and returns for tracked type names. For each function that consumes or produces a tracked type, add the relationship via add_types_functions. Auto-infer roles: returns type only \u2192 'factory'; params AND returns same type \u2192 'transformer'; params with boolean/Result return \u2192 'validator'; params only \u2192 'accessor'. This covers 80%+ of cases automatically \u2014 correct or add remaining roles manually.",
+        "NAME CHECK: if warnings[] is non-empty, a finalized name is not defined in its file's source (checked for Python). Make them match before continuing: rename the tracked function via update_function, or rename it in the code.",
+        "BLOCKED: Do NOT proceed to next task or mark work complete until interactions are added for ALL finalized functions. For EVERY function that calls, chains, borrows from, composes with, or pipes to ANY other tracked function, those interactions MUST be recorded via add_interaction or add_interactions (batch). Finalized functions that import from other tracked files with zero recorded interactions = incomplete tracking. Do NOT batch-finalize functions and move on without interaction planning — the finalize → interact flow is atomic.",
+        "TYPES_FUNCTIONS CHECK: Scan ALL finalized functions' parameters and returns for tracked type names. For each function that consumes or produces a tracked type, add the relationship via add_types_functions. Auto-infer roles: returns type only → 'factory'; params AND returns same type → 'transformer'; params with boolean/Result return → 'validator'; params only → 'accessor'. This covers 80%+ of cases automatically — correct or add remaining roles manually.",
         "If called during project_reserve_finalize: follow project_update_db directive to sync function dependencies."
       ],
       "target_database": "project",
@@ -277,12 +417,12 @@
           "description": "If true, return only id/name + purpose/parameters/returns (when AI already has the rest)"
         }
       ],
-      "purpose": "Look up a tracked function by name with file location \u2014 use BEFORE reading source files. Returns purpose, parameters, returns, and file path.",
+      "purpose": "Look up a tracked function by name with file location — use BEFORE reading source files. Returns purpose, parameters, returns, and file path.",
       "error_handling": "Return error if no functions found with that name",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Function names are not unique \u2014 if several match, pick by file_path. No match: try search_functions with descriptive words before concluding the function does not exist."
+        "Function names are not unique — if several match, pick by file_path. No match: try search_functions with descriptive words before concluding the function does not exist."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -344,7 +484,7 @@
           "description": "If true, return only id/name + purpose/parameters/returns (when AI already has the rest)"
         }
       ],
-      "purpose": "Get all tracked function signatures for a file \u2014 use BEFORE reading source code. Often provides everything needed without opening the file.",
+      "purpose": "Get all tracked function signatures for a file — use BEFORE reading source code. Often provides everything needed without opening the file.",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
@@ -422,7 +562,27 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "New parameters (NULL = don't update)"
+          "description": "New parameters (NULL = don't update)",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "required": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
         },
         {
           "name": "returns",
@@ -491,7 +651,50 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of function update objects [{function_id, name, purpose, parameters, returns}, ...]"
+          "description": "Array of function update objects [{function_id, name, purpose, parameters, returns}, ...]",
+          "items": {
+            "type": "object",
+            "properties": {
+              "function_id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "parameters": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "required": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "returns": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "function_id"
+            ]
+          }
         }
       ],
       "purpose": "Update multiple functions in a single file",
@@ -696,9 +899,9 @@
       "used_by_directives": [],
       "implementation_notes": [
         "Terms built by helpers/shared/fts_query.py: tokenize_search_terms -> build_fts_match_expression ('\"disk\"* OR \"space\"*')",
-        "Ranked by bm25(functions_fts, 5.0, 1.0) \u2014 name matches weigh more than purpose matches",
+        "Ranked by bm25(functions_fts, 5.0, 1.0) — name matches weigh more than purpose matches",
         "Fallback: build_like_clause per term when functions_fts is missing (pre-migration databases)",
-        "Returns: {functions[], total_count} \u2014 total_count is the match count before limit"
+        "Returns: {functions[], total_count} — total_count is the match count before limit"
       ]
     }
   ],

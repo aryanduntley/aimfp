@@ -20,7 +20,12 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-from ..utils import get_return_statements, get_cached_project_root, _open_project_connection
+from ..utils import (
+    get_return_statements,
+    get_cached_project_root,
+    get_user_preferences_db_path,
+    _open_project_connection,
+)
 from ...watchdog.config import (
     build_exclusion_sets,
     detect_language,
@@ -294,7 +299,7 @@ def scan_source_tree(
             )
 
         user_dirs, user_extensions = _read_user_exclusions(
-            os.path.join(project_root, '.aimfp-project', 'user_preferences.db')
+            get_user_preferences_db_path(project_root)
         )
         excluded_dirs, excluded_extensions = build_exclusion_sets(
             user_dirs, user_extensions

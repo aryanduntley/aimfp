@@ -79,7 +79,37 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of file objects [{name, path, language, skip_id_naming?}, ...]"
+          "description": "Array of file objects [{name, path, language, skip_id_naming?}, ...]",
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "language": {
+                    "type": "string"
+                  },
+                  "skip_id_naming": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "path"
+                ]
+              },
+              {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 4
+              }
+            ]
+          }
         }
       ],
       "purpose": "Batch-reserve file IDs before writing multiple files. Returns IDs in input order for embedding in filenames.",
@@ -143,7 +173,7 @@
           "description": "If true, skip _id_XX pattern validation (for files where ID naming was skipped during reservation)"
         }
       ],
-      "purpose": "Mark a reserved file as tracked after writing it to disk. Triggers flow assignment and function/type tracking checks.",
+      "purpose": "Mark a reserved file as tracked after writing it to disk. The path must be a regular file relative to the project root: '.', a directory, or a path leaving the project is refused. Triggers flow assignment and function/type tracking checks.",
       "error_handling": "Return error if file doesn't exist at path",
       "is_tool": true,
       "is_sub_helper": false,
@@ -200,10 +230,44 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of file objects [{file_id, name, path, language, skip_id_naming?}, ...]"
+          "description": "Array of file objects [{file_id, name, path, language, skip_id_naming?}, ...]",
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "file_id": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "language": {
+                    "type": "string"
+                  },
+                  "skip_id_naming": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "file_id",
+                  "name",
+                  "path"
+                ]
+              },
+              {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 5
+              }
+            ]
+          }
         }
       ],
-      "purpose": "Batch-finalize multiple reserved files after writing them to disk. All-or-nothing operation.",
+      "purpose": "Batch-finalize multiple reserved files after writing them to disk. All-or-nothing operation. Each path must be a regular file relative to the project root ('.' or a directory is refused).",
       "error_handling": "Return error if any file doesn't exist at path",
       "is_tool": true,
       "is_sub_helper": false,

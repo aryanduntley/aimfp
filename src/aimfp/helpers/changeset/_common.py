@@ -19,10 +19,17 @@ import sqlite3
 from typing import Dict, List, Tuple, Optional, Any
 
 from ..shared.slugs import mint_slug
-from ..utils import AIMFP_PROJECT_DIR
+from ..utils import AIMFP_PROJECT_DIR, get_aimfp_project_dir, get_project_dir_name
 
-# Relative path of the committed project DB inside the repo (for `git show`).
+# Relative path of the committed project DB inside the repo (for `git show`) for a
+# default root. Kept for compatibility; paths for a real root go through
+# project_db_rel_path so a project-dir override holds.
 PROJECT_DB_REL_PATH = f"{AIMFP_PROJECT_DIR}/project.db"
+
+
+def project_db_rel_path(project_root: str) -> str:
+    """Effect: repo-relative POSIX path of project.db for this root (for git)."""
+    return f"{get_project_dir_name(project_root)}/project.db"
 
 # ============================================================================
 # InterCommAIMFP presence gating (§3 of MERGE-ORCHESTRATOR-AND-BRIDGES.md)
@@ -76,8 +83,8 @@ def changeset_id_for(base_commit: Optional[str], branch: str) -> str:
 
 
 def _changeset_dir(project_root: str) -> str:
-    """Pure: absolute path of the per-project changeset store."""
-    return os.path.join(project_root, CHANGESET_DIR_REL)
+    """Effect: absolute path of the per-project changeset store."""
+    return os.path.join(get_aimfp_project_dir(project_root), "changesets")
 
 
 def _changeset_path(project_root: str, changeset_id: str) -> str:
@@ -88,7 +95,7 @@ def _changeset_path(project_root: str, changeset_id: str) -> str:
 def _effect_persist_changeset(project_root: str, changeset_id: str,
                               changeset: Dict[str, Any]) -> Optional[str]:
     """
-    Effect: Write a changeset to ``.aimfp-project/changesets/<id>.json``.
+    Effect: Write a changeset to ``<project folder>/changesets/<id>.json``.
 
     Returns the path on success, or None if the directory/file could not be written
     (persistence is best-effort — export still returns the full inline object too, so
@@ -253,7 +260,7 @@ def _effect_mint_missing_slugs(
 def _effect_extract_db_at_commit(
     project_root: str,
     commit: str,
-    rel_path: str = PROJECT_DB_REL_PATH,
+    rel_path: Optional[str] = None,
 ) -> Optional[str]:
     """
     Effect: Extract the committed project.db blob at `commit` into a temp file.
@@ -261,10 +268,12 @@ def _effect_extract_db_at_commit(
     Uses ``git -C <root> show <commit>:<rel_path>`` (binary). Returns the temp file
     path, or None if the blob does not exist at that commit (e.g. the DB predates
     that point) or git is unavailable. Caller owns the temp file (delete when done).
+    rel_path defaults to this root's project.db (project_db_rel_path).
     """
+    blob_path = rel_path or project_db_rel_path(project_root)
     try:
         result = subprocess.run(
-            ["git", "-C", project_root, "show", f"{commit}:{rel_path}"],
+            ["git", "-C", project_root, "show", f"{commit}:{blob_path}"],
             capture_output=True,
         )
     except FileNotFoundError:

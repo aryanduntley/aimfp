@@ -379,7 +379,10 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of flow IDs [1, 3, 5]"
+          "description": "Array of flow IDs [1, 3, 5]",
+          "items": {
+            "type": "integer"
+          }
         }
       ],
       "purpose": "Get all file IDs associated with flows",

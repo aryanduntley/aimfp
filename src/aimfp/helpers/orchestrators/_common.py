@@ -33,6 +33,8 @@ from ..utils import (
     get_user_preferences_db_path,
     get_user_directives_db_path,
     get_aimfp_project_dir,
+    get_project_dir_name,
+    resolve_project_relative,
     get_return_statements,
     database_exists,
     _get_table_names,
@@ -70,6 +72,8 @@ __all__ = [
     'get_user_preferences_db_path',
     'get_user_directives_db_path',
     'get_aimfp_project_dir',
+    'get_project_dir_name',
+    'resolve_project_relative',
     'get_return_statements',
     'database_exists',
     '_get_table_names',
@@ -114,7 +118,7 @@ __all__ = [
 # Orchestrator Constants
 # ============================================================================
 
-# File/directory names within .aimfp-project/
+# File/directory names within the project folder (get_aimfp_project_dir)
 BLUEPRINT_FILENAME: Final[str] = "ProjectBlueprint.md"
 BACKUPS_DIR_NAME: Final[str] = "backups"
 

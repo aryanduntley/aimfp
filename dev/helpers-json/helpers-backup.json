@@ -23,7 +23,12 @@
           "parameters_mapping": {},
           "description": "Create the backup archive on demand"
         }
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false
+      }
     },
     {
       "name": "list_project_backups",
@@ -64,7 +69,25 @@
           "name": "databases",
           "type": "array",
           "required": false,
-          "description": "Which members to restore: any of 'project', 'user_preferences', 'user_directives', 'blueprint', or 'all'. Accepts a list or comma-separated string. Defaults to everything the archive contains. Be specific — restoring everything to fix one corrupt database silently rolls back the others."
+          "description": "Which members to restore: any of 'project', 'user_preferences', 'user_directives', 'blueprint', or 'all'. Accepts a list or comma-separated string. Defaults to everything the archive contains. Be specific — restoring everything to fix one corrupt database silently rolls back the others.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "project",
+                  "user_preferences",
+                  "user_directives",
+                  "blueprint",
+                  "all"
+                ]
+              }
+            }
+          ]
         }
       ],
       "purpose": "Restore selected databases from a backup archive, side-by-side rather than in place. Every requested member is extracted to a temporary file FIRST; only once all extractions succeed is anything live touched. The current file is then moved into backups/ as 'replaced-<timestamp>-<filename>' and the restored copy moved into position. Nothing is ever deleted, so the displaced state remains recoverable.",
@@ -88,7 +111,12 @@
           "parameters_mapping": {},
           "description": "Restore selected databases from the chosen archive"
         }
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      }
     },
     {
       "name": "check_scheduled_backup_due",
@@ -113,7 +141,11 @@
           "parameters_mapping": {},
           "description": "Decide whether a scheduled backup is due before offering one"
         }
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
     }
   ]
 }

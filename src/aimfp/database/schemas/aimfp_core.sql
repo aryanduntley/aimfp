@@ -1,5 +1,5 @@
 -- aimfp_core.db Schema
--- Version: 2.4  (authoritative value is the INSERT at the bottom of this file;
+-- Version: 2.5  (authoritative value is the INSERT at the bottom of this file;
 --                keep this comment in sync with it)
 -- Purpose: Defines MCP-level directives (read-only) and helper functions
 -- This database is immutable once deployed; AI reads it but never modifies it.
@@ -11,6 +11,9 @@
 --
 -- Changelog 2.4: helper_functions.is_hook - the library surface for code
 --                outside AIMFP (see the column comment).
+-- Changelog 2.5: helper_functions.annotations - explicit MCP tool hints
+--                (readOnlyHint / destructiveHint / idempotentHint) that
+--                override the server's name-prefix guess.
 
 CREATE TABLE IF NOT EXISTS directives (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,6 +155,10 @@ CREATE TABLE IF NOT EXISTS helper_functions (
     -- TOOL_REGISTRY, so the sync registry guard must not flag it.
     is_hook BOOLEAN NOT NULL DEFAULT 0,
     return_statements JSON,                  -- JSON array of AI guidance after execution (e.g., next steps, validation checks)
+    -- MCP ToolAnnotations overrides, e.g. {"readOnlyHint": true}. NULL = the
+    -- server derives hints from the tool name (get_/search_/delete_ ...).
+    -- Set it wherever the name misleads (aimfp_run writes; scan_* reads).
+    annotations JSON,
     target_database TEXT CHECK (target_database IN (
         'core',              -- aimfp_core.db (directives, helpers, directive_flow)
         'project',           -- project.db (single-database CRUD operations)
@@ -259,4 +266,4 @@ CREATE TABLE IF NOT EXISTS system_notices (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '2.4');
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '2.5');

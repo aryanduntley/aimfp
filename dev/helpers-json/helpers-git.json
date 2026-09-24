@@ -344,7 +344,12 @@
           "parameters_mapping": {},
           "description": "Tool that implements git_sync_state directive - gets current Git HEAD, compares with stored hash, triggers external change detection if hash differs, updates last_known_git_hash and last_git_sync timestamp"
         }
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
     },
     {
       "name": "project_update_git_status",

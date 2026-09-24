@@ -34,7 +34,7 @@ from ._common import (
     row_to_dict,
     rows_to_tuple,
     Result,
-    AIMFP_PROJECT_DIR,
+    get_project_dir_name,
     PROJECT_DB_NAME,
     USER_PREFERENCES_DB_NAME,
     BLUEPRINT_FILENAME,
@@ -50,26 +50,36 @@ from ._common import (
 from .backup import check_and_run_backup
 from .migration import _check_pending_migrations
 from .status import get_project_status
-from ..project.metadata import reconcile_stored_source_directory
+from ..project.metadata import (
+    reconcile_stored_source_directory,
+    root_rewrite_report,
+    stored_root_mismatch,
+)
 
 
-def _reconcile_stored_project_root(project_root: str) -> None:
+def _reconcile_stored_project_root(project_root: str) -> Optional[Dict[str, Any]]:
     """
-    Effect: Heal infrastructure.project_root to the LIVE resolved root.
+    Effect: Heal infrastructure.project_root to the LIVE resolved root, and say so.
 
     When the MCP server runs inside a linked git worktree, the committed
     project.db carries the main checkout's absolute path in
-    infrastructure.project_root. After resolution binds the server to the
-    worktree (see _discover_project_root), this rewrites the stored value so
-    get_project_root()/aimfp_status report the worktree and the worktree's
-    project.db is self-consistent. No-op when the values already match (the
-    normal single-tree case). Non-fatal on any error — tracking still works off
-    the cached live root regardless of the stored value.
+    infrastructure.project_root; a moved or copied project carries its old
+    path. After resolution binds the server to the live root (see
+    _discover_project_root), this rewrites the stored value so
+    get_project_root()/aimfp_status report it and project.db is
+    self-consistent. No-op when the values already match (the normal
+    single-tree case); a symlink-only difference is normalized silently.
+    Non-fatal on any error — tracking still works off the cached live root
+    regardless of the stored value.
+
+    Returns:
+        root_rewrite_report {from, to, reason, original_exists} when a real
+        move/copy/worktree difference was rewritten, else None
     """
     try:
         db_path = get_project_db_path(project_root)
         if not database_exists(db_path):
-            return
+            return None
         # Read on a read-only connection first. The common case is a match,
         # and a no-op reconciliation must leave the database byte-identical —
         # the read-write opener writes journal_mode into the file header, which
@@ -83,8 +93,13 @@ def _reconcile_stored_project_root(project_root: str) -> None:
         finally:
             probe.close()
 
-        if stored == project_root:
-            return
+        if stored is None or stored == project_root:
+            return None
+
+        report = (
+            root_rewrite_report(stored, project_root)
+            if stored_root_mismatch(stored, project_root) else None
+        )
 
         conn = _open_connection(db_path)
         try:
@@ -95,13 +110,10 @@ def _reconcile_stored_project_root(project_root: str) -> None:
             conn.commit()
         finally:
             conn.close()
+        return report
     except Exception:
-        pass
+        return None
 
-
-# ============================================================================
-# aimfp_init
-# ============================================================================
 
 def aimfp_init(project_root: str, init_git: bool = True) -> Result:
     """
@@ -150,12 +162,13 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
         DEFAULT_WATCHDOGIGNORE_CONTENT,
     )
     watchdogignore_path = get_watchdogignore_path(project_root)
+    dir_name = get_project_dir_name(project_root)
     artifacts = (
-        (f'{AIMFP_PROJECT_DIR}/', aimfp_dir),
-        (f'{AIMFP_PROJECT_DIR}/{BACKUPS_DIR_NAME}/', backups_dir),
-        (f'{AIMFP_PROJECT_DIR}/{PROJECT_DB_NAME}', project_db_path),
-        (f'{AIMFP_PROJECT_DIR}/{USER_PREFERENCES_DB_NAME}', prefs_db_path),
-        (f'{AIMFP_PROJECT_DIR}/{BLUEPRINT_FILENAME}', blueprint_dest),
+        (f'{dir_name}/', aimfp_dir),
+        (f'{dir_name}/{BACKUPS_DIR_NAME}/', backups_dir),
+        (f'{dir_name}/{PROJECT_DB_NAME}', project_db_path),
+        (f'{dir_name}/{USER_PREFERENCES_DB_NAME}', prefs_db_path),
+        (f'{dir_name}/{BLUEPRINT_FILENAME}', blueprint_dest),
         ('.watchdogignore', watchdogignore_path),
     )
 
@@ -163,7 +176,7 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
         # Step 1: Check if already initialized
         step = 1
         if database_exists(project_db_path):
-            migration_data = _check_pending_migrations(project_root, AIMFP_PROJECT_DIR)
+            migration_data = _check_pending_migrations(project_root, get_project_dir_name(project_root))
             return Result(
                 success=False,
                 data={
@@ -404,12 +417,14 @@ def cleanup_targets_for_failed_init(
     """
     Pure: Decide what to delete after a failed init without touching prior files.
 
-    When init created .aimfp-project/ itself, the whole directory goes. When the
-    directory already existed (e.g. a lost project.db beside surviving backups),
-    only the inner paths init created are removed.
+    When init created the project folder itself, the whole folder goes. When the
+    folder already existed (e.g. a lost project.db beside surviving backups),
+    only the inner paths init created are removed. aimfp_dir is the LEAF: for a
+    project-dir override like '.svamanas/brain' only brain/ is removed, never
+    the .svamanas/ it sits in.
 
     Args:
-        aimfp_dir: Absolute path to .aimfp-project/
+        aimfp_dir: Absolute path to the project folder (get_aimfp_project_dir)
         inner_paths: Absolute paths init may write inside aimfp_dir
         pre_existing: Absolute paths that existed before init wrote anything
 
@@ -624,10 +639,17 @@ def aimfp_status(
         # Supportive context (detailed FP examples, DRY, state DB, etc.)
         supportive_context = _get_supportive_context_safe()
 
+        stored_root = next(
+            (row.get('value') for row in infrastructure if row.get('type') == 'project_root'),
+            None,
+        )
+
         data = {
             'initialized': True,
             'project_metadata': project_metadata,
             'infrastructure': infrastructure,
+            # Read-only report: aimfp_run rewrites the record, status never does
+            'stored_root_mismatch': stored_root_mismatch(stored_root, project_root),
             'work_hierarchy': work_hierarchy,
             'user_directives_status': user_directives_status,
             'user_directives_data': user_directives_data,
@@ -661,10 +683,58 @@ def aimfp_status(
 
 
 # ============================================================================
+# Session watchdog switch (python -m aimfp --no-watchdog)
+# ============================================================================
+#
+# A host that runs its own watcher on this server's root (svamanas watches its
+# home in-process) starts the server with --no-watchdog. aimfp_run then never
+# spawns the daemon, but still reconciles and reports the reminders that the
+# host's watcher writes into the same <project folder>/watchdog/.
+
+_session_watchdog_enabled: bool = True
+
+WATCHDOG_DISABLED_BY = '--no-watchdog'
+WATCHDOG_DISABLED_NOTICE = (
+    "Watchdog daemon disabled by --no-watchdog: the host that started this "
+    "server runs its own watcher on this project. Its reminders are reported "
+    "here. No action needed; do not try to restart it."
+)
+
+
+def set_session_watchdog_enabled(enabled: bool) -> None:
+    """Effect: Allow or forbid aimfp_run to spawn the watchdog daemon (process-wide)."""
+    global _session_watchdog_enabled
+    _session_watchdog_enabled = bool(enabled)
+
+
+def session_watchdog_enabled() -> bool:
+    """Effect: Whether aimfp_run may spawn the watchdog daemon in this process."""
+    return _session_watchdog_enabled
+
+
+def disabled_watchdog_status(watchdog_read: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Pure: Watchdog data for a server started with --no-watchdog.
+
+    Reports status 'disabled' (not 'failed' or 'not_running', which would tell
+    the AI to restart it) while passing the reminders through unchanged.
+    """
+    return {
+        'started': False,
+        'confirmed': False,
+        'start_error': None,
+        'status': 'disabled',
+        'disabled_by': WATCHDOG_DISABLED_BY,
+        'reminders': watchdog_read.get('reminders', ()),
+        'notice': WATCHDOG_DISABLED_NOTICE,
+    }
+
+
+# ============================================================================
 # aimfp_run
 # ============================================================================
 
-def aimfp_run(is_new_session: bool = False, start_watchdog: bool = True) -> Result:
+def aimfp_run(is_new_session: bool = False, start_watchdog: Optional[bool] = None) -> Result:
     """
     Main entry point orchestrator. Called on every AI interaction.
 
@@ -681,10 +751,12 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: bool = True) -> Resu
     Args:
         is_new_session: True for first interaction / new session / after breaks
         start_watchdog: Spawn the detached watchdog subprocess on a new
-            session (default True — the MCP behavior). Embedding hosts pass
-            False to run the watcher in-process instead (see
-            aimfp.watchdog.start_watcher); reconciliation and reminder
-            reading still run, watchdog status reports 'external'.
+            session. None (default) follows the process switch: spawn,
+            unless the server was started with --no-watchdog, in which case
+            status reports 'disabled'. Embedding hosts pass False to run the
+            watcher in-process instead (see aimfp.watchdog.start_watcher);
+            reconciliation and reminder reading still run, watchdog status
+            reports 'external'. An explicit True always spawns.
 
     Returns:
         If is_new_session=True:
@@ -719,6 +791,8 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: bool = True) -> Resu
                 )
 
             watchdog_data = _read_reminders(project_root)
+            if not _session_watchdog_enabled:
+                watchdog_data = disabled_watchdog_status(watchdog_data)
             reminders = watchdog_data.get('reminders', ())
 
             if not reminders:
@@ -766,13 +840,17 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: bool = True) -> Resu
         # then project_root, so get_project_root()/get_source_directory()/
         # aimfp_status and the watchdog all track the worktree and the worktree's
         # project.db is self-consistent. No-op for normal single-tree projects.
-        reconcile_stored_source_directory(project_root)
-        _reconcile_stored_project_root(project_root)
+        source_directory_rewritten = reconcile_stored_source_directory(project_root)
+        project_root_rewritten = _reconcile_stored_project_root(project_root)
 
         # Watchdog: start subprocess first (skip reconciliation — we run it here),
         # then run reconciliation synchronously to eliminate race condition,
         # then read reminders (now includes reconciliation results).
-        if start_watchdog:
+        if start_watchdog is None and not _session_watchdog_enabled:
+            # Started with --no-watchdog: the host's watcher writes reminders
+            _run_reconciliation_sync(project_root)
+            watchdog_data = disabled_watchdog_status(_read_reminders(project_root))
+        elif start_watchdog is None or start_watchdog:
             watchdog_start = _start_watchdog(project_root)
             _run_reconciliation_sync(project_root)
             watchdog_read = _read_reminders(project_root)
@@ -826,7 +904,7 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: bool = True) -> Resu
         pending_notices = _get_pending_notices_safe()
 
         # Migration check: detect pending schema migrations
-        migration_data = _check_pending_migrations(project_root, AIMFP_PROJECT_DIR)
+        migration_data = _check_pending_migrations(project_root, get_project_dir_name(project_root))
 
         # Deferred notes: surface outstanding deferred work
         deferred_notes = _get_deferred_notes_summary(project_root)
@@ -835,6 +913,9 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: bool = True) -> Resu
             success=True,
             data={
                 'project_root': project_root,
+                # Present only when this call rewrote a stale record
+                'project_root_rewritten': project_root_rewritten,
+                'source_directory_rewritten': source_directory_rewritten,
                 'status': status_data,
                 'user_settings': user_settings,
                 'guidance': _get_guidance(),
@@ -1130,6 +1211,7 @@ def _start_watchdog(project_root: str) -> Dict[str, Any]:
     import time
 
     from ...watchdog.config import get_watchdog_dir, get_pid_path
+    from ...database.connection import project_dir_cli_args
 
     watchdog_dir = get_watchdog_dir(project_root)
     pid_path = get_pid_path(project_root)
@@ -1153,7 +1235,8 @@ def _start_watchdog(project_root: str) -> Dict[str, Any]:
     try:
         os.makedirs(watchdog_dir, exist_ok=True)
         proc = subprocess.Popen(
-            [sys.executable, '-m', 'aimfp.watchdog', project_root, '--skip-reconciliation'],
+            [sys.executable, '-m', 'aimfp.watchdog', project_root, '--skip-reconciliation',
+             *project_dir_cli_args(project_root)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -1204,9 +1287,15 @@ def _run_reconciliation_sync(project_root: str) -> None:
     reconciliation results are immediately available — eliminates
     the race condition where the async subprocess writes reminders
     after aimfp_run has already read the file.
+
+    Creates the watchdog folder first: reminders are appended into it, and
+    only the daemon launch used to create it, so with no daemon (an embedding
+    host's start_watchdog=False, or --no-watchdog) the findings were dropped.
     """
     try:
+        from ...watchdog.config import get_watchdog_dir
         from ...watchdog.reconciliation import run_startup_reconciliation
+        os.makedirs(get_watchdog_dir(project_root), exist_ok=True)
         run_startup_reconciliation(project_root)
     except Exception:
         pass  # Non-critical — subprocess fallback will catch issues
@@ -1231,7 +1320,7 @@ def _read_reminders(project_root: str) -> Dict[str, Any]:
             notice: str or None
         }
     """
-    from ...watchdog.config import get_reminders_path, get_pid_path
+    from ...watchdog.config import get_reminders_path, get_pid_path, get_watchdog_dir
     from ...watchdog.reminders import _effect_read_reminders
 
     pid_path = get_pid_path(project_root)
@@ -1251,7 +1340,7 @@ def _read_reminders(project_root: str) -> Dict[str, Any]:
         ) if not is_running else (
             "Watchdog PID file exists but reminders file is missing. "
             "Watchdog may have failed to initialize. Check "
-            ".aimfp-project/watchdog/ directory."
+            f"{get_watchdog_dir(project_root)}."
         )
         return {
             'status': status,

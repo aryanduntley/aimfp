@@ -278,7 +278,21 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of {name: string, description?: string} objects"
+          "description": "Array of {name: string, description?: string} objects",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
         }
       ],
       "purpose": "Batch-create multiple work items under a single parent in one call. All items created with status 'pending'.",
@@ -413,7 +427,10 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of item IDs to update"
+          "description": "Array of item IDs to update",
+          "items": {
+            "type": "integer"
+          }
         },
         {
           "name": "data",
@@ -711,7 +728,10 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "List of note_type values to exclude from results (e.g., ['completed', 'obsolete'])"
+          "description": "List of note_type values to exclude from results (e.g., ['completed', 'obsolete'])",
+          "items": {
+            "type": "string"
+          }
         },
         {
           "name": "limit",
@@ -825,7 +845,10 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "List of note_type values to exclude from results (e.g., ['completed', 'obsolete'])"
+          "description": "List of note_type values to exclude from results (e.g., ['completed', 'obsolete'])",
+          "items": {
+            "type": "string"
+          }
         },
         {
           "name": "limit",

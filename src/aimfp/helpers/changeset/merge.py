@@ -40,7 +40,7 @@ from ..utils import (
     _open_connection,
     get_return_statements,
 )
-from ._common import PROJECT_DB_REL_PATH, intercomm_present
+from ._common import intercomm_present, project_db_rel_path
 from .export import export_state_changeset
 from .apply import apply_state_changeset
 
@@ -89,14 +89,15 @@ def _effect_source_merge(project_root: str, branch: str) -> Dict[str, Any]:
     # The changeset is the ONLY thing allowed to move DB state, and the working project.db
     # IS current-main here. Reset it to HEAD first so byte-level drift left by other tools
     # opening it (e.g. SQLite WAL checkpoints) doesn't make git refuse the merge as dirty.
-    _git(project_root, ["checkout", "HEAD", "--", PROJECT_DB_REL_PATH])
+    db_rel = project_db_rel_path(project_root)
+    _git(project_root, ["checkout", "HEAD", "--", db_rel])
 
     rc, _out, err = _git(project_root, ["merge", "--no-commit", "--no-ff", branch])
     conflicts = _unmerged_paths(project_root)
 
     # Whatever happened to project.db in the merge, restore it to HEAD (main): the changeset
     # is the only thing allowed to move DB state. This also resolves a DB merge conflict.
-    _git(project_root, ["checkout", "HEAD", "--", PROJECT_DB_REL_PATH])
+    _git(project_root, ["checkout", "HEAD", "--", db_rel])
 
     if rc != 0 and not conflicts:
         # Not a conflict — a genuine merge error (dirty tree, unknown ref, etc.). Abort to
@@ -106,7 +107,7 @@ def _effect_source_merge(project_root: str, branch: str) -> Dict[str, Any]:
                 "in_progress": False}
 
     merged_paths = [p for p in _staged_paths(project_root)
-                    if p != PROJECT_DB_REL_PATH and p not in conflicts]
+                    if p != db_rel and p not in conflicts]
     return {"merged_paths": merged_paths, "conflicts": conflicts, "in_progress": True}
 
 

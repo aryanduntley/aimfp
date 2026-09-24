@@ -12,6 +12,7 @@ from typing import Final, Optional, Pattern
 
 from ..database.connection import (
     AIMFP_PROJECT_DIR,
+    get_aimfp_project_dir,
     get_project_db_path as _foundation_get_project_db_path,
     get_user_preferences_db_path as _foundation_get_preferences_db_path,
 )
@@ -157,8 +158,8 @@ SEVERITY_WARNING: Final[str] = "warning"
 # ============================================================================
 
 def get_watchdog_dir(project_root: str) -> str:
-    """Pure: Get path to .aimfp-project/watchdog/ directory."""
-    return os.path.join(project_root, AIMFP_PROJECT_DIR, WATCHDOG_DIR_NAME)
+    """Effect: Get path to <project folder>/watchdog/ (honours the project-dir override)."""
+    return os.path.join(get_aimfp_project_dir(project_root), WATCHDOG_DIR_NAME)
 
 
 def get_reminders_path(project_root: str) -> str:
@@ -199,6 +200,19 @@ def build_exclusion_sets(
     merged_dirs = EXCLUDED_DIRS | frozenset(user_excluded_dirs)
     merged_exts = EXCLUDED_EXTENSIONS | frozenset(user_excluded_extensions)
     return (merged_dirs, merged_exts)
+
+
+def project_folder_ignore_patterns(project_dir_name: str) -> tuple[str, ...]:
+    """
+    Pure: Ignore patterns that keep a root's own project folder out of the watch.
+
+    '.aimfp-project' is already in EXCLUDED_DIRS, so it needs none. An
+    overridden folder ('.svamanas/brain') becomes an anchored pattern, which
+    matches_ignore_patterns treats as the path and its whole subtree.
+    """
+    if project_dir_name == AIMFP_PROJECT_DIR:
+        return ()
+    return (project_dir_name,)
 
 
 def parse_watchdogignore(content: str) -> tuple[str, ...]:

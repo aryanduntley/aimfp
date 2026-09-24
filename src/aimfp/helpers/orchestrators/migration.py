@@ -32,6 +32,7 @@ from ._common import (
     get_return_statements,
     Result,
     AIMFP_PROJECT_DIR,
+    resolve_project_relative,
 )
 
 
@@ -188,7 +189,9 @@ def _check_pending_migrations(project_root: str, aimfp_folder: str) -> Dict[str,
 
     Args:
         project_root: Absolute path to project root
-        aimfp_folder: AIMFP project directory name (e.g., '.aimfp-project')
+        aimfp_folder: AIMFP project directory name (e.g., '.aimfp-project').
+            The default name is re-rooted onto the root's actual project
+            folder (resolve_project_relative), so a project-dir override holds.
 
     Returns:
         {
@@ -232,7 +235,7 @@ def _check_pending_migrations(project_root: str, aimfp_folder: str) -> Dict[str,
             'skipped': [],
         }
 
-    aimfp_dir = os.path.join(project_root, aimfp_folder)
+    aimfp_dir = resolve_project_relative(project_root, aimfp_folder)
     pending = []
     up_to_date = []
     skipped = []
@@ -371,7 +374,8 @@ def migrate_databases(
     5. Returns temp paths for AI to verify and place
 
     Args:
-        aimfp_folder: AIMFP project directory name (default '.aimfp-project')
+        aimfp_folder: AIMFP project directory name (default '.aimfp-project',
+            which resolves to the project-dir override when one is set)
 
     Returns:
         Result with migrated DB temp paths and verification data

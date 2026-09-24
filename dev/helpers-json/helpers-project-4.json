@@ -47,14 +47,14 @@
           "description": "If true, skip ID embedding in name. Sets id_in_name=0 in database."
         }
       ],
-      "purpose": "Reserve a type ID before writing the definition. Include definition_json and description \u2014 null fields force full file reads in future sessions.",
+      "purpose": "Reserve a type ID before writing the definition. Include definition_json and description — null fields force full file reads in future sessions.",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
         "Use returned ID for type naming: {TypeName}_id_{id}",
-        "MANDATORY: Include definition_json (full type shape) AND description (what it represents, 5-10 words). Types are the MOST frequently looked-up entities \u2014 they are how AI understands data shapes without reading files. Incomplete type entries force full file reads that the DB should eliminate. Example: definition_json={'kind': 'union', 'variants': [{'kind': 'handle', 'handle': 'Handle'}, {'kind': 'direct', 'address': 'string'}]}, description='Payment recipient \u2014 handle or direct address'",
-        "Next: write type definition with ID in name \u2192 finalize_type(type_id, name, definition_json)"
+        "MANDATORY: Include definition_json (full type shape) AND description (what it represents, 5-10 words). Types are the MOST frequently looked-up entities — they are how AI understands data shapes without reading files. Incomplete type entries force full file reads that the DB should eliminate. Example: definition_json={'kind': 'union', 'variants': [{'kind': 'handle', 'handle': 'Handle'}, {'kind': 'direct', 'address': 'string'}]}, description='Payment recipient — handle or direct address'",
+        "Next: write type definition with ID in name → finalize_type(type_id, name, definition_json)"
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -91,7 +91,40 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of type objects [{name, definition_json, description, links, file_id, skip_id_naming?}, ...]"
+          "description": "Array of type objects [{name, definition_json, description, links, file_id, skip_id_naming?}, ...]",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "definition_json": {
+                "anyOf": [
+                  {
+                    "type": "object"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "links": {
+                "type": "object"
+              },
+              "file_id": {
+                "type": "integer"
+              },
+              "skip_id_naming": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
         }
       ],
       "purpose": "Batch-reserve type IDs before writing multiple type definitions. Include definition_json and description for every type.",
@@ -100,8 +133,8 @@
       "is_sub_helper": false,
       "return_statements": [
         "Use returned IDs for type naming: {TypeName}_id_{id}",
-        "MANDATORY: Include definition_json (full type shape) AND description for EVERY type. Types are the MOST frequently looked-up entities \u2014 they are how AI understands data shapes without reading files. Incomplete type entries force full file reads that the DB should eliminate.",
-        "Next: write type definitions with IDs in names \u2192 finalize_types([{type_id, name, definition_json}, ...])"
+        "MANDATORY: Include definition_json (full type shape) AND description for EVERY type. Types are the MOST frequently looked-up entities — they are how AI understands data shapes without reading files. Incomplete type entries force full file reads that the DB should eliminate.",
+        "Next: write type definitions with IDs in names → finalize_types([{type_id, name, definition_json}, ...])"
       ],
       "target_database": "project",
       "used_by_directives": [],
@@ -172,7 +205,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "WARNING: Verify definition_json and description are populated. Types with null description are incomplete tracking entries \u2014 future AI sessions cannot understand the type shape from the DB. If description is null, populate it NOW via update_type(). This is your last chance before the type is considered 'tracked'.",
+        "WARNING: Verify definition_json and description are populated. Types with null description are incomplete tracking entries — future AI sessions cannot understand the type shape from the DB. If description is null, populate it NOW via update_type(). This is your last chance before the type is considered 'tracked'.",
         "Do any type-function relationships need to be added in types_functions table?",
         "If called during project_reserve_finalize: follow project_update_db directive to sync type registrations."
       ],
@@ -212,7 +245,44 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of type objects [{type_id, name, definition_json, description, links, file_id, skip_id_naming?}, ...]"
+          "description": "Array of type objects [{type_id, name, definition_json, description, links, file_id, skip_id_naming?}, ...]",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type_id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "definition_json": {
+                "anyOf": [
+                  {
+                    "type": "object"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "links": {
+                "type": "object"
+              },
+              "file_id": {
+                "type": "integer"
+              },
+              "skip_id_naming": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "type_id",
+              "name"
+            ]
+          }
         }
       ],
       "purpose": "Finalize multiple reserved types",
@@ -220,7 +290,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "WARNING: Verify definition_json and description are populated for ALL types. Types with null description are incomplete tracking entries \u2014 future AI sessions cannot understand type shapes from the DB. If any description is null, populate it NOW via update_type(). This is your last chance before types are considered 'tracked'.",
+        "WARNING: Verify definition_json and description are populated for ALL types. Types with null description are incomplete tracking entries — future AI sessions cannot understand type shapes from the DB. If any description is null, populate it NOW via update_type(). This is your last chance before types are considered 'tracked'.",
         "Do any type-function relationships need to be added in types_functions table?",
         "If called during project_reserve_finalize: follow project_update_db directive to sync type registrations."
       ],
@@ -397,7 +467,7 @@
           "description": "If true, return only id/name + definition_json/description/links (when AI already has the rest)"
         }
       ],
-      "purpose": "Look up a tracked type by name with full definition and file location \u2014 use BEFORE reading source files. Returns definition_json and description.",
+      "purpose": "Look up a tracked type by name with full definition and file location — use BEFORE reading source files. Returns definition_json and description.",
       "error_handling": "Return error if no types found with that name",
       "is_tool": true,
       "is_sub_helper": false,
@@ -439,16 +509,41 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of tuples [(type_id, function_id, role), ...] - role: 'factory', 'transformer', 'operator', 'pattern_matcher', 'accessor', 'validator', 'combinator'"
+          "description": "Array of tuples [(type_id, function_id, role), ...] - role: 'factory', 'transformer', 'operator', 'pattern_matcher', 'accessor', 'validator', 'combinator'",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "factory",
+                  "transformer",
+                  "operator",
+                  "pattern_matcher",
+                  "accessor",
+                  "validator",
+                  "combinator"
+                ]
+              }
+            ],
+            "minItems": 3,
+            "maxItems": 3
+          }
         }
       ],
-      "purpose": "Link tracked types to the functions that use them with a role (factory, transformer, validator, etc.). Enables 'what functions use TypeX?' queries.",
+      "purpose": "Link tracked types to the functions that use them with a role (factory, transformer, validator, etc.). Enables 'what functions use TypeX?' queries. Links already tracked are skipped and counted in skipped_count instead of failing the batch.",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Verify all functions that consume or produce tracked types have been linked. Missing type-function relationships make 'what functions use TypeX?' queries incomplete \u2014 the AI loses refactoring impact analysis for that type.",
-        "Role auto-inference guide: returns type only \u2192 'factory'; params AND returns same type \u2192 'transformer'; params with boolean/Result return \u2192 'validator'; params only \u2192 'accessor' or 'operator'. For complex cases: 'pattern_matcher' (destructures type variants), 'combinator' (combines multiple instances of type). Correct auto-inferred roles if needed via update_type_function_role."
+        "Verify all functions that consume or produce tracked types have been linked. Missing type-function relationships make 'what functions use TypeX?' queries incomplete — the AI loses refactoring impact analysis for that type.",
+        "Role auto-inference guide: returns type only → 'factory'; params AND returns same type → 'transformer'; params with boolean/Result return → 'validator'; params only → 'accessor' or 'operator'. For complex cases: 'pattern_matcher' (destructures type variants), 'combinator' (combines multiple instances of type). Correct auto-inferred roles if needed via update_type_function_role."
       ],
       "implementation_notes": [
         "Returns: {success: true, ids: [int, ...]} - inserted relationship IDs",
@@ -466,7 +561,12 @@
           "parameters_mapping": {},
           "description": "Track type-function relationships after code generation - creates relationship records for factory/transformer/accessor functions"
         }
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
     },
     {
       "name": "update_type_function_role",
@@ -586,7 +686,7 @@
           "description": "Interaction type ('call', 'chain', 'borrow', 'compose', 'pipe')"
         }
       ],
-      "purpose": "Record a dependency between two functions by name (call, chain, borrow, compose, pipe). Interactions are how the AI traces dependency graphs.",
+      "purpose": "Record a dependency between two functions by name (call, chain, borrow, compose, pipe). Interactions are how the AI traces dependency graphs. An edge already tracked is not duplicated (already_existed=true).",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
@@ -597,7 +697,7 @@
         "Returns: {success: true, id: int} - new interaction ID",
         "Inserts into interactions table",
         "Source/target are function names - resolved to IDs internally via JOIN with files table",
-        "DISAMBIGUATION: If function name matches multiple functions, returns error with list of matches [{id, name, file_name, file_path}] \u2014 AI should choose the correct one and call add_interactions with specific function IDs instead",
+        "DISAMBIGUATION: If function name matches multiple functions, returns error with list of matches [{id, name, file_name, file_path}] — AI should choose the correct one and call add_interactions with specific function IDs instead",
         "If exactly 1 match: proceeds normally. If 0 matches: returns 'not found' error"
       ],
       "target_database": "project",
@@ -610,7 +710,12 @@
           "parameters_mapping": {},
           "description": "Track function dependencies after code generation - creates interaction records for function relationships"
         }
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
     },
     {
       "name": "add_interactions",
@@ -621,10 +726,39 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of tuples [(source_function_id, target_function_id, interaction_type, description), ...] - type: 'call', 'chain', 'borrow', 'compose', 'pipe'"
+          "description": "Array of tuples [(source_function_id, target_function_id, interaction_type, description), ...] - type: 'call', 'chain', 'borrow', 'compose', 'pipe'",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "call",
+                  "chain",
+                  "borrow",
+                  "compose",
+                  "pipe"
+                ]
+              },
+              {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            ],
+            "minItems": 4,
+            "maxItems": 4
+          }
         }
       ],
-      "purpose": "Batch-record function dependencies by ID. More efficient than multiple add_interaction calls for tracking all cross-function dependencies.",
+      "purpose": "Batch-record function dependencies by ID. More efficient than multiple add_interaction calls for tracking all cross-function dependencies. Edges already tracked (same source, target, type) are skipped and counted in skipped_count; ids stay in input order.",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
@@ -646,7 +780,12 @@
           "parameters_mapping": {},
           "description": "Batch track function dependencies after code generation - more efficient for multiple interactions"
         }
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
     },
     {
       "name": "update_interaction",
@@ -779,12 +918,12 @@
           "description": "Function name to look up interactions for"
         }
       ],
-      "purpose": "Get all interactions for a function (both as source and target) \u2014 trace dependency graphs",
+      "purpose": "Get all interactions for a function (both as source and target) — trace dependency graphs",
       "error_handling": "Return error if query fails",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "The graph holds only interactions recorded via add_interactions \u2014 before a risky change, confirm callers in source if the list looks incomplete. Missing edges you find are tracking gaps: record them with add_interactions."
+        "The graph holds only interactions recorded via add_interactions — before a risky change, confirm callers in source if the list looks incomplete. Missing edges you find are tracking gaps: record them with add_interactions."
       ],
       "implementation_notes": [
         "Returns: {success, interactions: [{id, source_function_id, source_function_name, source_file_name, source_file_path, target_function_id, target_function_name, target_file_name, target_file_path, interaction_type, description, created_at, updated_at}, ...]}",
@@ -801,7 +940,7 @@
           "sequence_order": 2,
           "is_required": false,
           "parameters_mapping": {},
-          "description": "Trace function dependency graph during investigation \u2014 query interactions before reading source files"
+          "description": "Trace function dependency graph during investigation — query interactions before reading source files"
         }
       ]
     },
@@ -817,12 +956,12 @@
           "description": "File ID to look up interactions for"
         }
       ],
-      "purpose": "Get all interactions for functions in a file \u2014 understand file's dependency role",
+      "purpose": "Get all interactions for functions in a file — understand file's dependency role",
       "error_handling": "Return error if query fails",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "The graph holds only interactions recorded via add_interactions \u2014 if a known dependency is missing, it is a tracking gap: record it with add_interactions."
+        "The graph holds only interactions recorded via add_interactions — if a known dependency is missing, it is a tracking gap: record it with add_interactions."
       ],
       "implementation_notes": [
         "Returns: {success, interactions: [{id, source_function_id, source_function_name, source_file_name, source_file_path, target_function_id, target_function_name, target_file_name, target_file_path, interaction_type, description, created_at, updated_at}, ...]}",
@@ -839,7 +978,7 @@
           "sequence_order": 3,
           "is_required": false,
           "parameters_mapping": {},
-          "description": "Trace file-level dependency graph during investigation \u2014 query all interactions for functions in a file"
+          "description": "Trace file-level dependency graph during investigation — query all interactions for functions in a file"
         }
       ]
     },
@@ -887,9 +1026,9 @@
       "used_by_directives": [],
       "implementation_notes": [
         "Terms built by helpers/shared/fts_query.py (quoted, OR-joined prefix terms)",
-        "Ranked by bm25(types_fts, 5.0, 1.0) \u2014 name matches weigh more than description matches",
+        "Ranked by bm25(types_fts, 5.0, 1.0) — name matches weigh more than description matches",
         "Fallback: build_like_clause per term when types_fts is missing (pre-migration databases)",
-        "Returns: {types[], total_count} \u2014 total_count is the match count before limit"
+        "Returns: {types[], total_count} — total_count is the match count before limit"
       ]
     }
   ],

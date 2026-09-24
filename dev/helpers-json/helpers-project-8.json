@@ -232,14 +232,24 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "[start_date, end_date]"
+          "description": "[start_date, end_date]",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "maxItems": 2
         },
         {
           "name": "date_range_updated",
           "type": "array",
           "required": false,
           "default": null,
-          "description": "[start_date, end_date]"
+          "description": "[start_date, end_date]",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "maxItems": 2
         },
         {
           "name": "task_id",
@@ -471,7 +481,10 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "JSON array of flow IDs"
+          "description": "JSON array of flow IDs",
+          "items": {
+            "type": "integer"
+          }
         }
       ],
       "purpose": "Create an urgent interruption that pauses the current task. Use for bug fixes, blockers, or unexpected work discovered mid-task.",
@@ -579,14 +592,24 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "[start_date, end_date]"
+          "description": "[start_date, end_date]",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "maxItems": 2
         },
         {
           "name": "date_range_updated",
           "type": "array",
           "required": false,
           "default": null,
-          "description": "[start_date, end_date]"
+          "description": "[start_date, end_date]",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "maxItems": 2
         },
         {
           "name": "task_id",
@@ -758,7 +781,10 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "Array of flow IDs (NULL = don't update)"
+          "description": "Array of flow IDs (NULL = don't update)",
+          "items": {
+            "type": "integer"
+          }
         },
         {
           "name": "priority",

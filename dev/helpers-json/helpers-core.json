@@ -102,7 +102,10 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of integer IDs to fetch, **empty array [] returns ALL records**"
+          "description": "Array of integer IDs to fetch, **empty array [] returns ALL records**",
+          "items": {
+            "type": "integer"
+          }
         }
       ],
       "purpose": "Get records by ID(s), or all records if empty array",
@@ -356,7 +359,18 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Single keyword string or array of keywords"
+          "description": "Single keyword string or array of keywords",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         },
         {
           "name": "match_mode",
@@ -383,7 +397,18 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Single keyword or array of keywords"
+          "description": "Single keyword or array of keywords",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
         },
         {
           "name": "match_mode",
@@ -956,7 +981,10 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "Optional array of directive types to filter: ['fp', 'project', 'git', 'user_preferences', 'user_system']. If not provided, returns ALL directive names."
+          "description": "Optional array of directive types to filter: ['fp', 'project', 'git', 'user_preferences', 'user_system']. If not provided, returns ALL directive names.",
+          "items": {
+            "type": "string"
+          }
         }
       ],
       "purpose": "Get list of all directive names (or filtered by types). Returns names only, NOT full directive data. AI queries by name when needs details.",

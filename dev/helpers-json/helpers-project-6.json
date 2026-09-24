@@ -617,7 +617,20 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of [file_id, flow_id] tuples to create"
+          "description": "Array of [file_id, flow_id] tuples to create",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
         }
       ],
       "purpose": "Batch-assign multiple files to flows. Skips existing links silently. More efficient than multiple add_file_to_flow calls.",
@@ -643,7 +656,12 @@
           "parameters_mapping": {},
           "description": "Batch link files to flows during theme-flow mapping — efficient for multiple file assignments"
         }
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
     },
     {
       "name": "remove_file_from_flow",
@@ -677,7 +695,12 @@
         "Returns error if link does not exist — validates before deleting"
       ],
       "target_database": "project",
-      "used_by_directives": []
+      "used_by_directives": [],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      }
     }
   ],
   "metadata": {

@@ -81,7 +81,11 @@
         "The hook itself is NOT a tool and must never become one - hooks are AIMFP's library surface for code running outside AIMFP (notes 34/39).",
         "The same hook backs _reject_invalid_trigger_config, the gate inside add_user_custom_entry and update_user_custom_entry.",
         "Grammar examples: {\"kind\": \"interval\", \"seconds\": 900} | {\"kind\": \"daily\", \"at\": \"17:00\", \"timezone\": \"America/New_York\"} | {\"kind\": \"weekly\", \"at\": \"17:00\", \"weekdays\": [\"mon\",\"wed\",\"fri\"]} | {\"kind\": \"monthly\", \"at\": \"09:00\", \"days\": [1,15]} | event {\"event\": \"stove_on\"} | condition {\"expression\": \"cpu > 90\"} | manual {}"
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
     },
     {
       "name": "validate_action_config",
@@ -127,7 +131,11 @@
         "Returns ActionValidationResult, NOT TriggerValidationResult - reusing that type would have put an action_type inside a field named trigger_type.",
         "The same hook backs _reject_invalid_action_config, the gate inside add_user_custom_entry and update_user_custom_entry.",
         "Envelopes: api_call {\"endpoint\": \"/lights/off\", \"api\": \"homeassistant\", \"method\": \"POST\"} | script_execution {\"script\": \"scripts/backup.sh\", \"args\": [\"--full\"]} | command {\"command\": \"systemctl restart nginx\"} | function_call {\"function\": \"handlers.lights.turn_off\"} | notification {\"message\": \"...\", \"channel\": \"ops\"}"
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
     },
     {
       "name": "get_user_custom_tables",
@@ -230,7 +238,10 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of integer IDs - **MUST contain at least one ID**"
+          "description": "Array of integer IDs - **MUST contain at least one ID**",
+          "items": {
+            "type": "integer"
+          }
         }
       ],
       "purpose": "Get records by ID(s) from user_directives.db - **EMPTY ARRAY NOT ALLOWED**",
@@ -338,7 +349,7 @@
       "is_sub_helper": false,
       "return_statements": [
         "Returns inserted record with generated ID.",
-        "If called during user_directive_parse: all directives parsed \u2192 proceed to user_directive_validate for interactive Q&A validation."
+        "If called during user_directive_parse: all directives parsed → proceed to user_directive_validate for interactive Q&A validation."
       ],
       "target_database": "user_directives",
       "used_by_directives": [
@@ -400,8 +411,8 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "If called during user_directive_implement: all code generated \u2192 proceed to user_directive_approve for user testing and approval.",
-        "If called during user_directive_approve: user approved \u2192 proceed to user_directive_activate to deploy."
+        "If called during user_directive_implement: all code generated → proceed to user_directive_approve for user testing and approval.",
+        "If called during user_directive_approve: user approved → proceed to user_directive_activate to deploy."
       ],
       "target_database": "user_directives",
       "used_by_directives": [
@@ -712,7 +723,12 @@
         "SQL: UPDATE user_directives SET status='active', activated_at=CURRENT_TIMESTAMP WHERE id=?",
         "Returns updated directive record",
         "NOTE: This only updates DB status. Actual deployment (scheduler, service, event handler) is AI's responsibility via user_directive_activate directive workflow."
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
     },
     {
       "name": "deactivate_user_directive",
@@ -759,7 +775,12 @@
         "Also clear deployment info: UPDATE directive_implementations SET deployed=0, process_id=NULL WHERE directive_id=?",
         "Returns updated directive record",
         "NOTE: This only updates DB status. Actual service shutdown is AI's responsibility via user_directive_deactivate directive workflow."
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
     },
     {
       "name": "add_user_directive_note",
@@ -880,7 +901,10 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "List of note_type values to exclude from results (e.g., ['completed', 'obsolete'])"
+          "description": "List of note_type values to exclude from results (e.g., ['completed', 'obsolete'])",
+          "items": {
+            "type": "string"
+          }
         }
       ],
       "purpose": "Get notes from user_directives.db with optional filters. All filters are AND logic. No filters returns all notes.",
@@ -942,7 +966,10 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "List of note_type values to exclude from results (e.g., ['completed', 'obsolete'])"
+          "description": "List of note_type values to exclude from results (e.g., ['completed', 'obsolete'])",
+          "items": {
+            "type": "string"
+          }
         }
       ],
       "purpose": "Search note content in user_directives.db with optional additional filters",

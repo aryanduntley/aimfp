@@ -40,6 +40,7 @@ from ._common import (
     build_key_indexes,
     serialize_key,
     _effect_load_changeset,
+    _changeset_dir,
 )
 from .export import _collect_entities, _ENTITY_KINDS
 
@@ -540,7 +541,7 @@ def apply_state_changeset(
         if changeset is None:
             return Result(
                 success=False,
-                error=f"changeset_id '{changeset_id}' not found under .aimfp-project/changesets/. "
+                error=f"changeset_id '{changeset_id}' not found under {_changeset_dir(project_root)}/. "
                       f"Re-run export_state_changeset to regenerate it.",
             )
 

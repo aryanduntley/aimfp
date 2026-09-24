@@ -29,6 +29,15 @@ PARAM_TYPE_MAP: Final[Dict[str, str]] = {
 }
 
 
+# JSON Schema keys a parameter definition may carry verbatim (dev/helpers-json).
+# 'required' is NOT here: at parameter level it is AIMFP's boolean flag; a
+# nested object states its required keys inside its own items/properties schema.
+SCHEMA_PASSTHROUGH_KEYS: Final[Tuple[str, ...]] = (
+    "items", "prefixItems", "minItems", "maxItems",
+    "enum", "anyOf", "properties", "additionalProperties",
+)
+
+
 # ============================================================================
 # Pure Functions
 # ============================================================================
@@ -51,14 +60,18 @@ def param_to_schema_property(param: Dict[str, Any]) -> Dict[str, Any]:
     Pure: Convert a single parameter definition to a JSON Schema property.
 
     Args:
-        param: Parameter dict with keys: name, type, required, default, description
+        param: Parameter dict with keys: name, type, required, default, description,
+            plus any SCHEMA_PASSTHROUGH_KEYS (item shapes, enums, alternatives).
+            A parameter with anyOf gets no top-level type.
 
     Returns:
         JSON Schema property definition
     """
-    prop: Dict[str, Any] = {
-        "type": map_param_type(param.get("type", "string")),
-    }
+    prop: Dict[str, Any] = (
+        {} if "anyOf" in param
+        else {"type": map_param_type(param.get("type", "string"))}
+    )
+    prop.update({key: param[key] for key in SCHEMA_PASSTHROUGH_KEYS if key in param})
 
     description = param.get("description")
     if description:

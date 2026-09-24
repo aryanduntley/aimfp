@@ -30,12 +30,13 @@
         "WATCHDOG REMINDERS: If watchdog.reminders is non-empty, review and handle each finding (deleted files, unregistered files, missing functions). Once all reminders have been addressed, call clear_watchdog() to acknowledge and clear them. Reminders persist until cleared — do not ignore them.",
         "SCHEDULED BACKUP: if data.scheduled_backup.due is true, PROMPT the user to create a backup (say how many days since data.scheduled_backup.last_backup, or that none exists). Call create_project_backup only if they agree — never back up silently. Cadence is the backup_interval_days setting; 0 disables these prompts.",
         "RELEASE NOTICES: if data.notices is present, this project has never been shown these. Deliver each message in your own words. For any with action_required=true, ASK the question and WAIT for the answer — then apply it and call acknowledge_notice(notice_key, outcome='...'). The key is absent when nothing is pending, so its presence always means action.",
-        "USER DIRECTIVE HEALTH: if data.case_2_context.health is present, those directives need attention and NOBODY HAS SEEN THE OUTCOME — the user's runner fires with no AI session open. Report each one and its detail to the user before moving on to other work. 'overdue' means the runner declared a next run time and that moment passed, which is the dead-runner signal; 'skipping' means the runner is alive but keeps skipping scheduled occurrences, usually because the host is down at that time; 'never_run' means the runner was never deployed, or, when the detail lists dispatch errors, that it is deployed but refusing to dispatch. Use get_recent_directive_errors for the failures behind a count. The key is absent when everything is healthy, so its presence always means action."
+        "USER DIRECTIVE HEALTH: if data.case_2_context.health is present, those directives need attention and NOBODY HAS SEEN THE OUTCOME — the user's runner fires with no AI session open. Report each one and its detail to the user before moving on to other work. 'overdue' means the runner declared a next run time and that moment passed, which is the dead-runner signal; 'skipping' means the runner is alive but keeps skipping scheduled occurrences, usually because the host is down at that time; 'never_run' means the runner was never deployed, or, when the detail lists dispatch errors, that it is deployed but refusing to dispatch. Use get_recent_directive_errors for the failures behind a count. The key is absent when everything is healthy, so its presence always means action.",
+        "PROJECT MOVED OR COPIED: if data.project_root_rewritten is present with reason 'moved_or_copied', the recorded project location was out of date and has been updated to data.project_root. Tell the user once (original_exists=true means this folder is a copy and the original project's database is untouched). Do NOT call update_project_root: it is already fixed. reason 'worktree' is expected in a git worktree and needs no mention. data.source_directory_rewritten (an absolute source path made relative) needs no action."
       ],
       "implementation_notes": [
         "Returns: If is_new_session=true → bundles {status, user_settings, fp_directive_index, all_directive_names[], modules_summary[], infrastructure_data, guidance, watchdog: {started, start_error, status, reminders[], notice}}",
         "Returns: If is_new_session=false → watchdog alerts only {watchdog: {status, reminders[], notice}, notice} when reminders exist, empty {} when nothing to report.",
-        "Watchdog status values: 'ok' (running, checked), 'not_running' (PID file missing — inform user), 'no_reminders_file' (PID exists but reminders missing — watchdog may have failed), 'no_project' (no project found). AI should surface notice to user when status is not 'ok'.",
+        "Watchdog status values: 'ok' (running, checked), 'starting' (just launched, PID not yet registered — do not restart), 'failed' (launch failed — surface start_error), 'not_running' (PID file missing — inform user), 'no_reminders_file' (PID exists but reminders missing — watchdog may have failed), 'external' (embedding host passed start_watchdog=False and runs its own watcher), 'disabled' (server started with --no-watchdog; the host runs its own watcher — reminders still reported, no action), 'no_project' (no project found). AI should surface notice to user when status is 'failed', 'not_running' or 'no_reminders_file'.",
         "Session bundle calls: aimfp_status(), get_user_settings(), get_fp_directive_index(), get_all_directive_names(), get_all_infrastructure(), check_and_run_backup(). Note: supportive_context and modules_summary are included via aimfp_status() — promoted to top-level for startup visibility.",
         "Directive names only - NOT full directive data (AI queries by name when needs details)",
         "fp_directive_index: FP directive names grouped by category for quick reference",
@@ -56,7 +57,12 @@
           "parameters_mapping": {},
           "description": "aimfp_run directive uses aimfp_run helper as entry point orchestrator"
         }
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false
+      }
     },
     {
       "name": "aimfp_init",
@@ -139,7 +145,8 @@
         "If not initialized: route to aimfp_init directive.",
         "If validation has errors: AI should address structural issues before continuing work.",
         "Priority order for current focus: sidequests → subtasks → tasks.",
-        "FLOWS & THEMES: Review get_all_flows() and get_all_themes() to orient on project architecture before diving into work. Flows describe intended user-facing behavior and implementation architecture. Themes identify project areas. Consult these when picking up work or starting a new task."
+        "FLOWS & THEMES: Review get_all_flows() and get_all_themes() to orient on project architecture before diving into work. Flows describe intended user-facing behavior and implementation architecture. Themes identify project areas. Consult these when picking up work or starting a new task.",
+        "If data.stored_root_mismatch is present, the recorded project location ({stored}) is not this folder ({live}): the project was moved or copied, or this is a git worktree. Reads and writes already use this folder's database; aimfp_run(is_new_session=true) updates the record. Do not call update_project_root with the stored path."
       ],
       "implementation_notes": [
         "Returns status object with: project_metadata, infrastructure, work_hierarchy (counts + tree, including modules count), user_directives_status, recent_warnings, git_state, modules_summary[], supportive_context",
@@ -310,6 +317,41 @@
       ]
     },
     {
+      "name": "get_open_work",
+      "file_path": "helpers/orchestrators/status.py",
+      "parameters": [
+        {
+          "name": "milestone_id",
+          "type": "integer",
+          "required": false,
+          "default": null,
+          "description": "Limit to tasks of one milestone (and their subtasks and sidequests). Omit for all open work."
+        },
+        {
+          "name": "include_descriptions",
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "description": "Add truncated descriptions to each task, subtask and sidequest. Off keeps the payload small."
+        }
+      ],
+      "purpose": "Every open task (pending, in_progress, blocked) with its open items and open subtasks (each with open items), plus open sidequests with their open items, in one read-only call. Ordered in_progress first, then by priority. Replaces get_incomplete_tasks followed by one get_items_for_task per task.",
+      "error_handling": "Returns error if the project root is not established or project.db is not accessible.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Open work loaded. Continue the first in_progress task (tasks are ordered in_progress, pending, blocked, then by priority); a sidequest listed with a paused_task_id interrupts that task and comes first.",
+        "Need files, flows or functions for one of these? get_task_context(task_id) returns them for a single task."
+      ],
+      "implementation_notes": [
+        "Returns: {tasks[{id, name, status, priority, milestone_id, description?, items[{id, name, status}], subtasks[{id, name, status, priority, description?, items[]}]}], sidequests[{id, name, status, priority, paused_task_id, description?, items[]}], counts{tasks, subtasks, sidequests, open_items}}",
+        "Open = status != 'completed'. Items are filtered the same way.",
+        "Pure assembly in assemble_open_work; four SELECTs, no writes."
+      ],
+      "target_database": "project",
+      "used_by_directives": []
+    },
+    {
       "name": "get_current_progress",
       "file_path": "helpers/orchestrators/state.py",
       "parameters": [
@@ -419,7 +461,29 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "List of update objects: [{target_type, target_id, action, data}, ...]"
+          "description": "List of update objects: [{target_type, target_id, action, data}, ...]",
+          "items": {
+            "type": "object",
+            "properties": {
+              "target_type": {
+                "type": "string"
+              },
+              "target_id": {
+                "type": "integer"
+              },
+              "action": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "target_type",
+              "target_id",
+              "action"
+            ]
+          }
         },
         {
           "name": "transaction",
@@ -476,7 +540,10 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "Relations to include via LEFT JOIN: ['milestones', 'files']"
+          "description": "Relations to include via LEFT JOIN: ['milestones', 'files']",
+          "items": {
+            "type": "string"
+          }
         },
         {
           "name": "sort",
@@ -646,7 +713,12 @@
         "Watchdog reminders cleared. Resume normal workflow."
       ],
       "target_database": "no_db",
-      "used_by_directives": []
+      "used_by_directives": [],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      }
     }
   ],
   "metadata": {

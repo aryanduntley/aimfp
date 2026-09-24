@@ -87,6 +87,22 @@ def serialize_json_field(value: Any) -> Optional[str]:
     return json.dumps(value)
 
 
+def supplied_or_none(value: Any) -> Any:
+    """
+    Pure: The value when the caller actually supplied it, else None.
+
+    None and blank strings count as "not supplied". Re-cataloging an existing
+    row passes None for such fields, and the upserts keep the stored value
+    (COALESCE), so a refresh that omits prose never erases it. An empty list
+    or dict is a real value (no parameters) and is kept.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
 def missing_required_field(record: Dict[str, Any], required: Tuple[str, ...]) -> Optional[str]:
     """
     Pure: Find the first required field a record is missing or leaves empty.
@@ -110,7 +126,7 @@ def missing_required_field(record: Dict[str, Any], required: Tuple[str, ...]) ->
 
 def _effect_upsert_file(
     conn: sqlite3.Connection,
-    name: str,
+    name: Optional[str],
     path: str,
     language: Optional[str],
 ) -> Tuple[int, bool]:
@@ -119,9 +135,10 @@ def _effect_upsert_file(
 
     Args:
         conn: Database connection
-        name: File name without extension
+        name: File name, or None to keep the stored one (new rows fall back
+            to the path's basename)
         path: Project-relative path (the natural key)
-        language: Detected language
+        language: Detected language, or None to keep the stored one
 
     Returns:
         (file ID, True when newly created)
@@ -134,7 +151,8 @@ def _effect_upsert_file(
         conn.execute(
             """
             UPDATE files
-            SET name = ?, language = ?, is_reserved = 0, id_in_name = 0,
+            SET name = COALESCE(?, name), language = COALESCE(?, language),
+                is_reserved = 0, id_in_name = 0,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
@@ -147,7 +165,7 @@ def _effect_upsert_file(
         INSERT INTO files (name, path, language, is_reserved, id_in_name)
         VALUES (?, ?, ?, 0, 0)
         """,
-        (name, path, language),
+        (name or path.rsplit('/', 1)[-1], path, language),
     )
     return (cursor.lastrowid, True)
 
@@ -183,7 +201,8 @@ def _effect_upsert_function(
         conn.execute(
             """
             UPDATE functions
-            SET purpose = ?, parameters = ?, returns = ?, is_reserved = 0,
+            SET purpose = COALESCE(?, purpose), parameters = COALESCE(?, parameters),
+                returns = COALESCE(?, returns), is_reserved = 0,
                 id_in_name = 0, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
@@ -231,7 +250,7 @@ def _effect_upsert_type(
         conn.execute(
             """
             UPDATE types
-            SET definition_json = ?, description = ?, is_reserved = 0,
+            SET definition_json = ?, description = COALESCE(?, description), is_reserved = 0,
                 id_in_name = 0, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
@@ -264,6 +283,8 @@ def catalog_files(
     For code already on disk. Rows are written finalized (is_reserved=0) with ID
     naming off, because the filenames are fixed and cannot carry an _id_ suffix.
     Idempotent on path: an already-tracked path is updated, not duplicated.
+    Re-cataloging never erases: an omitted or blank name/language keeps the
+    stored value.
 
     Args:
         files: Array of {name, path, language} objects. 'path' is
@@ -299,9 +320,9 @@ def catalog_files(
         for record in records:
             file_id, was_created = _effect_upsert_file(
                 conn,
-                record.get('name') or record['path'].rsplit('/', 1)[-1],
+                supplied_or_none(record.get('name')),
                 record['path'],
-                record.get('language'),
+                supplied_or_none(record.get('language')),
             )
             ids.append(file_id)
             created += 1 if was_created else 0
@@ -334,7 +355,8 @@ def catalog_functions(
 
     Idempotent on (file_id, name): an already-tracked function is updated in place,
     so a re-scan after source changes refreshes signatures instead of duplicating
-    them.
+    them. Only supplied fields are overwritten: an omitted or blank purpose,
+    parameters or returns keeps the stored value, so a refresh never wipes prose.
 
     Args:
         functions: Array of {name, file_id, purpose, parameters, returns} objects.
@@ -368,9 +390,9 @@ def catalog_functions(
                 conn,
                 record['name'],
                 int(record['file_id']),
-                record.get('purpose'),
-                serialize_json_field(record.get('parameters')),
-                serialize_json_field(record.get('returns')),
+                supplied_or_none(record.get('purpose')),
+                serialize_json_field(supplied_or_none(record.get('parameters'))),
+                serialize_json_field(supplied_or_none(record.get('returns'))),
             )
             ids.append(function_id)
             created += 1 if was_created else 0
@@ -401,7 +423,8 @@ def catalog_types(
     """
     Register existing type definitions in project.db in a single phase.
 
-    Idempotent on (file_id, name), like catalog_functions.
+    Idempotent on (file_id, name), like catalog_functions. definition is always
+    refreshed; an omitted or blank description keeps the stored one.
 
     Args:
         types: Array of {name, file_id, definition, description} objects.
@@ -445,7 +468,7 @@ def catalog_types(
                 record['name'],
                 int(file_id) if file_id is not None else None,
                 definition_json,
-                record.get('description'),
+                supplied_or_none(record.get('description')),
             )
             ids.append(type_id)
             created += 1 if was_created else 0

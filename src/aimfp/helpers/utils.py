@@ -36,6 +36,14 @@ from ..database.connection import (
     get_user_preferences_db_path,
     get_user_directives_db_path,
     database_exists,
+    # Project folder override (hook F)
+    ProjectDirOverride,
+    normalize_project_dir_path,
+    set_project_dir_override,
+    clear_project_dir_override,
+    get_project_dir_override,
+    get_project_dir_name,
+    resolve_project_relative,
     # Project root cache
     set_project_root,
     get_cached_project_root,
@@ -90,6 +98,14 @@ __all__ = [
     'get_user_preferences_db_path',
     'get_user_directives_db_path',
     'database_exists',
+    # Project folder override (hook F)
+    'ProjectDirOverride',
+    'normalize_project_dir_path',
+    'set_project_dir_override',
+    'clear_project_dir_override',
+    'get_project_dir_override',
+    'get_project_dir_name',
+    'resolve_project_relative',
     # Project root cache
     'set_project_root',
     'get_cached_project_root',

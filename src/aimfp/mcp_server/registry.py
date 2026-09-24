@@ -109,6 +109,7 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "update_project_state": ("aimfp.helpers.orchestrators.state", "update_project_state"),
     # helpers/orchestrators/status.py (1 tool)
     "get_task_context": ("aimfp.helpers.orchestrators.status", "get_task_context"),
+    "get_open_work": ("aimfp.helpers.orchestrators.status", "get_open_work"),
 
     # ── Project: CRUD ────────────────────────────────────────────────────
     # helpers/project/crud.py (7 tools)
@@ -340,6 +341,7 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "scan_source_tree": ("aimfp.helpers.catalog.scan", "scan_source_tree"),
     # helpers/catalog/callgraph.py (1 tool)
     "scan_call_graph": ("aimfp.helpers.catalog.callgraph", "scan_call_graph"),
+    "reconcile_paths": ("aimfp.helpers.catalog.reconcile", "reconcile_paths"),
     # helpers/catalog/register.py (3 tools — single-phase, not reserve/finalize)
     "catalog_files": ("aimfp.helpers.catalog.register", "catalog_files"),
     "catalog_functions": ("aimfp.helpers.catalog.register", "catalog_functions"),

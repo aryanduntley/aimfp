@@ -347,7 +347,10 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "JSON array of flow IDs"
+          "description": "JSON array of flow IDs",
+          "items": {
+            "type": "integer"
+          }
         }
       ],
       "purpose": "Create a task under a milestone with flow associations. Tasks are created ONE at a time as work progresses, not all at once.",
@@ -476,7 +479,7 @@
       "name": "get_incomplete_tasks",
       "file_path": "helpers/project/tasks.py",
       "parameters": [],
-      "purpose": "Get all unfinished tasks (pending, in_progress, blocked) with their subtasks and sidequests. Shows remaining work across the project.",
+      "purpose": "Get all unfinished tasks (pending, in_progress, blocked) as flat task rows. Does NOT include subtasks, sidequests or items: use get_open_work for the whole open tree (tasks with their open items and subtasks, plus sidequests) in one call.",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
@@ -581,14 +584,24 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "[start_date, end_date]"
+          "description": "[start_date, end_date]",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "maxItems": 2
         },
         {
           "name": "date_range_updated",
           "type": "array",
           "required": false,
           "default": null,
-          "description": "[start_date, end_date]"
+          "description": "[start_date, end_date]",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "maxItems": 2
         },
         {
           "name": "milestone_id",
@@ -749,7 +762,10 @@
           "type": "array",
           "required": false,
           "default": null,
-          "description": "Array of flow IDs [1, 3, 5] (NULL = don't update)"
+          "description": "Array of flow IDs [1, 3, 5] (NULL = don't update)",
+          "items": {
+            "type": "integer"
+          }
         },
         {
           "name": "priority",

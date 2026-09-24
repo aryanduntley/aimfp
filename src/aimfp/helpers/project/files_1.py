@@ -16,7 +16,6 @@ Helpers in this file:
 - get_file_by_path: Very high-frequency path lookup
 """
 
-import os
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List, Tuple, Union
@@ -29,7 +28,7 @@ from ._common import (
     _open_connection,
     get_cached_project_root,
     _open_project_connection,
-    _resolve_fs_path,
+    check_trackable_file_path,
 )
 
 
@@ -563,13 +562,11 @@ def finalize_file(
             error=f"File name must contain '_id_{file_id}' pattern"
         )
 
-    # Verify file exists on filesystem (root-relative paths resolve against
-    # the project root — cwd is not guaranteed to be the root when embedded)
-    if not os.path.exists(_resolve_fs_path(path, project_root)):
-        return FinalizeResult(
-            success=False,
-            error=f"File does not exist at path: {path}"
-        )
+    # Verify path is a regular file inside the project (root-relative paths
+    # resolve against the project root — cwd is not the root when embedded)
+    path_error = check_trackable_file_path(path, project_root)
+    if path_error:
+        return FinalizeResult(success=False, error=path_error)
 
     # Effect: open connection and finalize
     project_root = project_root or get_cached_project_root()
@@ -647,11 +644,12 @@ def finalize_files(
                 error=f"File name '{name}' must contain '_id_{file_id}' pattern"
             )
 
-        # Check file exists (root-relative paths resolve against the project root)
-        if not os.path.exists(_resolve_fs_path(path, project_root)):
+        # Check path is a regular file inside the project
+        path_error = check_trackable_file_path(path, project_root)
+        if path_error:
             return FinalizeBatchResult(
                 success=False,
-                error=f"File does not exist at path: {path}"
+                error=f"File {file_id}: {path_error}"
             )
 
         finalizations.append((file_id, name, path, language))

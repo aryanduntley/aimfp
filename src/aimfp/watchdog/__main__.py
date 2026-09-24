@@ -1,7 +1,7 @@
 """
 AIMFP Watchdog - CLI Entry Point
 
-Usage: python -m aimfp.watchdog <project_root>
+Usage: python -m aimfp.watchdog <project_root> [--skip-reconciliation] [--project-dir <rel>]
 
 Starts the file system watcher as a subprocess. Reads configuration
 from project.db and user_preferences.db, then monitors the source
@@ -13,6 +13,7 @@ import signal
 import sys
 import time
 
+from ..database.connection import extract_project_dir_arg, set_project_dir_override
 from ..wrappers.file_ops import _effect_write_text, _effect_ensure_dir
 from .config import (
     get_watchdog_dir,
@@ -40,6 +41,17 @@ def main() -> None:
         sys.exit(1)
 
     project_root = sys.argv[1]
+
+    # --project-dir <rel>: the parent server's project-dir override, passed
+    # explicitly (never inherited through the environment)
+    try:
+        project_dir = extract_project_dir_arg(tuple(sys.argv[2:]))
+        if project_dir is not None:
+            set_project_dir_override(project_root, project_dir)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     project_db_path = get_project_db_path(project_root)
 
     if not os.path.isfile(project_db_path):

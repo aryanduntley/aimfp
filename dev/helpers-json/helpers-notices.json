@@ -44,7 +44,12 @@
         "If the notice asked the user to change a setting, verify you actually applied the change (e.g. update_user_setting) before considering it handled."
       ],
       "target_database": "user_preferences",
-      "used_by_directives": []
+      "used_by_directives": [],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
     }
   ]
 }

@@ -1,7 +1,7 @@
 """
 AIMFP Helper Functions - Automated Backup Sub-Helper
 
-Creates zip backups of the .aimfp-project/ directory, triggered during
+Creates zip backups of the project folder (.aimfp-project/ by default), triggered during
 aimfp_run(is_new_session=true) when project inactivity exceeds the
 configured backup_duration threshold.
 
@@ -22,8 +22,10 @@ from ._common import (
     get_project_db_path,
     get_user_preferences_db_path,
     get_aimfp_project_dir,
+    resolve_project_relative,
     resolve_project_root,
     database_exists,
+    AIMFP_PROJECT_DIR,
     BACKUPS_DIR_NAME,
     Result,
     get_return_statements,
@@ -280,7 +282,7 @@ def _get_backup_settings_safe(project_root: str) -> Dict[str, str]:
     defaults = {
         'backup_count': '3',
         'backup_duration': '30',
-        'backup_path': '.aimfp-project',
+        'backup_path': AIMFP_PROJECT_DIR,
     }
     try:
         prefs_db_path = get_user_preferences_db_path(project_root)
@@ -466,10 +468,14 @@ def _create_project_backup(project_root: str) -> Dict[str, Any]:
     try:
         settings = _get_backup_settings_safe(project_root)
         backup_count = int(settings.get('backup_count', '3'))
-        backup_base = settings.get('backup_path', '.aimfp-project')
+        backup_base = settings.get('backup_path', AIMFP_PROJECT_DIR)
 
         aimfp_dir = get_aimfp_project_dir(project_root)
-        backups_dir = os.path.join(project_root, backup_base, BACKUPS_DIR_NAME)
+        # The stored default '.aimfp-project' re-roots onto the actual project
+        # folder, so a project-dir override never recreates .aimfp-project/.
+        backups_dir = os.path.join(
+            resolve_project_relative(project_root, backup_base), BACKUPS_DIR_NAME
+        )
 
         # Ensure backups directory exists
         os.makedirs(backups_dir, exist_ok=True)

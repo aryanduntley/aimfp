@@ -157,7 +157,11 @@
           "sequence_order": 2,
           "is_required": false
         }
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
     }
   ]
 }

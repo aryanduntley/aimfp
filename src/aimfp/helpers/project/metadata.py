@@ -138,6 +138,9 @@ class SourceDirResult:
     success: bool
     data: Optional[str] = None
     error: Optional[str] = None
+    # get_project_root only: {stored, live} when the recorded root is not the
+    # folder this session runs in (a moved or copied project, or a worktree)
+    stored_root_mismatch: Optional[Dict[str, str]] = None
     return_statements: Tuple[str, ...] = ()
 
 
@@ -837,7 +840,57 @@ def get_source_directory() -> SourceDirResult:
         )
 
 
-def reconcile_stored_source_directory(project_root: str) -> None:
+def stored_root_mismatch(stored: Optional[str], live: str) -> Optional[Dict[str, str]]:
+    """
+    Effect: {stored, live} when the recorded project_root is not the live root.
+
+    Paths are compared after resolving symlinks, so a symlinked checkout is not
+    reported. None when they match or nothing is recorded.
+
+    Every read and write already goes to the LIVE root's database (discovery
+    never uses the stored value), so a mismatch is a stale record, not a
+    redirect: aimfp_run rewrites it; read-only tools only report it.
+    """
+    if not stored or not live:
+        return None
+    if os.path.realpath(stored) == os.path.realpath(live):
+        return None
+    return {'stored': stored, 'live': live}
+
+
+def root_rewrite_report(stored: str, live: str) -> Dict[str, Any]:
+    """
+    Effect: Describe a project_root rewrite for the AI and the user.
+
+    reason 'worktree' when the live root is a linked git worktree (expected on
+    every worker; nothing to tell the user), else 'moved_or_copied'.
+    original_exists distinguishes a copy (old folder still there, its database
+    untouched) from a move.
+    """
+    return {
+        'from': stored,
+        'to': live,
+        'reason': 'worktree' if is_linked_worktree(live) else 'moved_or_copied',
+        'original_exists': os.path.isdir(stored),
+    }
+
+
+def is_linked_worktree(root: str) -> bool:
+    """Effect: True when ``root`` is a linked git worktree (git-dir != common-dir)."""
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'],
+            cwd=root, capture_output=True, text=True, check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return False
+    lines = result.stdout.split()
+    if result.returncode != 0 or len(lines) != 2:
+        return False
+    return os.path.realpath(lines[0]) != os.path.realpath(lines[1])
+
+
+def reconcile_stored_source_directory(project_root: str) -> Optional[Dict[str, str]]:
     """
     Effect: Heal an absolute infrastructure.source_directory to a path relative
     to the project root.
@@ -857,11 +910,14 @@ def reconcile_stored_source_directory(project_root: str) -> None:
 
     Args:
         project_root: Live worktree-resolved project root (absolute)
+
+    Returns:
+        {from, to} when the stored value was rewritten, else None
     """
     try:
         db_path = get_project_db_path(project_root)
         if not database_exists(db_path):
-            return
+            return None
         # Decide on a read-only connection. Most calls heal nothing, and a
         # no-op must leave the database byte-identical — the read-write opener
         # writes journal_mode into the file header. Companion
@@ -870,7 +926,7 @@ def reconcile_stored_source_directory(project_root: str) -> None:
         try:
             stored = _get_source_dir_value(probe)
             if not stored or not stored.startswith('/'):
-                return  # unset or already relative — nothing to heal
+                return None  # unset or already relative — nothing to heal
             stored_root = _get_project_root_value(probe)
         finally:
             probe.close()
@@ -881,7 +937,7 @@ def reconcile_stored_source_directory(project_root: str) -> None:
         if rel.startswith('/'):
             rel = os.path.basename(stored.rstrip('/'))
         if not rel or rel == stored:
-            return
+            return None
 
         conn = _open_connection(db_path)
         try:
@@ -893,8 +949,9 @@ def reconcile_stored_source_directory(project_root: str) -> None:
             conn.commit()
         finally:
             conn.close()
+        return {'from': stored, 'to': rel}
     except Exception:
-        pass
+        return None
 
 
 def update_source_directory(new_source_dir: str, project_root: Optional[str] = None) -> SourceDirResult:
@@ -954,6 +1011,11 @@ def get_project_root(project_root: Optional[str] = None) -> SourceDirResult:
     """
     Get project root directory from infrastructure table.
 
+    Read-only. data is the RECORDED root. When it is not the folder this
+    session runs in (moved/copied project, worktree), stored_root_mismatch
+    = {stored, live}: every read and write already uses the live root's
+    database, and aimfp_run rewrites the record.
+
     Returns:
         SourceDirResult with project root path or error
     """
@@ -976,6 +1038,7 @@ def get_project_root(project_root: Optional[str] = None) -> SourceDirResult:
         return SourceDirResult(
             success=True,
             data=project_root,
+            stored_root_mismatch=stored_root_mismatch(project_root, cached_root),
             return_statements=get_return_statements("get_project_root")
         )
 

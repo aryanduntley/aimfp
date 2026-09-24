@@ -1102,7 +1102,10 @@ def get_incomplete_tasks_by_milestone(
 
 def get_incomplete_tasks(project_root: Optional[str] = None) -> TaskQueryResult:
     """
-    Get all incomplete tasks with subtasks/sidequests.
+    Get all incomplete tasks (pending, in_progress, blocked) as flat task rows.
+
+    Subtasks, sidequests and items are NOT included; get_open_work returns the
+    whole open tree in one call.
 
     Returns:
         TaskQueryResult with all incomplete tasks

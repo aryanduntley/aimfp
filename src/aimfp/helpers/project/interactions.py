@@ -35,6 +35,7 @@ class AddInteractionResult:
     success: bool
     id: Optional[int] = None
     error: Optional[str] = None
+    already_existed: bool = False  # the (source, target, type) edge was already tracked
     return_statements: Tuple[str, ...] = ()  # AI guidance for next steps
 
 
@@ -44,6 +45,8 @@ class AddInteractionsResult:
     success: bool
     ids: Tuple[int, ...] = ()
     error: Optional[str] = None
+    added_count: int = 0
+    skipped_count: int = 0  # edges already tracked; their existing ids are in ids
     return_statements: Tuple[str, ...] = ()  # AI guidance for next steps
 
 
@@ -257,15 +260,63 @@ def _resolve_function_by_name(conn: sqlite3.Connection, function_name: str) -> T
         return (None, matches)
 
 
+def _find_interaction_id(
+    conn: sqlite3.Connection,
+    source_function_id: int,
+    target_function_id: int,
+    interaction_type: str,
+) -> Optional[int]:
+    """Effect: ID of an existing (source, target, type) edge, or None."""
+    row = conn.execute(
+        """
+        SELECT id FROM interactions
+        WHERE source_function_id = ? AND target_function_id = ? AND interaction_type = ?
+        ORDER BY id LIMIT 1
+        """,
+        (source_function_id, target_function_id, interaction_type)
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _insert_interaction_if_new(
+    conn: sqlite3.Connection,
+    source_function_id: int,
+    target_function_id: int,
+    interaction_type: str,
+    description: Optional[str],
+) -> Tuple[int, bool]:
+    """
+    Effect: Insert an edge unless the same (source, target, type) already exists.
+
+    The interactions table has no UNIQUE constraint, and scan_call_graph re-emits
+    the whole graph on every run, so a blind insert doubled the call graph each
+    time. Does not commit.
+
+    Returns:
+        (interaction ID, True when newly inserted)
+    """
+    existing = _find_interaction_id(conn, source_function_id, target_function_id, interaction_type)
+    if existing is not None:
+        return (existing, False)
+    cursor = conn.execute(
+        """
+        INSERT INTO interactions (source_function_id, target_function_id, interaction_type, description)
+        VALUES (?, ?, ?, ?)
+        """,
+        (source_function_id, target_function_id, interaction_type, description)
+    )
+    return (cursor.lastrowid, True)
+
+
 def _add_interaction_effect(
     conn: sqlite3.Connection,
     source_function_id: int,
     target_function_id: int,
     interaction_type: str,
     description: Optional[str] = None
-) -> int:
+) -> Tuple[int, bool]:
     """
-    Effect: Insert interaction into database.
+    Effect: Insert a single interaction unless it is already tracked, and commit.
 
     Args:
         conn: Database connection
@@ -275,49 +326,41 @@ def _add_interaction_effect(
         description: Optional description
 
     Returns:
-        Inserted interaction ID
+        (interaction ID, True when newly inserted)
     """
-    cursor = conn.execute(
-        """
-        INSERT INTO interactions (source_function_id, target_function_id, interaction_type, description)
-        VALUES (?, ?, ?, ?)
-        """,
-        (source_function_id, target_function_id, interaction_type, description)
+    result = _insert_interaction_if_new(
+        conn, source_function_id, target_function_id, interaction_type, description
     )
     conn.commit()
-    return cursor.lastrowid
+    return result
 
 
 def _add_interactions_batch_effect(
     conn: sqlite3.Connection,
     interactions: List[Tuple[int, int, str, Optional[str]]]
-) -> Tuple[int, ...]:
+) -> Tuple[Tuple[int, ...], int]:
     """
-    Effect: Insert multiple interactions in transaction.
+    Effect: Insert multiple interactions in one transaction, skipping edges
+    already tracked (including repeats within the same batch).
 
     Args:
         conn: Database connection
         interactions: List of (source_function_id, target_function_id, interaction_type, description) tuples
 
     Returns:
-        Tuple of inserted interaction IDs in same order
+        (interaction IDs in input order — existing IDs for skipped edges,
+         number skipped)
     """
-    cursor = conn.cursor()
-    ids = []
-
     try:
-        for source_function_id, target_function_id, interaction_type, description in interactions:
-            cursor.execute(
-                """
-                INSERT INTO interactions (source_function_id, target_function_id, interaction_type, description)
-                VALUES (?, ?, ?, ?)
-                """,
-                (source_function_id, target_function_id, interaction_type, description)
-            )
-            ids.append(cursor.lastrowid)
-
+        results = tuple(
+            _insert_interaction_if_new(conn, source_id, target_id, interaction_type, description)
+            for source_id, target_id, interaction_type, description in interactions
+        )
         conn.commit()
-        return tuple(ids)
+        return (
+            tuple(interaction_id for interaction_id, _ in results),
+            sum(1 for _, inserted in results if not inserted),
+        )
 
     except Exception as e:
         conn.rollback()
@@ -436,7 +479,9 @@ def add_interaction(
         interaction_type: Interaction type ('call', 'chain', 'borrow', 'compose', 'pipe')
 
     Returns:
-        AddInteractionResult with success status and new interaction ID
+        AddInteractionResult with success status and the interaction ID.
+        An edge already tracked with the same (source, target, type) is not
+        duplicated: its existing ID comes back with already_existed=True.
 
     Example:
         >>> # Function 'process_data' calls 'validate_input'
@@ -496,8 +541,8 @@ def add_interaction(
                       f"Call again with the specific function ID using add_interactions instead."
             )
 
-        # Effect: add interaction
-        new_interaction_id = _add_interaction_effect(
+        # Effect: add interaction (an already-tracked edge is not duplicated)
+        interaction_id, inserted = _add_interaction_effect(
             conn,
             source_function_id,
             target_function_id,
@@ -509,7 +554,8 @@ def add_interaction(
 
         return AddInteractionResult(
             success=True,
-            id=new_interaction_id,
+            id=interaction_id,
+            already_existed=not inserted,
             return_statements=return_statements
         )
 
@@ -538,7 +584,10 @@ def add_interactions(
             Interaction types: 'call', 'chain', 'borrow', 'compose', 'pipe'
 
     Returns:
-        AddInteractionsResult with success status and inserted interaction IDs
+        AddInteractionsResult with IDs in input order, added_count and
+        skipped_count. Edges already tracked with the same (source, target,
+        type) — including repeats within the batch — are skipped, and their
+        existing IDs appear in ids, so re-running scan_call_graph output is safe.
 
     Example:
         >>> # Multiple function calls
@@ -587,15 +636,17 @@ def add_interactions(
                     error=f"Target function with ID {target_id} not found"
                 )
 
-        # Effect: add all interactions in transaction
-        inserted_ids = _add_interactions_batch_effect(conn, interactions)
+        # Effect: add all interactions in transaction, skipping tracked edges
+        interaction_ids, skipped = _add_interactions_batch_effect(conn, interactions)
 
         # Success - fetch return statements from core database
         return_statements = get_return_statements("add_interactions")
 
         return AddInteractionsResult(
             success=True,
-            ids=inserted_ids,
+            ids=interaction_ids,
+            added_count=len(interaction_ids) - skipped,
+            skipped_count=skipped,
             return_statements=return_statements
         )
 

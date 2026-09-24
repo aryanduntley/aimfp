@@ -28,7 +28,13 @@ from ..shared.fts_query import (
 )
 
 # Import common project utilities (DRY principle)
-from ._common import _open_connection, _check_file_exists, get_cached_project_root, _open_project_connection
+from ._common import (
+    _open_connection,
+    _check_file_exists,
+    get_cached_project_root,
+    _open_project_connection,
+    function_name_warnings,
+)
 
 from .files_2 import update_file_timestamp
 
@@ -80,6 +86,7 @@ class FinalizeResult:
     function_id: Optional[int] = None
     file_id: Optional[int] = None
     error: Optional[str] = None
+    warnings: Tuple[str, ...] = ()  # e.g. name not found in the file's source
     return_statements: Tuple[str, ...] = ()  # AI guidance for next steps
 
 
@@ -89,6 +96,7 @@ class FinalizeBatchResult:
     success: bool
     finalized_ids: Tuple[int, ...] = ()
     error: Optional[str] = None
+    warnings: Tuple[str, ...] = ()  # e.g. names not found in their files' source
     return_statements: Tuple[str, ...] = ()  # AI guidance for next steps
 
 
@@ -681,6 +689,9 @@ def finalize_function(
             final_returns
         )
 
+        # Warn (never refuse) when the name is not defined in the file's source
+        warnings = function_name_warnings(conn, ((file_id, name),), project_root)
+
         conn.close()
 
         # Effect: update file timestamp (uses separate connection)
@@ -698,6 +709,7 @@ def finalize_function(
             success=True,
             function_id=function_id,
             file_id=file_id,
+            warnings=warnings,
             return_statements=return_statements
         )
 
@@ -749,6 +761,7 @@ def finalize_functions(
 
     # Validate all names and prepare finalization data
     finalizations = []
+    named_functions = []
     file_ids = set()
 
     for func in functions:
@@ -776,6 +789,7 @@ def finalize_functions(
         purpose = func.get("purpose")
 
         finalizations.append((function_id, name, purpose, params_json, returns_json))
+        named_functions.append((file_id, name))
         file_ids.add(file_id)
 
     # Effect: open connection and finalize batch
@@ -827,6 +841,9 @@ def finalize_functions(
         # Effect: finalize all functions in transaction
         _finalize_functions_batch_effect(conn, validated_finalizations)
 
+        # Warn (never refuse) for names not defined in their file's source
+        warnings = function_name_warnings(conn, named_functions, project_root)
+
         conn.close()
 
         # Effect: update timestamps for all affected files
@@ -844,6 +861,7 @@ def finalize_functions(
         return FinalizeBatchResult(
             success=True,
             finalized_ids=tuple(f[0] for f in finalizations),
+            warnings=warnings,
             return_statements=return_statements
         )
 

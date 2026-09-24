@@ -31,6 +31,8 @@ class AddRelationshipsResult:
     success: bool
     ids: Tuple[int, ...] = ()
     error: Optional[str] = None
+    added_count: int = 0
+    skipped_count: int = 0  # links already tracked; their existing ids are in ids
     return_statements: Tuple[str, ...] = ()  # AI guidance for next steps
 
 
@@ -106,24 +108,28 @@ def _check_relationship_exists(
     return cursor.fetchone() is not None
 
 
-def _add_type_function_relationship_effect(
+def _insert_relationship_if_new(
     conn: sqlite3.Connection,
     type_id: int,
     function_id: int,
     role: str
-) -> int:
+) -> Tuple[int, bool]:
     """
-    Effect: Insert type-function relationship into database.
+    Effect: Insert a type-function link unless the same (type, function, role)
+    exists. Does not commit.
 
-    Args:
-        conn: Database connection
-        type_id: Type ID
-        function_id: Function ID
-        role: Relationship role
+    types_functions is UNIQUE on that triple, so a blind insert failed the whole
+    batch on one repeat; skipping matches add_files_to_module / add_file_flows.
 
     Returns:
-        Inserted relationship ID
+        (relationship ID, True when newly inserted)
     """
+    row = conn.execute(
+        "SELECT id FROM types_functions WHERE type_id = ? AND function_id = ? AND role = ?",
+        (type_id, function_id, role)
+    ).fetchone()
+    if row is not None:
+        return (row[0], False)
     cursor = conn.execute(
         """
         INSERT INTO types_functions (type_id, function_id, role)
@@ -131,40 +137,35 @@ def _add_type_function_relationship_effect(
         """,
         (type_id, function_id, role)
     )
-    conn.commit()
-    return cursor.lastrowid
+    return (cursor.lastrowid, True)
 
 
 def _add_relationships_batch_effect(
     conn: sqlite3.Connection,
     relationships: List[Tuple[int, int, str]]
-) -> Tuple[int, ...]:
+) -> Tuple[Tuple[int, ...], int]:
     """
-    Effect: Insert multiple type-function relationships in transaction.
+    Effect: Insert type-function relationships in one transaction, skipping
+    links already tracked (including repeats within the batch).
 
     Args:
         conn: Database connection
         relationships: List of (type_id, function_id, role) tuples
 
     Returns:
-        Tuple of inserted relationship IDs in same order
+        (relationship IDs in input order — existing IDs for skipped links,
+         number skipped)
     """
-    cursor = conn.cursor()
-    ids = []
-
     try:
-        for type_id, function_id, role in relationships:
-            cursor.execute(
-                """
-                INSERT INTO types_functions (type_id, function_id, role)
-                VALUES (?, ?, ?)
-                """,
-                (type_id, function_id, role)
-            )
-            ids.append(cursor.lastrowid)
-
+        results = tuple(
+            _insert_relationship_if_new(conn, type_id, function_id, role)
+            for type_id, function_id, role in relationships
+        )
         conn.commit()
-        return tuple(ids)
+        return (
+            tuple(relationship_id for relationship_id, _ in results),
+            sum(1 for _, inserted in results if not inserted),
+        )
 
     except Exception as e:
         conn.rollback()
@@ -232,7 +233,10 @@ def add_types_functions(
                    'accessor', 'validator', 'combinator'
 
     Returns:
-        AddRelationshipsResult with success status and inserted IDs
+        AddRelationshipsResult with IDs in input order, added_count and
+        skipped_count. A link already tracked with the same (type, function,
+        role) is skipped and its existing ID returned, instead of failing the
+        batch on the UNIQUE constraint.
 
     Example:
         >>> # Single relationship
@@ -290,27 +294,17 @@ def add_types_functions(
                     error=f"Function with ID {function_id} not found"
                 )
 
-        # Effect: add all relationships
-        if len(relationships) == 1:
-            # Single relationship
-            type_id, function_id, role = relationships[0]
-            relationship_id = _add_type_function_relationship_effect(
-                conn,
-                type_id,
-                function_id,
-                role
-            )
-            inserted_ids = (relationship_id,)
-        else:
-            # Multiple relationships - use batch
-            inserted_ids = _add_relationships_batch_effect(conn, relationships)
+        # Effect: add all relationships, skipping links already tracked
+        relationship_ids, skipped = _add_relationships_batch_effect(conn, relationships)
 
         # Success - fetch return statements from core database
         return_statements = get_return_statements("add_types_functions")
 
         return AddRelationshipsResult(
             success=True,
-            ids=inserted_ids,
+            ids=relationship_ids,
+            added_count=len(relationship_ids) - skipped,
+            skipped_count=skipped,
             return_statements=return_statements
         )
 

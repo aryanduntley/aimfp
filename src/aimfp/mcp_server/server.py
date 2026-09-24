@@ -13,12 +13,19 @@ import sys
 import json
 import sqlite3
 from pathlib import Path
-from typing import Dict, Any, List, Final
+from typing import Dict, Any, List, Final, Optional
 
 from ..database.connection import get_core_db_path, _open_connection
 from .registry import TOOL_REGISTRY, is_registered_tool, _effect_import_tool_function
 from .schema import params_to_input_schema
-from .serialization import serialize_result, is_error_result
+from .arguments import check_tool_arguments
+from .serialization import (
+    compact_return_statements,
+    is_error_result,
+    result_payload,
+    serialize_payload,
+    serialize_result,
+)
 from .errors import (
     METHOD_NOT_FOUND,
     INTERNAL_ERROR,
@@ -34,7 +41,7 @@ from .errors import (
 # ============================================================================
 
 SERVER_NAME: Final[str] = "aimfp"
-SERVER_VERSION: Final[str] = "1.56.0"
+SERVER_VERSION: Final[str] = "1.57.0"
 PROTOCOL_VERSION: Final[str] = "2025-06-18"
 
 
@@ -68,7 +75,32 @@ _DESTRUCTIVE_SPECIAL: Final[frozenset] = frozenset({
 # ============================================================================
 
 _cached_tool_dicts: List[Dict[str, Any]] = []
+_cached_tool_schemas: Dict[str, Dict[str, Any]] = {}  # tool name -> inputSchema
 _cached_instructions: str = ""
+
+# --compact-returns (opt-in, per process): each tool's return statements are
+# sent in full once per session, then replaced by a pointer. The sent-set is
+# reset by aimfp_run(is_new_session=true), which always sends in full.
+_compact_returns_enabled: bool = False
+_sent_return_statements: frozenset = frozenset()
+
+
+def set_compact_returns(enabled: bool) -> None:
+    """Effect: Turn compact return statements on or off for this server process."""
+    global _compact_returns_enabled, _sent_return_statements
+    _compact_returns_enabled = bool(enabled)
+    _sent_return_statements = frozenset()
+
+
+def _effect_compact_payload(name: str, arguments: Dict[str, Any], payload: Any) -> Any:
+    """Effect: Apply compact returns to one result, updating the session sent-set."""
+    global _sent_return_statements
+    if name == "aimfp_run" and arguments.get("is_new_session"):
+        _sent_return_statements = frozenset()
+    payload, _sent_return_statements = compact_return_statements(
+        name, payload, _sent_return_statements
+    )
+    return payload
 
 
 # ============================================================================
@@ -104,10 +136,22 @@ def build_tool_result(text: str,
     }
 
 
-def build_tool_annotations(tool_name: str) -> Dict[str, Any]:
-    """Pure: Generate MCP ToolAnnotations from tool name conventions.
+_ANNOTATION_HINT_KEYS: Final[tuple] = (
+    "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint",
+)
 
-    Classification:
+
+def build_tool_annotations(
+    tool_name: str,
+    explicit: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Pure: Generate MCP ToolAnnotations: explicit hints from the helper's
+    'annotations' (aimfp_core.db) win; the name convention fills the rest.
+
+    A read-only tool never carries destructiveHint (the MCP spec defines it
+    only for tools that write), whichever source said it was read-only.
+
+    Name-convention classification:
       - Read-only: get_*, search_*, query_*, find_*, list_*, detect_*,
         plus special cases (aimfp_run, *_has_changed, *_check_constraints)
       - Destructive: delete_*, execute_merge, aimfp_end
@@ -139,7 +183,17 @@ def build_tool_annotations(tool_name: str) -> Dict[str, Any]:
             tool_name.startswith("update_") or tool_name.startswith("set_")
         )
 
-    return annotations
+    overrides = {
+        key: bool(value) for key, value in (explicit or {}).items()
+        if key in _ANNOTATION_HINT_KEYS
+    }
+    merged = {**annotations, **overrides}
+    if merged["readOnlyHint"]:
+        merged.pop("destructiveHint", None)
+        merged["idempotentHint"] = overrides.get("idempotentHint", True)
+    elif "destructiveHint" not in merged:
+        merged["destructiveHint"] = False
+    return merged
 
 
 def build_tool_dict(name: str, description: str,
@@ -198,6 +252,16 @@ def handle_call_tool(request_id: Any,
             build_tool_result(format_import_error(name, e), is_error=True),
         )
 
+    # Coerce to declared types, then validate against the inputSchema
+    arguments, argument_error = check_tool_arguments(
+        name, _cached_tool_schemas.get(name), arguments
+    )
+    if argument_error:
+        return build_jsonrpc_response(
+            request_id,
+            build_tool_result(argument_error, is_error=True),
+        )
+
     # Call helper
     try:
         result = tool_fn(**arguments)
@@ -207,8 +271,13 @@ def handle_call_tool(request_id: Any,
             build_tool_result(format_internal_error(name, e), is_error=True),
         )
 
-    # Serialize and return
-    serialized = serialize_result(result)
+    # Serialize and return (compacting repeated return statements when opted in)
+    if _compact_returns_enabled:
+        serialized = serialize_payload(
+            _effect_compact_payload(name, arguments, result_payload(result))
+        )
+    else:
+        serialized = serialize_result(result)
     return build_jsonrpc_response(
         request_id,
         build_tool_result(serialized, is_error=is_error_result(result)),
@@ -255,14 +324,14 @@ def _effect_load_and_cache_instructions() -> None:
 
 def _effect_load_and_cache_tools() -> None:
     """Effect: Load tool definitions from aimfp_core.db into module cache."""
-    global _cached_tool_dicts
+    global _cached_tool_dicts, _cached_tool_schemas
     db_path = get_core_db_path()
     conn = _open_connection(db_path, immutable=True)
 
     try:
         placeholders = ",".join("?" for _ in TOOL_REGISTRY)
         cursor = conn.execute(
-            f"SELECT name, purpose, parameters FROM helper_functions "
+            f"SELECT name, purpose, parameters, annotations FROM helper_functions "
             f"WHERE name IN ({placeholders})",
             tuple(TOOL_REGISTRY.keys()),
         )
@@ -272,11 +341,14 @@ def _effect_load_and_cache_tools() -> None:
             name = row["name"]
             description = row["purpose"] or f"AIMFP tool: {name}"
             input_schema = params_to_input_schema(row["parameters"] or "[]")
-            annotations = build_tool_annotations(name)
+            annotations = build_tool_annotations(
+                name, json.loads(row["annotations"]) if row["annotations"] else None
+            )
             tools.append(build_tool_dict(name, description, input_schema,
                                          annotations))
 
         _cached_tool_dicts = tools
+        _cached_tool_schemas = {t["name"]: t["inputSchema"] for t in tools}
 
     finally:
         conn.close()

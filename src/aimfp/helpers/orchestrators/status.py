@@ -98,6 +98,162 @@ def _compact_items(
 
 
 # ============================================================================
+# get_open_work
+# ============================================================================
+
+_PRIORITY_RANK: Dict[str, int] = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
+_STATUS_RANK: Dict[str, int] = {'in_progress': 0, 'pending': 1, 'blocked': 2}
+
+
+def _work_order(row: Dict[str, Any]) -> Tuple[int, int, int]:
+    """Pure: in_progress first, then pending, then blocked; by priority; then id."""
+    return (
+        _STATUS_RANK.get(row.get('status'), 3),
+        _PRIORITY_RANK.get(row.get('priority'), 4),
+        row.get('id') or 0,
+    )
+
+
+def assemble_open_work(
+    tasks: Tuple[Dict[str, Any], ...],
+    subtasks: Tuple[Dict[str, Any], ...],
+    sidequests: Tuple[Dict[str, Any], ...],
+    items: Tuple[Dict[str, Any], ...],
+    include_descriptions: bool = False,
+) -> Dict[str, Any]:
+    """
+    Pure: Nest open work rows into one tree.
+
+    Each task carries its open items and open subtasks (each with its own open
+    items); sidequests are listed beside the tasks, with paused_task_id, since
+    they interrupt a task rather than belong to it. Descriptions are dropped
+    unless asked for, and truncated when included.
+    """
+    items_by_parent: Dict[Tuple[str, Any], List[Dict[str, Any]]] = {}
+    for item in sorted(items, key=lambda i: i.get('id') or 0):
+        items_by_parent.setdefault(
+            (item.get('reference_table'), item.get('reference_id')), []
+        ).append({'id': item.get('id'), 'name': item.get('name'), 'status': item.get('status')})
+
+    def node(row: Dict[str, Any], table: str, keys: Tuple[str, ...]) -> Dict[str, Any]:
+        base = {key: row.get(key) for key in keys}
+        if include_descriptions:
+            base['description'] = _truncate(row.get('description'))
+        base['items'] = tuple(items_by_parent.get((table, row.get('id')), ()))
+        return base
+
+    subtasks_by_task: Dict[Any, List[Dict[str, Any]]] = {}
+    for sub in sorted(subtasks, key=_work_order):
+        subtasks_by_task.setdefault(sub.get('parent_task_id'), []).append(
+            node(sub, 'subtasks', ('id', 'name', 'status', 'priority'))
+        )
+
+    task_nodes = tuple(
+        {**node(task, 'tasks', ('id', 'name', 'status', 'priority', 'milestone_id')),
+         'subtasks': tuple(subtasks_by_task.get(task.get('id'), ()))}
+        for task in sorted(tasks, key=_work_order)
+    )
+    sidequest_nodes = tuple(
+        node(sq, 'sidequests', ('id', 'name', 'status', 'priority', 'paused_task_id'))
+        for sq in sorted(sidequests, key=_work_order)
+    )
+    return {
+        'tasks': task_nodes,
+        'sidequests': sidequest_nodes,
+        'counts': {
+            'tasks': len(task_nodes),
+            'subtasks': sum(len(t['subtasks']) for t in task_nodes),
+            'sidequests': len(sidequest_nodes),
+            'open_items': len(items),
+        },
+    }
+
+
+def get_open_work(
+    milestone_id: Optional[int] = None,
+    include_descriptions: bool = False,
+    project_root: Optional[str] = None,
+) -> Result:
+    """
+    Every open task with its open items and subtasks, plus open sidequests, in
+    one read-only call.
+
+    "Open" means status is not 'completed' (blocked work is included). Replaces
+    get_incomplete_tasks followed by one get_items_for_task per task.
+
+    Args:
+        milestone_id: Limit tasks (and their subtasks and sidequests) to one milestone
+        include_descriptions: Add truncated descriptions (off keeps the payload small)
+        project_root: Explicit root for embedding hosts (defaults to the session root)
+
+    Returns:
+        Result with data={tasks[{id, name, status, priority, milestone_id,
+        items[], subtasks[{..., items[]}]}], sidequests[{..., paused_task_id,
+        items[]}], counts{tasks, subtasks, sidequests, open_items}}
+    """
+    try:
+        root = project_root or resolve_project_root()
+        conn = _open_project_connection(root)
+    except (RuntimeError, FileNotFoundError) as e:
+        return Result(success=False, error=str(e))
+
+    try:
+        task_filter = " AND milestone_id = ?" if milestone_id is not None else ""
+        params: tuple = (milestone_id,) if milestone_id is not None else ()
+        tasks = _query_all(
+            conn,
+            "SELECT id, name, status, priority, milestone_id, description FROM tasks "
+            f"WHERE status != 'completed'{task_filter}",
+            params,
+        )
+        task_ids = tuple(t['id'] for t in tasks)
+        in_tasks = ",".join("?" for _ in task_ids) or "NULL"
+        subtasks = _query_all(
+            conn,
+            "SELECT id, name, status, priority, parent_task_id, description FROM subtasks "
+            f"WHERE status != 'completed' AND parent_task_id IN ({in_tasks})",
+            task_ids,
+        )
+        sidequest_filter = (
+            " AND paused_task_id IN (SELECT id FROM tasks WHERE milestone_id = ?)"
+            if milestone_id is not None else ""
+        )
+        sidequests = _query_all(
+            conn,
+            "SELECT id, name, status, priority, paused_task_id, description FROM sidequests "
+            f"WHERE status != 'completed'{sidequest_filter}",
+            params,
+        )
+        parents = (
+            tuple(('tasks', t['id']) for t in tasks)
+            + tuple(('subtasks', s['id']) for s in subtasks)
+            + tuple(('sidequests', q['id']) for q in sidequests)
+        )
+        items = tuple(
+            item
+            for table in ('tasks', 'subtasks', 'sidequests')
+            for ids in (tuple(i for t, i in parents if t == table),)
+            if ids
+            for item in _query_all(
+                conn,
+                "SELECT id, name, status, reference_table, reference_id FROM items "
+                f"WHERE status != 'completed' AND reference_table = ? "
+                f"AND reference_id IN ({','.join('?' for _ in ids)})",
+                (table,) + ids,
+            )
+        )
+        return Result(
+            success=True,
+            data=assemble_open_work(tasks, subtasks, sidequests, items, include_descriptions),
+            return_statements=get_return_statements("get_open_work"),
+        )
+    except sqlite3.Error as e:
+        return Result(success=False, error=f"Database error: {e}")
+    finally:
+        _close_connection(conn)
+
+
+# ============================================================================
 # get_project_status
 # ============================================================================
 

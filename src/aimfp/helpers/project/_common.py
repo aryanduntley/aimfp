@@ -31,9 +31,10 @@ Imported from utils.py (global):
 - _open_connection: Database connection with row factory
 """
 
+import difflib
 import os
 import sqlite3
-from typing import Optional, Final
+from typing import FrozenSet, Iterable, Optional, Final, Tuple
 
 # Import global utilities (DRY - avoid duplication)
 from ..utils import (  # noqa: F401 - re-exported for convenience
@@ -73,6 +74,133 @@ def _resolve_fs_path(path: str, project_root: Optional[str] = None) -> str:
         except RuntimeError:
             return path
     return os.path.join(root, path)
+
+
+def check_trackable_file_path(path: str, project_root: Optional[str] = None) -> Optional[str]:
+    """
+    Effect: Why ``path`` cannot be tracked as a file, or None when it can.
+
+    finalize_file used to check only os.path.exists, so '.' (the project root)
+    or any directory passed. A tracked file must be a regular file, and a
+    relative path must stay inside the project. Each message names the fix.
+
+    Args:
+        path: Project-relative (or absolute) path as given by the caller
+        project_root: Explicit root; falls back to the cached project root
+
+    Returns:
+        Error message, or None when the path is a regular file
+    """
+    stripped = (path or '').strip()
+    if stripped in ('', '.', './', '..') or stripped.endswith('/'):
+        return (
+            f"Path {path!r} does not name a file. Pass the file's path relative "
+            "to the project root, e.g. 'src/calc.py'."
+        )
+    if not os.path.isabs(stripped) and '..' in stripped.replace('\\', '/').split('/'):
+        return (
+            f"Path {path!r} leaves the project. Pass a path relative to the "
+            "project root without '..'."
+        )
+    resolved = _resolve_fs_path(stripped, project_root)
+    if os.path.isdir(resolved):
+        return (
+            f"Path {path!r} is a directory, not a file. Pass the file's path "
+            "relative to the project root, e.g. 'src/calc.py'."
+        )
+    if not os.path.isfile(resolved):
+        return f"File does not exist at path: {path}"
+    return None
+
+
+def missing_function_warning(
+    name: str,
+    file_path: str,
+    defined_names: FrozenSet[str],
+) -> Optional[str]:
+    """
+    Pure: A warning when ``name`` is not defined in the file, with a did-you-mean.
+
+    Returns None when the name is present.
+    """
+    if name in defined_names:
+        return None
+    close = difflib.get_close_matches(name, sorted(defined_names), n=3, cutoff=0.6)
+    hint = f" Did you mean {', '.join(repr(c) for c in close)}?" if close else ""
+    return (
+        f"Function '{name}' is not defined in {file_path}.{hint} Make the tracked "
+        "name match the code: rename it with update_function, or rename the "
+        "function in the source."
+    )
+
+
+def _effect_defined_function_names(
+    file_path: str,
+    project_root: Optional[str],
+) -> Optional[FrozenSet[str]]:
+    """
+    Effect: Names of every function defined in a source file, or None when the
+    file cannot be checked (unreadable, or a language AIMFP only pattern-matches).
+
+    Only full-fidelity extraction (Python, via ast) is trusted: name-only regex
+    extraction misses forms like arrow functions and would warn falsely.
+    """
+    from ...watchdog.config import detect_language
+    from ..catalog.extract import extract_entities
+
+    language = detect_language(file_path)
+    if language is None:
+        return None
+    try:
+        with open(_resolve_fs_path(file_path, project_root), encoding='utf-8') as f:
+            source = f.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+    entities = extract_entities(source, language)
+    if entities.fidelity != 'full':
+        return None
+    return frozenset(fn.name for fn in entities.functions)
+
+
+def function_name_warnings(
+    conn: sqlite3.Connection,
+    named_functions: Iterable[Tuple[int, str]],
+    project_root: Optional[str],
+) -> Tuple[str, ...]:
+    """
+    Effect: Warnings for tracked function names absent from their file's source.
+
+    Finalize never opened the source, so a model could finalize
+    'print_hi_id_1' while the code says 'print_hi'. Warns rather than refuses;
+    files that cannot be checked are skipped. Each file is parsed once.
+
+    Args:
+        conn: Open project.db connection (reads files.path)
+        named_functions: (file_id, function name) pairs
+        project_root: Root for resolving file paths
+
+    Returns:
+        One warning per name not found, in input order
+    """
+    pairs = tuple(named_functions)
+    file_ids = tuple(dict.fromkeys(file_id for file_id, _ in pairs))
+    paths = {
+        file_id: row[0]
+        for file_id in file_ids
+        for row in (conn.execute("SELECT path FROM files WHERE id = ?", (file_id,)).fetchone(),)
+        if row is not None and row[0]
+    }
+    defined = {
+        file_id: _effect_defined_function_names(path, project_root)
+        for file_id, path in paths.items()
+    }
+    return tuple(
+        warning
+        for file_id, name in pairs
+        if defined.get(file_id) is not None
+        for warning in (missing_function_warning(name, paths[file_id], defined[file_id]),)
+        if warning
+    )
 
 
 # ============================================================================

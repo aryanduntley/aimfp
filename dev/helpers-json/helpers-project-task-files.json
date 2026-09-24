@@ -16,7 +16,10 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "File IDs to link"
+          "description": "File IDs to link",
+          "items": {
+            "type": "integer"
+          }
         },
         {
           "name": "task_type",
@@ -48,7 +51,12 @@
           "parameters_mapping": {},
           "description": "Before completion: link any files worked on outside the in_progress window so the get_task_context gate sees them"
         }
-      ]
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      }
     },
     {
       "name": "unlink_files_from_task",
@@ -66,7 +74,10 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "File IDs to unlink"
+          "description": "File IDs to unlink",
+          "items": {
+            "type": "integer"
+          }
         },
         {
           "name": "task_type",
@@ -86,7 +97,12 @@
       "implementation_notes": [
         "Returns: {success, reference_table, reference_id, removed_count, skipped_count}"
       ],
-      "target_database": "project"
+      "target_database": "project",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      }
     }
   ]
 }
