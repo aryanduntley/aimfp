@@ -16,8 +16,14 @@ Rules:
   (renames=[{from, to}], e.g. from git diff -M), or else when exactly one
   untracked path in the same call has the same file name; its functions,
   flows and modules stay attached.
+- A legacy row whose recorded path names a folder ('.' or a directory, as
+  small models wrote before path validation refused it) is adopted by the one
+  new file with its name; such a row can never be passed in a call, so it
+  would otherwise sit beside a duplicate. Rows for genuinely deleted files are
+  not adopted this way.
 - A tracked 'call' edge whose target name no longer appears anywhere in the
-  caller's body is REPORTED as stale (Python only), never deleted.
+  caller's body, or in the untracked same-file helpers it uses, is REPORTED
+  as stale (Python only), never deleted.
 - dry_run=True runs everything and rolls back, so the report says exactly
   what a real run would do.
 """
@@ -38,7 +44,12 @@ from ..project.interactions import _insert_interaction_if_new
 from ..project.task_files import link_files_to_current_focus_effect
 from ...watchdog.config import build_exclusion_sets, detect_language, should_exclude
 from ...watchdog.reconciliation import _read_user_exclusions, _read_watchdogignore
-from .callgraph import build_call_edges, extract_referenced_names, query_tracked_functions
+from .callgraph import (
+    build_call_edges,
+    extract_referenced_names,
+    fold_untracked_helpers,
+    query_tracked_functions,
+)
 from .extract import ExtractedEntities, extract_entities
 from .register import (
     _effect_upsert_file,
@@ -156,6 +167,49 @@ def plan_explicit_renames(
     return (tuple(applied), tuple(refused))
 
 
+def pair_folder_rows(
+    new_files: Tuple[Tuple[str, Optional[str]], ...],
+    rows: Tuple[Dict[str, Any], ...],
+    is_folder: Callable[[str], bool],
+) -> Tuple[Tuple[int, str, str], ...]:
+    """
+    Pure (given is_folder): (row id, recorded path, new path) for each new
+    file that is the one tracked folder-path row with its name.
+
+    Args:
+        new_files: (path, detected language) of untracked files on disk
+        rows: tracked {id, name, path, language} rows that may match by name
+        is_folder: whether a recorded path names a folder rather than a file
+
+    A row matches a new file when its name is the file's name or stem, its
+    recorded path is a folder, and its language (if recorded) agrees. Both
+    sides must be unique: a file with two candidate rows, or a row wanted by
+    two files, is left alone.
+    """
+    def matches(path: str, language: Optional[str], row: Dict[str, Any]) -> bool:
+        base = os.path.basename(path)
+        return (
+            row["name"] in (base, os.path.splitext(base)[0])
+            and is_folder(row["path"] or "")
+            and (not row["language"] or row["language"] == language)
+        )
+
+    candidates = {
+        path: tuple(r for r in rows if matches(path, language, r))
+        for path, language in new_files
+        if language is not None
+    }
+    claims: Dict[int, int] = {}
+    for found in candidates.values():
+        for r in found:
+            claims[r["id"]] = claims.get(r["id"], 0) + 1
+    return tuple(
+        (found[0]["id"], found[0]["path"], path)
+        for path, found in sorted(candidates.items())
+        if len(found) == 1 and claims[found[0]["id"]] == 1
+    )
+
+
 def find_stale_calls(
     edges: Tuple[Dict[str, Any], ...],
     referenced: Dict[str, Any],
@@ -204,6 +258,21 @@ def _effect_tracked_file(conn: sqlite3.Connection, path: str) -> Optional[Dict[s
     return dict(row) if row else None
 
 
+def _effect_rows_named(conn: sqlite3.Connection, paths: Tuple[str, ...]) -> Tuple[Dict[str, Any], ...]:
+    """Effect: Tracked file rows whose name is the file name or stem of any of paths."""
+    names = tuple(dict.fromkeys(
+        n for p in paths
+        for n in (os.path.basename(p), os.path.splitext(os.path.basename(p))[0])
+    ))
+    if not names:
+        return ()
+    rows = conn.execute(
+        f"SELECT id, name, path, language FROM files WHERE name IN ({','.join('?' * len(names))})",
+        names,
+    ).fetchall()
+    return tuple(dict(row) for row in rows)
+
+
 def _effect_names(conn: sqlite3.Connection, table: str, file_id: int) -> Dict[str, int]:
     """Effect: name -> id for the functions or types tracked in one file."""
     rows = conn.execute(f"SELECT id, name FROM {table} WHERE file_id = ?", (file_id,)).fetchall()
@@ -224,9 +293,16 @@ def _effect_stale_calls(
     path: str,
     source: str,
 ) -> Tuple[Dict[str, Any], ...]:
-    """Effect: Stale 'call' edges from the functions of one Python file (report only)."""
+    """
+    Effect: Stale 'call' edges from the functions of one Python file (report
+    only). A caller's references include those of the untracked same-file
+    helpers it uses, whose calls are recorded on the caller.
+    """
     try:
-        referenced = extract_referenced_names(ast.parse(source))
+        referenced = fold_untracked_helpers(
+            extract_referenced_names(ast.parse(source)),
+            frozenset(_effect_names(conn, "functions", file_id)),
+        )
     except SyntaxError:
         return ()
     rows = conn.execute(
@@ -252,11 +328,17 @@ def _effect_sync_file_entities(
     file_id: int,
     path: str,
     entities: ExtractedEntities,
+    defined: ExtractedEntities,
 ) -> Tuple[Tuple[Dict[str, Any], ...], ...]:
     """
     Effect: Catalog functions/types present in the source but not tracked, and
     list tracked ones the source no longer defines (full-fidelity parses only,
     since name-only extraction misses some forms).
+
+    Args:
+        entities: what to catalog (private names dropped unless asked for)
+        defined: everything the file defines; a tracked _private function is
+            not missing just because this call does not catalog privates
 
     Returns:
         (functions_added, functions_missing, types_added, types_missing)
@@ -282,8 +364,8 @@ def _effect_sync_file_entities(
 
     if entities.fidelity != 'full':
         return (functions_added, (), types_added, ())
-    in_source_functions = {fn.name for fn in entities.functions}
-    in_source_types = {ty.name for ty in entities.types}
+    in_source_functions = {fn.name for fn in defined.functions}
+    in_source_types = {ty.name for ty in defined.types}
     functions_missing = tuple(
         {"id": fid, "name": name, "path": path}
         for name, fid in sorted(tracked_functions.items())
@@ -319,6 +401,8 @@ def reconcile_paths(
     - tracked file gone from disk: rename it as declared in renames, else to
       the one untracked path in this call with the same file name, else
       report it as missing
+    - untracked file on disk whose name belongs to exactly one tracked row
+      recorded at a folder path (legacy '.' rows): adopt that row
     Then add the call edges (Python) of every affected file, skipping edges
     already tracked, and report tracked call edges whose target the caller
     no longer references (stale_interactions; never deleted). Watchdog exclusions (.watchdogignore, excluded dirs and
@@ -379,17 +463,26 @@ def reconcile_paths(
             lambda p: os.path.isfile(os.path.join(root, p)),
         )
         claimed = {p for pair in explicit for p in pair}
-        renames = explicit + pair_renames(
-            tuple(p for p in dead if p not in claimed),
-            tuple(p for p in fresh if p not in claimed),
+        by_path = tuple(
+            ((tracked.get(old) or _effect_tracked_file(conn, old))["id"], old, new)
+            for old, new in explicit + pair_renames(
+                tuple(p for p in dead if p not in claimed),
+                tuple(p for p in fresh if p not in claimed),
+            )
         )
-        rename_ids = {
-            old: (tracked.get(old) or _effect_tracked_file(conn, old))["id"] for old, _ in renames
-        }
-        for old, new in renames:
-            _effect_rename_file(conn, rename_ids[old], new)
-        renamed_new = {new for _, new in renames}
-        renamed_old = {old for old, _ in renames}
+        # Legacy rows recorded at a folder path are never in a call's paths
+        # (and '.' is refused), so match them to what is still unpaired by name
+        unpaired = tuple(p for p in fresh if p not in {new for _, _, new in by_path})
+        renames = by_path + pair_folder_rows(
+            tuple((p, detect_language(p)) for p in unpaired),
+            tuple(r for r in _effect_rows_named(conn, unpaired)
+                  if r["id"] not in {file_id for file_id, _, _ in by_path}),
+            lambda p: os.path.isdir(os.path.join(root, p.strip())),
+        )
+        for file_id, _, new in renames:
+            _effect_rename_file(conn, file_id, new)
+        renamed_new = {new for _, _, new in renames}
+        renamed_old = {old for _, old, _ in renames}
 
         unsupported = tuple(p for p in fresh if p not in renamed_new and detect_language(p) is None)
         cataloged = tuple(
@@ -413,11 +506,12 @@ def reconcile_paths(
             if language is None or source is None:
                 parse_skips.append({"path": path, "reason": "unreadable or unsupported language"})
                 continue
-            entities = select_entities(extract_entities(source, language), include_private)
+            defined = select_entities(extract_entities(source, language), True)
+            entities = select_entities(defined, include_private)
             if entities.fidelity == 'none':
                 parse_skips.append({"path": path, "reason": entities.parse_error or "could not parse"})
                 continue
-            synced.append(_effect_sync_file_entities(conn, row["id"], path, entities))
+            synced.append(_effect_sync_file_entities(conn, row["id"], path, entities, defined))
             if language == 'python':
                 stale.extend(_effect_stale_calls(conn, row["id"], path, source))
 
@@ -441,7 +535,7 @@ def reconcile_paths(
             dry_run=dry_run,
             files_cataloged=cataloged,
             files_renamed=tuple(
-                {"id": rename_ids[old], "from": old, "to": new} for old, new in renames
+                {"id": file_id, "from": old, "to": new} for file_id, old, new in renames
             ),
             files_missing=tuple(
                 {"id": tracked[p]["id"], "path": p} for p in dead if p not in renamed_old

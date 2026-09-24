@@ -5,7 +5,10 @@ import sqlite3
 import pytest
 
 from aimfp.database.connection import clear_project_root_cache
-from aimfp.helpers.catalog.reconcile import normalize_reconcile_path, pair_renames, reconcile_paths
+from aimfp.helpers.catalog.callgraph import fold_untracked_helpers
+from aimfp.helpers.catalog.reconcile import (
+    normalize_reconcile_path, pair_folder_rows, pair_renames, reconcile_paths,
+)
 from aimfp.helpers.orchestrators.entry_points import aimfp_init
 
 CALC = '''def add(a, b):
@@ -239,3 +242,147 @@ def test_explicit_rename_refusals(root):
     assert reasons["src/ghost.py -> src/new.py"] == "'from' is not tracked"
     assert reasons["src/calc.py -> None"] == "rename needs usable 'from' and 'to' paths"
     assert r.files_renamed == ()
+
+
+def _legacy_row(root, path, name, language="python"):
+    conn = sqlite3.connect(os.path.join(root, ".aimfp-project", "project.db"))
+    try:
+        cur = conn.execute(
+            "INSERT INTO files (name, path, language) VALUES (?, ?, ?)", (name, path, language))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("legacy_path, legacy_name", [(".", "calc.py"), ("src", "calc"), ("", "calc.py")])
+def test_folder_path_row_is_adopted_not_duplicated(root, legacy_path, legacy_name):
+    row = _legacy_row(root, legacy_path, legacy_name)
+    _write(root, "src/calc.py", CALC)
+    r = reconcile_paths(["src/calc.py"], project_root=root)
+    assert r.success, r.error
+    assert r.files_cataloged == ()
+    assert r.files_renamed == ({"id": row, "from": legacy_path, "to": "src/calc.py"},)
+    assert _q(root, "SELECT id, name, path FROM files WHERE path = 'src/calc.py'") == [
+        (row, "calc.py", "src/calc.py")]
+    assert _names(r.functions_added) == ["add", "total"]
+
+
+def test_folder_row_left_alone_when_ambiguous_or_mismatched(root):
+    _legacy_row(root, ".", "calc.py")
+    _legacy_row(root, "src", "calc.py")          # two folder rows want one file
+    os.makedirs(os.path.join(root, "lib"))
+    _legacy_row(root, "lib", "util.py", "javascript")  # language disagrees
+    _write(root, "src/calc.py", CALC)
+    _write(root, "src/util.py", "def f():\n    return 1\n")
+    r = reconcile_paths(["src/calc.py", "src/util.py"], project_root=root)
+    assert r.files_renamed == ()
+    assert sorted(f["path"] for f in r.files_cataloged) == ["src/calc.py", "src/util.py"]
+
+
+def test_deleted_file_row_is_not_adopted_across_calls(root):
+    _write(root, "src/old/calc.py", CALC)
+    reconcile_paths(["src/old/calc.py"], project_root=root)
+    os.remove(os.path.join(root, "src/old/calc.py"))
+    _write(root, "src/new/calc.py", CALC)
+    r = reconcile_paths(["src/new/calc.py"], project_root=root)
+    assert r.files_renamed == ()
+    assert [f["path"] for f in r.files_cataloged] == ["src/new/calc.py"]
+
+
+def test_folder_row_adoption_dry_run_rolls_back(root):
+    _legacy_row(root, ".", "calc.py")
+    _write(root, "src/calc.py", CALC)
+    r = reconcile_paths(["src/calc.py"], dry_run=True, project_root=root)
+    assert len(r.files_renamed) == 1
+    assert _q(root, "SELECT path FROM files WHERE name = 'calc.py'") == [(".",)]
+
+
+def test_pair_folder_rows_pure():
+    rows = (
+        {"id": 1, "name": "a.py", "path": ".", "language": None},
+        {"id": 2, "name": "b", "path": "pkg", "language": "python"},
+        {"id": 3, "name": "c.py", "path": "gone/c.py", "language": "python"},
+    )
+    is_folder = lambda p: p in (".", "pkg")  # noqa: E731
+    pairs = pair_folder_rows(
+        (("x/a.py", "python"), ("x/b.py", "python"), ("x/c.py", "python"), ("y/a.py", "python")),
+        rows, is_folder,
+    )
+    assert pairs == ((2, "pkg", "x/b.py"),)   # a.py claimed twice, c.py's row is not a folder
+    assert pair_folder_rows((("x/a.py", None),), rows, is_folder) == ()
+
+
+# ============================================================================
+# Task 44: calls made through untracked helpers are not stale
+# ============================================================================
+
+RUNNER = '''from src.calc import add
+
+
+def run(values):
+    return _step(values)
+
+
+def _step(values):
+    return _inner(values)
+
+
+def _inner(values):
+    return add(values[0], values[1])
+'''
+
+
+def _edge(root, source, target):
+    conn = sqlite3.connect(os.path.join(root, ".aimfp-project", "project.db"))
+    ids = dict(conn.execute("SELECT name, id FROM functions").fetchall())
+    conn.execute("INSERT INTO interactions (source_function_id, target_function_id, interaction_type) "
+                 "VALUES (?, ?, 'call')", (ids[source], ids[target]))
+    conn.commit()
+    conn.close()
+
+
+def test_call_through_untracked_helpers_is_not_stale(root):
+    _write(root, "src/calc.py", CALC)
+    _write(root, "src/runner.py", RUNNER)
+    reconcile_paths(["src/calc.py", "src/runner.py"], include_private=False, project_root=root)
+    _edge(root, "run", "add")   # recorded on run, made inside _inner
+    assert reconcile_paths(["src/runner.py"], include_private=False,
+                           project_root=root).stale_interactions == ()
+    _write(root, "src/runner.py", RUNNER.replace("add(values[0], values[1])", "values[0] + values[1]"))
+    r = reconcile_paths(["src/runner.py"], include_private=False, project_root=root)
+    assert [(s["source_name"], s["target_name"]) for s in r.stale_interactions] == [("run", "add")]
+
+
+def test_tracked_helper_keeps_its_calls_to_itself(root):
+    _write(root, "src/calc.py", CALC)
+    _write(root, "src/runner.py", RUNNER)
+    reconcile_paths(["src/calc.py", "src/runner.py"], project_root=root)  # privates tracked
+    _edge(root, "run", "add")
+    r = reconcile_paths(["src/runner.py"], project_root=root)
+    assert [(s["source_name"], s["target_name"]) for s in r.stale_interactions] == [("run", "add")]
+
+
+def test_fold_untracked_helpers_pure():
+    referenced = {
+        "a": frozenset({"_h", "x"}),
+        "_h": frozenset({"_g", "y", "a"}),   # cycle back to a
+        "_g": frozenset({"z"}),
+        "b": frozenset({"t"}),
+        "t": frozenset({"w"}),
+    }
+    folded = fold_untracked_helpers(referenced, frozenset({"a", "b", "t"}))
+    assert folded["a"] == frozenset({"_h", "x", "_g", "y", "a", "z"})
+    assert folded["b"] == frozenset({"t"})   # t is tracked: its calls stay its own
+    assert folded["_g"] == frozenset({"z"})
+
+
+def test_tracked_private_not_missing_when_privates_not_cataloged(root):
+    _write(root, "src/runner.py", RUNNER)
+    reconcile_paths(["src/runner.py"], project_root=root)   # privates tracked
+    r = reconcile_paths(["src/runner.py"], include_private=False, project_root=root)
+    assert r.functions_missing_in_source == ()
+    _write(root, "src/runner.py", RUNNER.replace("def _inner", "def _renamed"))
+    r = reconcile_paths(["src/runner.py"], include_private=False, project_root=root)
+    assert _names(r.functions_missing_in_source) == ["_inner"]
+    assert r.functions_added == ()   # _renamed not cataloged: privates off

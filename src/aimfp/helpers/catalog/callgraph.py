@@ -200,6 +200,39 @@ def extract_referenced_names(tree: ast.Module) -> Dict[str, FrozenSet[str]]:
     return referenced
 
 
+
+def fold_untracked_helpers(
+    referenced: Dict[str, FrozenSet[str]],
+    tracked: FrozenSet[str],
+) -> Dict[str, FrozenSet[str]]:
+    """
+    Pure: Each function's referenced names plus those of every same-file
+    function it reaches only through functions nobody tracks.
+
+    Calls made inside an untracked helper (usually a _private one) are
+    recorded on the tracked function that uses it, so a check of that
+    function's own body alone would call those edges stale. A tracked
+    helper stops the walk: its calls are its own edges.
+
+    Args:
+        referenced: extract_referenced_names output for one file
+        tracked: names of the file's functions that are tracked
+    """
+    helpers = frozenset(referenced) - tracked
+
+    def reach(name: str) -> FrozenSet[str]:
+        seen, pending, names = {name}, [name], set()
+        while pending:
+            refs = referenced[pending.pop()]
+            names.update(refs)
+            fresh = (refs & helpers) - seen
+            seen.update(fresh)
+            pending.extend(fresh)
+        return frozenset(names)
+
+    return {name: reach(name) for name in referenced}
+
+
 def resolve_target(
     name: str,
     base: Optional[str],
