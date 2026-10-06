@@ -25,7 +25,7 @@ DB Tools: get_file_by_name, get_function_by_name, get_type_by_name, get_interact
 - Call get_directive_by_name(name) BEFORE executing any directive not in memory
 - Follow return_statements from tools — they are mandatory next-step guidance, not suggestions
 - Use DB Tools before reading source files — DB is the index, source files are last resort
-- Check flows, themes, and modules before starting any task: get_all_flows() or get_task_flows(task_id), get_all_themes(), and get_all_modules()
+- Place every task in the modularity map BEFORE coding: theme (stable area) → flow(s) (behaviour) → module (reusable code). aimfp_status carries structure_summary + structure_health. New behaviour with no fitting flow → add_flow(name, theme_ids) — never stretch an unrelated flow or bulk code into one module
 - ALWAYS route ad-hoc work through get_directive_by_name('project_task_decomposition') BEFORE coding
 - Add_note(note_type='evolution') for architecture decisions, scope changes, blueprint edits
 - Update DB from discussions: architecture/infrastructure/task decisions → update_project, update_task, update_milestone, or add_note
@@ -39,8 +39,8 @@ LIFECYCLE & TRACKING GATE
   Tasks created incrementally as work progresses, NOT all at once.
 
   After EVERY Edit or Write to a source file round, immediately run the full file coding loop:
-    reserve file (if new) → search_modules for overlap → reserve functions+types (public)
-    → write FP code → finalize file → assign to flow(s) → assign to module (if domain logic)
+    reserve file (if new, with flow_ids) → search_modules for overlap → reserve functions+types (public)
+    → write FP code → finalize file → assign to module (if domain logic)
     → finalize functions+types (purpose, parameters, returns populated) → add interactions → add types_functions
   Applies to ALL work: features, bug fixes, refactors. Any function added, params changed, types modified — track it.
   Before reporting to user: get_task_context(task_id) — unfinalized files must be finalized FIRST.
@@ -49,7 +49,8 @@ LIFECYCLE & TRACKING GATE
   - Finalize files with public functions reserved+finalized — DO NOT finalize without them
   - Finalize functions with interactions added — DO NOT skip cross-function dependencies
   - Finalize functions with types_functions linked — DO NOT skip tracked type usage
-  - Assign every finalized file to flow(s) — DO NOT skip flow assignment
+  - Every file declares its flows at reserve (flow_ids; null only for config/data) — every flow has ≥ 1 theme
+  - structure_health gaps (aimfp_status, aimfp_end, watchdog structure_* reminders) are fixed in-session, not deferred
   - Assign domain logic files to modules via add_file_to_module — DO NOT skip. Orchestrators (pages, handlers, commands) do not need module assignment.
   - Every finalized code file must have tracked functions — DO NOT leave 0 (unless data-only/config-only)
 
