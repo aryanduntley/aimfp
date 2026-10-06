@@ -608,7 +608,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Route to the returned target directive. For task/subtask/sidequest completion, target is typically aimfp_status which then routes to project_progression for next task creation. For milestone completion, target is aimfp_status which routes to project_progression to open next milestone.",
+        "Route to the returned target directive. When the target is aimfp_status, call aimfp_status() — the default 'quick' tier is the position check a loop needs — then continue with project_progression (next task, or next milestone after a milestone completes). Use aimfp_status(type='summary') only after lost or compacted context.",
         "If project_task_complete: check if all tasks in milestone are done — if yes, trigger project_milestone_complete before routing to target."
       ],
       "target_database": "core",

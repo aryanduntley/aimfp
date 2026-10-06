@@ -23,6 +23,11 @@ Gaps reported (each a capped list plus a total):
 Effects read rows (tolerating pre-v1.13 databases that lack the newer
 tables or columns); pure builders turn rows into the summary and gaps.
 
+Status payloads do not list the whole layer. They attach structure to what
+they already show (structure_of_files, structure_of_flows) and report only
+the gaps touching the active work (focus_structure_gaps) plus a total count:
+a full map every session is a list the AI has to sort for relevance itself.
+
 Helpers in this file:
 - get_structure_health: MCP tool returning summary + gaps
 """
@@ -71,10 +76,21 @@ class StructureRows:
     files: Tuple[Dict[str, Any], ...]
     modules: Tuple[Dict[str, Any], ...]
     module_file_ids: Tuple[int, ...]
+    file_flows: Tuple[Dict[str, Any], ...]
+    module_files: Tuple[Dict[str, Any], ...]
     paths: Tuple[Dict[str, Any], ...]
     path_themes: Tuple[Dict[str, Any], ...]
     milestones: Tuple[Dict[str, Any], ...]
     milestone_flows: Tuple[Dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class WorkFocus:
+    """Immutable description of the work in front of the AI, used to scope gaps."""
+    path_id: Optional[int] = None
+    milestone_id: Optional[int] = None
+    flow_ids: Tuple[int, ...] = ()
+    file_ids: Tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -163,16 +179,22 @@ def build_structure_summary(rows: StructureRows) -> Dict[str, Any]:
     }
 
 
-def build_structure_gaps(rows: StructureRows, split_chars: int = FLOW_SPLIT_CHARS) -> Dict[str, Any]:
+def compute_structure_gaps(
+    rows: StructureRows,
+    split_chars: int = FLOW_SPLIT_CHARS,
+) -> Dict[str, Tuple[Dict[str, Any], ...]]:
     """
-    Pure: Every gap in the modularity layer, as capped lists with totals.
+    Pure: Every gap in the modularity layer, uncapped.
+
+    Uncapped so callers can filter to the active work before capping; a capped
+    list could have dropped exactly the gap that matters now.
 
     Args:
         rows: Raw structure rows
         split_chars: Flow description length that marks a split candidate
 
     Returns:
-        Dict with ok (no gaps), total_gaps, and one capped entry per non-empty gap
+        Dict of gap key -> full tuple of entries (every GAP_KEYS key present)
     """
     themed = {r['flow_id'] for r in rows.flow_themes}
     theme_with_flows = {r['theme_id'] for r in rows.flow_themes}
@@ -181,7 +203,7 @@ def build_structure_gaps(rows: StructureRows, split_chars: int = FLOW_SPLIT_CHAR
     path_with_themes = {r['completion_path_id'] for r in rows.path_themes}
     milestone_with_flows = {r['milestone_id'] for r in rows.milestone_flows}
 
-    gaps = {
+    return {
         'flows_without_theme': tuple(
             {'id': f['id'], 'name': f['name']} for f in rows.flows if f['id'] not in themed),
         'themes_without_flows': tuple(
@@ -203,9 +225,116 @@ def build_structure_gaps(rows: StructureRows, split_chars: int = FLOW_SPLIT_CHAR
             {'id': f['id'], 'name': f['name'], 'chars': len(f.get('description') or '')}
             for f in rows.flows if len(f.get('description') or '') > split_chars),
     }
+
+
+def build_structure_gaps(rows: StructureRows, split_chars: int = FLOW_SPLIT_CHARS) -> Dict[str, Any]:
+    """
+    Pure: Every gap in the modularity layer, as capped lists with totals.
+
+    Args:
+        rows: Raw structure rows
+        split_chars: Flow description length that marks a split candidate
+
+    Returns:
+        Dict with ok (no gaps), total_gaps, and one capped entry per non-empty gap
+    """
+    gaps = compute_structure_gaps(rows, split_chars)
     present = {k: capped(v) for k, v in gaps.items() if v}
     total = sum(entry['total'] for entry in present.values())
     return {'ok': total == 0, 'total_gaps': total, **present}
+
+
+def milestone_flow_ids(rows: StructureRows, milestone_id: Optional[int]) -> Tuple[int, ...]:
+    """Pure: Sorted flow ids linked to one milestone; () for None or none linked."""
+    if milestone_id is None:
+        return ()
+    return tuple(sorted(
+        r['flow_id'] for r in rows.milestone_flows if r['milestone_id'] == milestone_id))
+
+
+def structure_of_flows(rows: StructureRows, flow_ids: Tuple[int, ...]) -> Tuple[Dict[str, Any], ...]:
+    """
+    Pure: Flows with their theme names, in flow_ids order. Unknown ids are skipped.
+
+    Args:
+        rows: Raw structure rows
+        flow_ids: Flows to describe
+
+    Returns:
+        ({id, name, themes: (theme names)}, ...)
+    """
+    flows_by_id = {f['id']: f for f in rows.flows}
+    theme_names = {t['id']: t['name'] for t in rows.themes}
+    themes_of_flow = _ids_by(rows.flow_themes, 'flow_id', 'theme_id')
+    return tuple(
+        {'id': fid, 'name': flows_by_id[fid]['name'],
+         'themes': tuple(theme_names[t] for t in sorted(themes_of_flow.get(fid, ())) if t in theme_names)}
+        for fid in flow_ids if fid in flows_by_id
+    )
+
+
+def structure_of_files(rows: StructureRows, file_ids: Tuple[int, ...]) -> Dict[int, Dict[str, Any]]:
+    """
+    Pure: Each file's flows, the themes of those flows, and its module.
+
+    Args:
+        rows: Raw structure rows
+        file_ids: Files to annotate
+
+    Returns:
+        {file_id: {flows: ({id, name}, ...), themes: (names...), module: name or None}}
+    """
+    flows_of_file = _ids_by(rows.file_flows, 'file_id', 'flow_id')
+    module_names = {m['id']: m['name'] for m in rows.modules}
+    module_of_file = {r['file_id']: module_names.get(r['module_id']) for r in rows.module_files}
+
+    def annotate(file_id: int) -> Dict[str, Any]:
+        flows = structure_of_flows(rows, tuple(sorted(flows_of_file.get(file_id, ()))))
+        themes = tuple(dict.fromkeys(name for f in flows for name in f['themes']))
+        return {
+            'flows': tuple({'id': f['id'], 'name': f['name']} for f in flows),
+            'themes': themes,
+            'module': module_of_file.get(file_id),
+        }
+
+    return {fid: annotate(fid) for fid in file_ids}
+
+
+def focus_structure_gaps(
+    gaps: Dict[str, Tuple[Dict[str, Any], ...]],
+    focus: WorkFocus,
+) -> Dict[str, Any]:
+    """
+    Pure: The gaps touching the active work, plus the project-wide total.
+
+    Active work = the active completion path, the active milestone, the flows of
+    the focused work (milestone + task), and the files status lists. Everything
+    else is only counted; get_structure_health lists it on demand.
+
+    Args:
+        gaps: compute_structure_gaps output
+        focus: The active work
+
+    Returns:
+        {total_gaps: n, active_gaps: {gap_key: entries}} (active_gaps omitted when empty)
+    """
+    flow_ids = set(focus.flow_ids)
+    file_ids = set(focus.file_ids)
+    touches = {
+        'flows_without_theme': lambda e: e['id'] in flow_ids,
+        'themes_without_flows': lambda e: False,
+        'files_without_flow': lambda e: e['id'] in file_ids,
+        'files_outside_module': lambda e: e['id'] in file_ids,
+        'open_paths_without_themes': lambda e: e['id'] == focus.path_id,
+        'open_milestones_without_flows': lambda e: e['id'] == focus.milestone_id,
+        'oversized_flows': lambda e: e['id'] in flow_ids,
+    }
+    active = {
+        key: kept for key, entries in gaps.items()
+        for kept in (tuple(e for e in entries if touches.get(key, lambda _e: False)(e)),) if kept
+    }
+    total = sum(len(entries) for entries in gaps.values())
+    return {'total_gaps': total, **({'active_gaps': active} if active else {})}
 
 
 # ============================================================================
@@ -237,6 +366,9 @@ def query_structure_rows(conn: sqlite3.Connection) -> StructureRows:
         SELECT f.id, f.path, NULL AS no_flow_reason,
                (SELECT COUNT(*) FROM file_flows ff WHERE ff.file_id = f.id) AS flow_count
         FROM files f WHERE f.is_reserved = 0 ORDER BY f.path""")
+    # One module per file is the norm; the lowest module id wins if not.
+    module_files = _rows(
+        conn, "SELECT file_id, MIN(module_id) AS module_id FROM module_files GROUP BY file_id")
     return StructureRows(
         themes=_rows(conn, "SELECT id, name FROM themes ORDER BY id"),
         flows=_rows(conn, "SELECT id, name, description FROM flows ORDER BY id"),
@@ -245,10 +377,12 @@ def query_structure_rows(conn: sqlite3.Connection) -> StructureRows:
             conn, "SELECT flow_id, COUNT(*) AS file_count FROM file_flows GROUP BY flow_id"),
         files=files,
         modules=_rows(conn, "SELECT id, name, path FROM modules"),
-        module_file_ids=tuple(r['file_id'] for r in _rows(conn, "SELECT DISTINCT file_id FROM module_files")),
+        module_file_ids=tuple(r['file_id'] for r in module_files),
+        file_flows=_rows(conn, "SELECT file_id, flow_id FROM file_flows"),
+        module_files=module_files,
         paths=_rows(conn, "SELECT id, name, status FROM completion_path ORDER BY order_index, id"),
         path_themes=_rows(conn, "SELECT completion_path_id, theme_id FROM completion_path_themes"),
-        milestones=_rows(conn, "SELECT id, name, status FROM milestones ORDER BY id"),
+        milestones=_rows(conn, "SELECT id, name, status, completion_path_id FROM milestones ORDER BY id"),
         milestone_flows=_rows(conn, "SELECT milestone_id, flow_id FROM milestone_flows"),
     )
 

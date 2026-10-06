@@ -17,6 +17,11 @@ them.
 A notice can be pinned to a migration via `applies_to_db` + `applies_from_version`,
 so it fires only once that database has actually reached the version the change
 landed in. Left null, it applies to every project.
+
+A project created by a release starts with every notice that release ships
+already acknowledged (seed_acknowledged_notices, outcome 'new_project'): those
+notices announce changes the new project never went through. Notices added by
+later releases are not in that core database yet, so they still fire.
 """
 
 import os
@@ -203,6 +208,43 @@ def _effect_acknowledge(prefs_db_path: str, notice_key: str, outcome: Optional[s
             (notice_key, outcome),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def seed_acknowledged_notices(prefs_db_path: str, outcome: str = 'new_project') -> int:
+    """
+    Effect: Mark every notice in the shipped core database as delivered.
+
+    Called by aimfp_init for a brand-new project. Existing acknowledgements are
+    left untouched.
+
+    Args:
+        prefs_db_path: Path to the new project's user_preferences.db
+        outcome: Recorded outcome for the seeded rows
+
+    Returns:
+        Number of notices marked (0 when the core has no notices table)
+    """
+    core = _open_connection(get_core_db_path(), immutable=True)
+    try:
+        try:
+            keys = tuple(r[0] for r in core.execute("SELECT notice_key FROM system_notices"))
+        except sqlite3.OperationalError:
+            return 0
+    finally:
+        core.close()
+    if not keys:
+        return 0
+    conn = _open_connection(prefs_db_path)
+    try:
+        before = conn.total_changes
+        conn.executemany(
+            "INSERT OR IGNORE INTO acknowledged_notices (notice_key, outcome) VALUES (?, ?)",
+            tuple((key, outcome) for key in keys),
+        )
+        conn.commit()
+        return conn.total_changes - before
     finally:
         conn.close()
 

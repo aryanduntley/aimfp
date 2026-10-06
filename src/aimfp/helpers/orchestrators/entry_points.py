@@ -48,9 +48,30 @@ from ._common import (
 )
 
 from .backup import check_and_run_backup
+from .notices import seed_acknowledged_notices
 from .migration import _check_pending_migrations
-from .status import get_project_status
-from ..project.structure_health import collect_structure_health
+from .status import get_open_work, get_project_status
+from .status_payload import (
+    TIER_DETAILED,
+    TIER_QUICK,
+    active_branches,
+    annotate_recent_files,
+    build_position,
+    compact_history,
+    compact_infrastructure,
+    compact_migration,
+    compact_project_metadata,
+    compact_user_settings,
+    drop_empty,
+    focus_scope,
+)
+from ..project.structure_health import (
+    collect_structure_health,
+    compute_structure_gaps,
+    focus_structure_gaps,
+    query_structure_rows,
+)
+from ..shared.return_gates import gate_return_statements, section_return_statements
 from ..project.metadata import (
     reconcile_stored_source_directory,
     root_rewrite_report,
@@ -319,6 +340,10 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
         finally:
             conn.close()
 
+        # Release notices announce upgrades; a project created by this release
+        # has none to hear about. Later releases' notices still fire.
+        seed_acknowledged_notices(prefs_db_path)
+
         # Step 6: Create .gitkeep files
         step = 6
         if not os.path.exists(gitkeep_path):
@@ -350,24 +375,26 @@ def aimfp_init(project_root: str, init_git: bool = True) -> Result:
         # Auto-bundle init supportive context for discovery phase
         supportive_context_init = _get_supportive_context_safe('init')
 
+        init_data = {
+            'success': True,
+            'project_root': project_root,
+            'aimfp_dir': aimfp_dir,
+            'files_created': files_created,
+            'files_already_present': files_already_present,
+            'tables_created': {
+                'project_db': project_tables,
+                'user_prefs_db': prefs_tables,
+            },
+            'infrastructure_entries': 8,
+            'git_status': git_status,
+            'next_phase': 'AI populates infrastructure and blueprint',
+            'supportive_context_init': supportive_context_init,
+        }
         return Result(
             success=True,
-            data={
-                'success': True,
-                'project_root': project_root,
-                'aimfp_dir': aimfp_dir,
-                'files_created': files_created,
-                'files_already_present': files_already_present,
-                'tables_created': {
-                    'project_db': project_tables,
-                    'user_prefs_db': prefs_tables,
-                },
-                'infrastructure_entries': 8,
-                'git_status': git_status,
-                'next_phase': 'AI populates infrastructure and blueprint',
-                'supportive_context_init': supportive_context_init,
-            },
-            return_statements=get_return_statements("aimfp_init"),
+            data=init_data,
+            return_statements=gate_return_statements(
+                get_return_statements("aimfp_init"), init_data),
         )
 
     except Exception as e:
@@ -483,49 +510,32 @@ def _get_initialization_path(init_file: str) -> str:
 # aimfp_status
 # ============================================================================
 
-STRUCTURE_GUIDANCE = (
-    'structure_summary is the modularity map: themes (stable project areas, linked to '
-    'completion paths) group flows (evolving behaviour, linked to milestones and tasks), '
-    'flows group files, modules group reusable code. Place new work in it BEFORE coding: '
-    'pick the theme and flow(s); if no flow describes the new behaviour, add_flow(name, '
-    'theme_ids, description). structure_health lists the gaps; fix them with '
-    'add_flow_themes, add_path_themes, add_milestone_flows, add_file_flows, '
-    'add_files_to_module, or update_file(no_flow_reason=...) for files that truly have no flow.'
-)
-
-
 def aimfp_status(
-    type: str = "summary",
+    type: str = "quick",
 ) -> Result:
     """
-    Status orchestrator that retrieves comprehensive project state.
+    Status orchestrator. `type` picks the tier (see status_payload.py):
 
-    Gathers data from multiple tables and databases for AI to determine
-    next steps. Coordinates project.db, user_preferences.db, and
-    optionally user_directives.db.
+    - 'quick' (default): position only, sized for completion loops. Path,
+      milestone and focused work with their flows/themes, item names, other
+      open work in the milestone, structure gap count.
+    - 'summary': the reload after lost or compacted context. quick plus
+      purpose/goals, infrastructure, recent files annotated with
+      flows/themes/module, recent notes, recent history, active branches,
+      and the core supportive context.
+    - 'detailed': summary plus the full work tree.
+
+    Structure is attached to what the payload shows; the full theme/flow/module
+    map is on demand (get_all_themes, get_all_flows, get_all_modules,
+    get_structure_health).
 
     Args:
-        type: 'quick', 'summary' (default), or 'detailed'
+        type: 'quick' (default), 'summary', or 'detailed'
 
     Returns:
-        Result with data={
-            project_metadata: dict,
-            infrastructure: tuple,
-            work_hierarchy: dict (from get_project_status),
-            user_directives_status: str or None,
-            recent_notes: tuple,
-            git_state: tuple,
-            modules_summary: tuple (id, name, path, file_count per module;
-                purpose omitted — fetch via get_module_by_name/path)
-            modules_guidance: str (one-time note on retrieving module detail)
-            structure_summary: dict (themes -> flows with file counts, open
-                paths -> theme_ids, open milestones -> flow_ids)
-            structure_health: dict (ok, total_gaps, capped gap lists)
-            structure_guidance: str
-        }
-
-    If not initialized:
-        Result with data={initialized: False}
+        Result with data={initialized, tier, project, position, structure, ...};
+        keys with nothing to report are omitted.
+        If not initialized: data={initialized: False}
     """
     if type not in VALID_STATUS_TYPES:
         return Result(
@@ -536,120 +546,66 @@ def aimfp_status(
     try:
         project_root = resolve_project_root()
     except RuntimeError:
-        return Result(
-            success=True,
-            data={
-                'initialized': False,
-                'supportive_context': _get_supportive_context_safe(),
-            },
-            return_statements=get_return_statements("aimfp_status"),
-        )
+        project_root = None
 
-    aimfp_dir = get_aimfp_project_dir(project_root)
-    if not os.path.isdir(aimfp_dir):
+    if project_root is None or not os.path.isdir(get_aimfp_project_dir(project_root)):
+        data = {'initialized': False}
         return Result(
             success=True,
-            data={
-                'initialized': False,
-                'supportive_context': _get_supportive_context_safe(),
-            },
-            return_statements=get_return_statements("aimfp_status"),
+            data=data,
+            return_statements=gate_return_statements(
+                get_return_statements("aimfp_status"), data),
         )
 
     try:
-        # Work hierarchy (includes counts + tree)
-        status_result = get_project_status(type)
-        work_hierarchy = status_result.data if status_result.success else {}
+        tier = type
+        full = tier != TIER_QUICK
+        status_result = get_project_status("summary")
+        status_data = status_result.data if status_result.success else {}
+        hierarchy = status_data.get('hierarchy') or {}
+        blocked = status_data.get('blocked_items') or ()
 
-        # Project metadata + infrastructure from project.db
-        project_metadata = {}
-        infrastructure = ()
-        user_directives_status = None
-        recent_notes = ()
-        git_state = ()
-        modules_summary = ()
-        structure_summary: Dict[str, Any] = {}
-        structure_health: Dict[str, Any] = {}
+        project_metadata: Dict[str, Any] = {}
+        infrastructure: Tuple[Dict[str, Any], ...] = ()
+        recent_notes: Tuple[Dict[str, Any], ...] = ()
+        git_state: Tuple[Dict[str, Any], ...] = ()
+        parent_task: Optional[Dict[str, Any]] = None
+        rows = None
 
-        project_db_path = get_project_db_path(project_root)
-        if database_exists(project_db_path):
-            conn = _open_project_connection(project_root)
-            try:
-                # Project metadata
-                cursor = conn.execute("SELECT * FROM project LIMIT 1")
-                row = cursor.fetchone()
-                if row:
-                    project_metadata = row_to_dict(row)
-
-                # Infrastructure
-                cursor = conn.execute("SELECT * FROM infrastructure ORDER BY id")
-                infrastructure = rows_to_tuple(cursor.fetchall())
-
-                # User directives status
-                user_directives_status = project_metadata.get(
-                    'user_directives_status'
-                )
-
-                # Recent notes (last 10, metadata only, 7-day window)
-                # Exclude noise types: deletion audit trails, already-handled notes
-                cursor = conn.execute(
+        conn = _open_project_connection(project_root)
+        try:
+            row = conn.execute("SELECT * FROM project LIMIT 1").fetchone()
+            project_metadata = row_to_dict(row) if row else {}
+            infrastructure = rows_to_tuple(
+                conn.execute("SELECT * FROM infrastructure ORDER BY id").fetchall())
+            if full:
+                # Last 10, metadata only, 7-day window, noise types excluded
+                recent_notes = rows_to_tuple(conn.execute(
                     "SELECT id, note_type, reference_table, reference_id, "
                     "source, directive_name, severity, created_at "
                     "FROM notes "
                     "WHERE created_at >= datetime('now', '-7 days') "
                     "AND note_type NOT IN ('entry_deletion', 'completed', 'obsolete') "
                     "ORDER BY created_at DESC LIMIT 10"
-                )
-                recent_notes = rows_to_tuple(cursor.fetchall())
+                ).fetchall())
+                git_state = rows_to_tuple(
+                    conn.execute("SELECT * FROM work_branches ORDER BY id DESC").fetchall())
+            parent_task = _query_focus_parent_task(conn, hierarchy.get('current_focus'))
+            rows = query_structure_rows(conn)
+        finally:
+            conn.close()
 
-                # Git state
-                cursor = conn.execute(
-                    "SELECT * FROM work_branches ORDER BY id DESC"
-                )
-                git_state = rows_to_tuple(cursor.fetchall())
+        focus_ms, _flows = focus_scope(hierarchy.get('current_focus'), parent_task)
+        ms_id = focus_ms if focus_ms is not None else (hierarchy.get('active_milestone') or {}).get('id')
+        open_work_result = get_open_work(milestone_id=ms_id) if ms_id is not None else None
+        open_work = open_work_result.data if open_work_result and open_work_result.success else {}
 
-                # Modules summary (map only: id, name, path, file count).
-                # Purpose is intentionally omitted to keep session state lean —
-                # see modules_guidance below for on-demand retrieval.
-                cursor = conn.execute(
-                    "SELECT m.id, m.name, m.path, "
-                    "COUNT(mf.file_id) AS file_count "
-                    "FROM modules m "
-                    "LEFT JOIN module_files mf ON mf.module_id = m.id "
-                    "GROUP BY m.id ORDER BY m.name"
-                )
-                modules_summary = rows_to_tuple(cursor.fetchall())
+        position, work_focus = build_position(
+            hierarchy, parent_task, open_work, rows, tier, blocked)
+        structure = focus_structure_gaps(compute_structure_gaps(rows), work_focus)
 
-                # Modularity layer: themes -> flows -> files, paths/milestones,
-                # and every gap in it (one collector shared with aimfp_end,
-                # get_structure_health and the watchdog).
-                structure_summary, structure_health = collect_structure_health(conn)
-
-            finally:
-                conn.close()
-
-        # If Use Case 2 + active/in_progress: query user_directives.db for counts
-        user_directives_data = None
-        if user_directives_status in ('in_progress', 'active'):
-            directives_db_path = get_user_directives_db_path(project_root)
-            if database_exists(directives_db_path):
-                try:
-                    conn = _open_directives_connection(project_root)
-                    try:
-                        cursor = conn.execute(
-                            "SELECT COUNT(*) as cnt FROM user_directives "
-                            "WHERE is_active = 1"
-                        )
-                        row = cursor.fetchone()
-                        user_directives_data = {
-                            'active_count': row['cnt'] if row else 0,
-                        }
-                    finally:
-                        conn.close()
-                except Exception:
-                    user_directives_data = {'error': 'Could not access user_directives.db'}
-
-        # Case 2 routing: determine next action based on status
+        user_directives_status = project_metadata.get('user_directives_status')
+        user_directives_data = _active_user_directive_count(project_root, user_directives_status)
         case_2_routing = None
         if user_directives_status is not None:
             case_2_routing = {
@@ -659,53 +615,90 @@ def aimfp_status(
                 'next_action': _get_case_2_next_action(user_directives_status),
             }
 
-        # Supportive context (detailed FP examples, DRY, state DB, etc.)
-        supportive_context = _get_supportive_context_safe()
-
         stored_root = next(
-            (row.get('value') for row in infrastructure if row.get('type') == 'project_root'),
+            (r.get('value') for r in infrastructure if r.get('type') == 'project_root'),
             None,
         )
 
-        data = {
+        data = drop_empty({
             'initialized': True,
-            'project_metadata': project_metadata,
-            'infrastructure': infrastructure,
+            'tier': tier,
+            'project': compact_project_metadata(project_metadata, tier),
             # Read-only report: aimfp_run rewrites the record, status never does
             'stored_root_mismatch': stored_root_mismatch(stored_root, project_root),
-            'work_hierarchy': work_hierarchy,
+            'position': position,
+            # Nothing to work in yet: discovery creates paths and milestones
+            'discovery_pending': True if not rows.milestones else None,
+            'structure': structure if structure.get('total_gaps') else None,
             'user_directives_status': user_directives_status,
             'user_directives_data': user_directives_data,
             'case_2_routing': case_2_routing,
-            'recent_notes': recent_notes,
-            'notes_guidance': (
-                'Review note metadata (note_type, severity, reference_table, directive_name, date) '
-                'to assess relevance to current work. Query full content with '
-                'get_notes_comprehensive(note_id=X) for any note that may be useful.'
-            ),
-            'git_state': git_state,
-            'modules_summary': modules_summary,
-            'modules_guidance': (
-                'modules_summary is a map only (id, name, path, file_count). '
-                'A module\'s full purpose, files, functions, types, and '
-                'dependencies are available on demand — query the db with '
-                'get_module_by_name(name) / get_module_by_path(path) when you '
-                'need detail for a specific module.'
-            ),
-            'structure_summary': structure_summary,
-            'structure_health': structure_health,
-            'structure_guidance': STRUCTURE_GUIDANCE,
-            'supportive_context': supportive_context,
-        }
+        })
+        if full:
+            data = drop_empty({
+                **data,
+                'infrastructure': compact_infrastructure(infrastructure),
+                'recent_files': annotate_recent_files(hierarchy.get('recent_files') or (), rows),
+                'history': compact_history(hierarchy.get('historical') or {}),
+                'recent_notes': recent_notes,
+                'branches': active_branches(git_state),
+                'supportive_context': _get_supportive_context_safe(),
+            })
+        if tier == TIER_DETAILED:
+            detailed = get_project_status("detailed")
+            data = {**data, 'tree': (detailed.data or {}).get('tree') if detailed.success else None}
 
         return Result(
             success=True,
             data=data,
-            return_statements=get_return_statements("aimfp_status"),
+            return_statements=gate_return_statements(
+                get_return_statements("aimfp_status"), data),
         )
 
     except Exception as e:
         return Result(success=False, error=f"Status failed: {str(e)}")
+
+
+def _query_focus_parent_task(
+    conn: Any,
+    focus: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Effect: The parent task of a subtask focus, or the paused task of a sidequest focus."""
+    if not focus:
+        return None
+    task_id = {
+        'subtask': focus.get('parent_task_id'),
+        'sidequest': focus.get('paused_task_id'),
+    }.get(focus.get('item_type'))
+    if task_id is None:
+        return None
+    row = conn.execute(
+        "SELECT id, milestone_id, flow_ids FROM tasks WHERE id = ?", (task_id,)
+    ).fetchone()
+    return row_to_dict(row) if row else None
+
+
+def _active_user_directive_count(
+    project_root: str,
+    user_directives_status: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Effect: Active user-directive count for Case 2 projects in progress/active, else None."""
+    if user_directives_status not in ('in_progress', 'active'):
+        return None
+    directives_db_path = get_user_directives_db_path(project_root)
+    if not database_exists(directives_db_path):
+        return None
+    try:
+        conn = _open_directives_connection(project_root)
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM user_directives WHERE is_active = 1"
+            ).fetchone()
+            return {'active_count': row['cnt'] if row else 0}
+        finally:
+            conn.close()
+    except Exception:
+        return {'error': 'Could not access user_directives.db'}
 
 
 # ============================================================================
@@ -813,7 +806,7 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: Optional[bool] = Non
                 return Result(
                     success=True,
                     data={},
-                    return_statements=get_return_statements("aimfp_run"),
+                    return_statements=_run_return_statements({}, get_return_statements("aimfp_run")),
                 )
 
             _refresh_structure_reminders_safe(project_root)
@@ -822,23 +815,11 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: Optional[bool] = Non
                 watchdog_data = disabled_watchdog_status(watchdog_data)
             reminders = watchdog_data.get('reminders', ())
 
-            if not reminders:
-                return Result(
-                    success=True,
-                    data={},
-                    return_statements=get_return_statements("aimfp_run"),
-                )
-
+            data = {'watchdog': watchdog_data} if reminders else {}
             return Result(
                 success=True,
-                data={
-                    'watchdog': watchdog_data,
-                    'notice': (
-                        'Watchdog reminders found. Review and handle actionable items, '
-                        'then call clear_watchdog() to acknowledge and clear them.'
-                    ),
-                },
-                return_statements=get_return_statements("aimfp_run"),
+                data=data,
+                return_statements=_run_return_statements(data, get_return_statements("aimfp_run")),
             )
 
         # Full session bundle — need project_root from core or environment
@@ -846,15 +827,15 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: Optional[bool] = Non
         project_root = _discover_project_root()
 
         if project_root is None:
+            data = {
+                'initialized': False,
+                'supportive_context': _get_supportive_context_safe(),
+                'message': 'No AIMFP project found. Run aimfp_init to initialize.',
+            }
             return Result(
                 success=True,
-                data={
-                    'initialized': False,
-                    'guidance': _get_guidance(),
-                    'supportive_context': _get_supportive_context_safe(),
-                    'message': 'No AIMFP project found. Run project_init to initialize.',
-                },
-                return_statements=get_return_statements("aimfp_run"),
+                data=data,
+                return_statements=_run_return_statements(data, get_return_statements("aimfp_run")),
             )
 
         # Cache project root for helper functions
@@ -888,79 +869,90 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: Optional[bool] = Non
             watchdog_read = _read_reminders(project_root)
             watchdog_data = {**watchdog_read, 'status': 'external'}
 
-        # Bundle: status
+        # Bundle: status at the reload tier (includes the core supportive context)
         status_result = aimfp_status(type="summary")
         status_data = status_result.data if status_result.success else {}
 
-        # Bundle: user settings
-        user_settings = _get_user_settings_safe(project_root)
-
-        # Note: fp_directive_index and all_directive_names removed from bundle —
-        # available on demand via get_fp_directive_index() and search_directives()
-        # Note: infrastructure already included via aimfp_status() — not duplicated here
-        # Note: supportive_context is included via aimfp_status() — not called separately
+        user_settings = compact_user_settings(_get_user_settings_safe(project_root))
 
         # Bundle: Case 2 context (if this is a Case 2 project)
         user_directives_status = status_data.get('user_directives_status')
         case_2_context = _build_case_2_context(
             status_data, _get_directive_health_safe())
 
-        # Note: modules_summary already included via aimfp_status() — not duplicated here
+        # Coding context once there is work to code (a milestone exists);
+        # before that the next step is discovery, which the core context covers.
+        has_milestone = bool((status_data.get('position') or {}).get('milestone'))
+        supportive_context_coding = (
+            _get_supportive_context_safe('coding') if has_milestone else None)
+        supportive_context_case2 = (
+            _get_supportive_context_safe('case2') if user_directives_status is not None else None)
 
-        # Supportive context variants: auto-bundle based on project state
-        # Core variant is already in status via aimfp_status().
-        # Coding variant: always include for initialized projects (coding is imminent).
-        # Case 2 variant: include when Case 2 is active.
-        supportive_context_coding = _get_supportive_context_safe('coding')
-
-        supportive_context_case2 = ''
-        if user_directives_status is not None:
-            supportive_context_case2 = _get_supportive_context_safe('case2')
-
-        # Automated backup check: trigger if project inactive beyond threshold
+        # Inactivity backup: reported only when one was actually taken
         backup_data = check_and_run_backup()
 
-        # Scheduled backup check: report (do NOT auto-run) when the interval since
-        # the last backup has elapsed. The inactivity rule above only fires on
-        # dormant projects, so without this an actively developed project is never
-        # backed up. Reported rather than run so the AI surfaces it to the user.
+        # Scheduled backup: reported (never run) when due, so the AI asks the user
         scheduled_backup = _check_scheduled_backup_safe()
 
-        # One-time release notices: already filtered to unacknowledged, so this is
-        # None in the steady state and the key is simply absent from the payload.
+        # One-time release notices: None in the steady state
         pending_notices = _get_pending_notices_safe()
 
-        # Migration check: detect pending schema migrations
-        migration_data = _check_pending_migrations(project_root, get_project_dir_name(project_root))
+        migration_data = compact_migration(
+            _check_pending_migrations(project_root, get_project_dir_name(project_root)))
 
-        # Deferred notes: surface outstanding deferred work
         deferred_notes = _get_deferred_notes_summary(project_root)
+
+        data = drop_empty({
+            'project_root': project_root,
+            # Present only when this call rewrote a stale record
+            'project_root_rewritten': project_root_rewritten,
+            'source_directory_rewritten': source_directory_rewritten,
+            'status': status_data,
+            'user_settings': user_settings,
+            'supportive_context_coding': supportive_context_coding,
+            'supportive_context_case2': supportive_context_case2,
+            'watchdog': watchdog_data,
+            'case_2_context': case_2_context,
+            'backup': backup_data if (backup_data or {}).get('triggered') else None,
+            'scheduled_backup': scheduled_backup if (scheduled_backup or {}).get('due') else None,
+            'notices': pending_notices,
+            'migration': migration_data,
+            'deferred_notes': deferred_notes,
+        })
 
         return Result(
             success=True,
-            data={
-                'project_root': project_root,
-                # Present only when this call rewrote a stale record
-                'project_root_rewritten': project_root_rewritten,
-                'source_directory_rewritten': source_directory_rewritten,
-                'status': status_data,
-                'user_settings': user_settings,
-                'guidance': _get_guidance(),
-                'supportive_context_coding': supportive_context_coding,
-                'supportive_context_case2': supportive_context_case2 or None,
-                'watchdog': watchdog_data,
-                'case_2_context': case_2_context,
-                'backup': backup_data,
-                'scheduled_backup': scheduled_backup,
-                'notices': pending_notices,
-                'migration': migration_data,
-                'deferred_notes': deferred_notes,
-            },
-            return_statements=get_return_statements("aimfp_run"),
+            data=data,
+            return_statements=_run_return_statements(data, get_return_statements("aimfp_run")),
         )
 
     except Exception as e:
         return Result(success=False, error=f"aimfp_run failed: {str(e)}")
+
+
+# Bundled sections whose guidance belongs to another tool: (path in the
+# aimfp_run payload, owning helper). The owner's statements ship only when the
+# section is present, gated against the section's own data.
+RUN_SECTION_OWNERS: Tuple[Tuple[str, str], ...] = (
+    ('status', 'aimfp_status'),
+    ('notices', 'get_pending_notices'),
+    ('scheduled_backup', 'check_scheduled_backup_due'),
+    ('case_2_context.health', 'check_directive_health'),
+)
+
+
+def _run_return_statements(data: Dict[str, Any], own_statements: Tuple[str, ...]) -> Tuple[str, ...]:
+    """
+    Effect: aimfp_run's statements for this payload: its own statements gated on
+    the payload, then the owning tool's statements for each bundled section
+    present. Loads the owners' statements from the core database.
+    """
+    own = gate_return_statements(own_statements, data)
+    owners = tuple(
+        (path, helper, get_return_statements(helper))
+        for path, helper in RUN_SECTION_OWNERS
+    )
+    return tuple(dict.fromkeys(own + section_return_statements(data, owners)))
 
 
 def _check_scheduled_backup_safe() -> Optional[Dict[str, Any]]:
@@ -1135,8 +1127,13 @@ def build_status_bundle(project_root: Optional[str] = None) -> Result:
         return Result(success=False, error=str(e))
 
     try:
+        # Reload tier minus the core supportive context: embedding hosts load
+        # reference text on demand (get_supportive_context).
         status_result = aimfp_status(type="summary")
-        status_data = status_result.data if status_result.success else {}
+        status_data = {
+            k: v for k, v in (status_result.data if status_result.success else {}).items()
+            if k != 'supportive_context'
+        }
 
         return Result(
             success=True,
@@ -1431,37 +1428,16 @@ def _get_case_2_next_action(status: str) -> str:
     return actions.get(status, 'Check status and determine next step')
 
 
-def _get_guidance() -> Dict[str, Any]:
-    """Pure: Return static guidance for AI behavior."""
-    return {
-        'directive_access': (
-            "Directive names cached from is_new_session bundle. "
-            "Call get_directive_by_name(name) for specific details."
-        ),
-        'when_to_use': (
-            "Use AIMFP directives when coding or when project "
-            "management action/reaction is needed."
-        ),
-        'assumption': (
-            "Always assume AIMFP applies unless user explicitly rejects it."
-        ),
-        'session_refresh': (
-            "Call aimfp_run(is_new_session=true) again if context feels stale "
-            "or after extended work."
-        ),
-    }
-
-
-def _get_user_settings_safe(project_root: str) -> Dict[str, Any]:
-    """Effect: Get user settings, returning empty dict on failure."""
+def _get_user_settings_safe(project_root: str) -> Tuple[Dict[str, Any], ...]:
+    """Effect: Get user settings rows, returning () on failure."""
     try:
         from ..user_preferences.management import get_user_settings
         result = get_user_settings()
         if result.success:
-            return result.settings if hasattr(result, 'settings') and result.settings else {}
-        return {}
+            return result.settings if hasattr(result, 'settings') and result.settings else ()
+        return ()
     except Exception:
-        return {}
+        return ()
 
 
 def _get_fp_directive_index_safe() -> Dict[str, Any]:

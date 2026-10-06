@@ -153,33 +153,20 @@ REMINDER_FILE_DELETED: Final[str] = "file_deleted"
 # start and aimfp_run checkpoints), replacing the previous structure_* set.
 REMINDER_STRUCTURE_PREFIX: Final[str] = "structure_"
 
-# gap key (structure_health) -> (reminder type, severity, message template)
-STRUCTURE_REMINDERS: Final[Dict[str, Tuple[str, str, str]]] = {
-    'files_without_flow': (
-        "structure_file_without_flow", "warning",
-        "File is in no flow. Link it with add_file_flows([[file_id, flow_id]]), or if it truly "
-        "has no flow (config, data) mark it with update_file(file_id, no_flow_reason=...)."),
-    'files_outside_module': (
-        "structure_file_outside_module", "warning",
-        "File sits under module path {module_path} but belongs to no module. "
-        "Assign it with add_files_to_module."),
-    'flows_without_theme': (
-        "structure_flow_without_theme", "warning",
-        "Flow '{name}' (id {id}) belongs to no theme. Link it with add_flow_themes([[flow_id, theme_id]])."),
-    'themes_without_flows': (
-        "structure_theme_without_flows", "info",
-        "Theme '{name}' (id {id}) has no flows. Link flows to it, or delete_theme if obsolete."),
-    'open_paths_without_themes': (
-        "structure_path_without_themes", "info",
-        "Completion path '{name}' (id {id}) advances no theme. Link with add_path_themes."),
-    'open_milestones_without_flows': (
-        "structure_milestone_without_flows", "warning",
-        "Milestone '{name}' (id {id}) builds no flow. Link with add_milestone_flows, adding a "
-        "new flow (add_flow) if the milestone introduces new behaviour."),
-    'oversized_flows': (
-        "structure_oversized_flow", "info",
-        "Flow '{name}' (id {id}) description is {chars} chars: it likely covers several "
-        "behaviours. Split it: add_flow per behaviour, then move_files_to_flow."),
+# Structure gaps become ONE summary reminder (counts per gap kind), not one
+# reminder per gap: the gaps themselves are listed by get_structure_health, and
+# aimfp_status lists the ones touching the active work.
+REMINDER_STRUCTURE_GAPS: Final[str] = "structure_gaps"
+
+# gap key (structure_health) -> label used in the summary reminder
+STRUCTURE_GAP_LABELS: Final[Dict[str, str]] = {
+    'flows_without_theme': "flows without a theme",
+    'themes_without_flows': "themes without flows",
+    'files_without_flow': "files without a flow",
+    'files_outside_module': "files outside their module",
+    'open_paths_without_themes': "open paths without themes",
+    'open_milestones_without_flows': "open milestones without flows",
+    'oversized_flows': "oversized flows",
 }
 
 SEVERITY_INFO: Final[str] = "info"

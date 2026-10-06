@@ -17,6 +17,16 @@
 - Starting task decomposition (context-aware planning)
 - AI needs project context after context loss
 
+### Tiers (`type`)
+
+| `type` | When | Contains |
+|---|---|---|
+| `quick` (default) | Completion loops, "where am I", after a restore or merge | `position` (path, milestone + its flows/themes, focus + its flows/themes and open item names, other open tasks/sidequests, blocked, reserved), `structure` (total gap count + gaps on the active work), `discovery_pending` |
+| `summary` | Lost or compacted context; `aimfp_run(is_new_session=true)` embeds it | quick + project purpose/goals, infrastructure `{values, unset}`, `recent_files` annotated with flows/themes/module, history, recent notes, active branches, core `supportive_context` |
+| `detailed` | Rarely | summary + full work `tree` |
+
+Structure is attached to what the payload shows — never the whole theme/flow/module map (on demand: `get_all_themes`, `get_all_flows`, `get_all_modules`, `get_structure_health`). Keys with nothing to report are omitted, and return statements are gated on the keys present.
+
 ---
 
 ## When to Use
@@ -481,9 +491,9 @@ Errors (24h): 0
 
 **Core helpers used by this directive:**
 
-- **`aimfp_status(project_root, type="summary")`** — Session-start orchestrator. Returns comprehensive project state including metadata, infrastructure, work hierarchy, user directives status, recent warnings/errors, and git state. Called at session start to give AI a complete contextual picture.
+- **`aimfp_status(type="quick")`** — Tiered status (see Tiers above). `quick` (default) for loops and position checks; `summary` for the reload after lost or compacted context (embedded by `aimfp_run(is_new_session=true)`); `detailed` adds the full tree.
 
-- **`get_project_status(project_root, type="summary")`** — In-session helper. Retrieves work hierarchy data with counts, records, and nested tree in a single pass. Returns priority-based current focus (sidequest → subtask → task). Use this when AI needs fresh state mid-session (e.g., after context compression, after completing work items).
+- **`get_project_status(type="summary")`** — Internal helper (not an MCP tool) that aimfp_status and aimfp_end build on: work hierarchy with counts, positional history and current focus (sidequest → subtask → task).
   - Returns: `{counts{}, completion_paths[], milestones[], tasks[], subtasks[], sidequests[], blocked_items[], tree{}}`
 
 - **`get_task_context(task_id)`** — Retrieves complete context for resuming a specific task, including associated items, flows, files, and functions. Files are the ones linked to the task (and its subtasks) in `task_files` — linked automatically when tracked while the item is in_progress, or explicitly via `link_files_to_task`. Auto-detects task_type from task_id.

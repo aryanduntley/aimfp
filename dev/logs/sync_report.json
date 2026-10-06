@@ -1,5 +1,6 @@
 {
-  "added": [
+  "added": [],
+  "updated": [
     "fp_purity",
     "fp_state_elimination",
     "fp_side_effect_detection",
@@ -131,6 +132,5 @@
     "git_detect_conflicts",
     "git_merge_branch",
     "git_sync_state"
-  ],
-  "updated": []
+  ]
 }

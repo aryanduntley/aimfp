@@ -430,6 +430,13 @@
           "required": false,
           "default": 20,
           "description": "Maximum modules returned, best matches first (default 20)"
+        },
+        {
+          "name": "detail_level",
+          "type": "string",
+          "required": false,
+          "default": "lean",
+          "description": "'lean' (default): description is null, purpose kept. 'full': description included."
         }
       ],
       "purpose": "Search modules by name, purpose, or description with relevance ranking. Multi-word input is split into words; a row matches if ANY word prefix-matches (\"disk space free\" finds get_free_disk_space). Rows matching more words rank first. Punctuation is ignored, so no FTS syntax is needed or honored. Common stopwords (the, of, and, ...) are ignored unless the query is nothing but stopwords. Results are capped by limit; total_count reports all matches.",
@@ -439,7 +446,8 @@
       "return_statements": [
         "If matches found: review module purpose and external_dependencies to determine if your code belongs in an existing module rather than creating a new one.",
         "If no matches: consider whether a new module is needed via project_module_check.",
-        "If total_count exceeds the modules returned, add more specific words to the search or raise limit."
+        "If total_count exceeds the modules returned, add more specific words to the search or raise limit.",
+        "description is null at detail_level='lean' (default); get_module_by_name(name) or detail_level='full' for it."
       ],
       "target_database": "project",
       "used_by_directives": [

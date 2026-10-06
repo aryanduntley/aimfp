@@ -85,7 +85,7 @@ class TestCopiedProject:
         }
         assert _infra(copy, "project_root") == copy
         assert _infra(original, "project_root") == original  # the original is untouched
-        assert aimfp_status().data["stored_root_mismatch"] is None
+        assert aimfp_status().data.get("stored_root_mismatch") is None
         assert get_project_root().stored_root_mismatch is None
 
     def test_run_reports_move(self, original, tmp_path, monkeypatch):
@@ -104,16 +104,16 @@ class TestCopiedProject:
         _open_in(monkeypatch, copy)
         assert aimfp_run(is_new_session=True, start_watchdog=False).data["project_root_rewritten"]
         clear_project_root_cache()
-        assert aimfp_run(is_new_session=True, start_watchdog=False).data["project_root_rewritten"] is None
+        assert aimfp_run(is_new_session=True, start_watchdog=False).data.get("project_root_rewritten") is None
 
 
 class TestNoFalseReports:
     def test_unmoved_project(self, original, monkeypatch):
         _open_in(monkeypatch, original)
         r = aimfp_run(is_new_session=True, start_watchdog=False)
-        assert r.data["project_root_rewritten"] is None
-        assert r.data["source_directory_rewritten"] is None
-        assert aimfp_status().data["stored_root_mismatch"] is None
+        assert r.data.get("project_root_rewritten") is None
+        assert r.data.get("source_directory_rewritten") is None
+        assert aimfp_status().data.get("stored_root_mismatch") is None
 
     def test_symlinked_root_is_not_a_move(self, original, tmp_path):
         link = tmp_path / "link"

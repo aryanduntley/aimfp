@@ -15,6 +15,7 @@ All helpers target project.db only.
 import sqlite3
 from typing import Optional, Tuple, Dict, Any, List
 
+from ..shared.detail_level import DETAIL_FULL, DETAIL_LEAN, normalize_detail_level
 from ._common import (
     _open_project_connection,
     _close_connection,
@@ -35,9 +36,36 @@ from ._common import (
 # get_current_progress
 # ============================================================================
 
+# Lean columns per scope: enough to orient and pick the next lookup.
+LEAN_PROGRESS_COLUMNS: Dict[str, Tuple[str, ...]] = {
+    'tasks': ('id', 'name', 'status', 'priority', 'milestone_id'),
+    'milestones': ('id', 'name', 'status', 'completion_path_id'),
+    'completion_paths': ('id', 'name', 'status', 'order_index'),
+    'files': ('id', 'path'),
+    'functions': ('id', 'name', 'file_id'),
+    'flows': ('id', 'name'),
+    'themes': ('id', 'name'),
+    'infrastructure': ('type', 'value'),
+}
+
+# Scopes with a status column list open rows first, then the newest closed ones.
+_STATUS_SCOPES: Tuple[str, ...] = ('tasks', 'milestones', 'completion_paths')
+
+LEAN_PROGRESS_LIMIT: int = 50
+
+
+def progress_order_clause(scope: str) -> str:
+    """Pure: ORDER BY for a scope: open work first (newest closed after) where there is a status."""
+    if scope in _STATUS_SCOPES:
+        return (" ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'pending' THEN 1 "
+                "WHEN 'blocked' THEN 2 ELSE 3 END, "
+                "CASE WHEN status = 'completed' THEN -id ELSE id END")
+    return " ORDER BY id"
+
+
 def get_current_progress(
     scope: Optional[str] = None,
-    detail_level: str = "standard",
+    detail_level: str = "lean",
     filters: Optional[Dict[str, Any]] = None,
 ) -> Result:
     """
@@ -50,7 +78,9 @@ def get_current_progress(
         scope: What to retrieve — 'tasks', 'milestones', 'completion_paths',
                'files', 'functions', 'flows', 'themes', 'infrastructure', 'all'.
                None returns summary counts for all entity types.
-        detail_level: 'minimal', 'standard' (default), 'full'
+        detail_level: 'minimal' (counts), 'lean' (default: key columns, open
+            work first, 50 rows), 'full' (every column, every row).
+            'standard' is accepted as 'lean'.
         filters: WHERE-like conditions — {field: value}
 
     Returns:
@@ -62,11 +92,10 @@ def get_current_progress(
             error=f"Invalid scope '{scope}'. Valid: {sorted(VALID_PROGRESS_SCOPES)}",
         )
 
-    if detail_level not in ('minimal', 'standard', 'full'):
-        return Result(
-            success=False,
-            error=f"Invalid detail_level '{detail_level}'. Valid: minimal, standard, full",
-        )
+    level, level_error = normalize_detail_level(detail_level, ('minimal', DETAIL_LEAN, DETAIL_FULL))
+    if level_error:
+        return Result(success=False, error=level_error)
+    detail_level = level
 
     try:
         project_root = resolve_project_root()
@@ -170,14 +199,16 @@ def _get_scoped_progress(
     if detail_level == 'minimal':
         return {'count': count}
 
-    limit_clause = ''
-    if detail_level == 'standard':
-        limit_clause = ' LIMIT 50'
-
-    cursor = conn.execute(
-        f"SELECT * FROM {table}{where_clause} ORDER BY id{limit_clause}", params
-    )
-    records = rows_to_tuple(cursor.fetchall())
+    if detail_level == DETAIL_FULL:
+        cursor = conn.execute(f"SELECT * FROM {table}{where_clause} ORDER BY id", params)
+        records = rows_to_tuple(cursor.fetchall())
+    else:
+        columns = ', '.join(LEAN_PROGRESS_COLUMNS[scope])
+        cursor = conn.execute(
+            f"SELECT {columns} FROM {table}{where_clause}{progress_order_clause(scope)} "
+            f"LIMIT {LEAN_PROGRESS_LIMIT}", params
+        )
+        records = rows_to_tuple(cursor.fetchall())
 
     return {
         'count': count,

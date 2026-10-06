@@ -18,19 +18,18 @@
           "then": "bundle_session_startup_data",
           "details": {
             "call_helpers": [
-              "aimfp_status() - comprehensive project state",
-              "get_user_settings() - all user settings",
-              "get_fp_directive_index() - FP directives grouped by category"
+              "aimfp_status(type='summary') - the reload tier (includes the core supportive context)",
+              "get_user_settings() - settings as {key: value}"
             ],
             "cache_in_context": true,
             "return_with_suggestions": true,
-            "message": "Bundling session startup data (status + settings + FP index)",
+            "message": "Bundling session startup data (status summary + settings + only the sections that need action)",
             "guidance": {
-              "cache_bundle": "Cache entire bundle (status, settings, fp_index) in your context to avoid re-fetching",
-              "when_to_refresh": "Call aimfp_run(is_new_session=true) again after: (1) major state changes (init/milestone complete), (2) long breaks, (3) new conversation",
+              "cache_bundle": "Cache the bundle in your context; it is the session's one full load",
+              "when_to_refresh": "Position check during work: aimfp_status() (quick). Lost or compacted context: aimfp_status(type='summary'). New conversation: aimfp_run(is_new_session=true)",
               "use_for_navigation": "Use returned state with get_flows_from_directive() to find appropriate next directives",
-              "fp_reference": "Use fp_index for quick FP directive lookup by category. Call search_directives(type='fp') or get_directive_by_name(name) for directive JSON. If more context needed, read MD file directly (path provided in directive object's md_file_path field)",
-              "settings_usage": "Apply user_settings preferences during directive execution (code style, task granularity, etc.)"
+              "settings_usage": "Apply user_settings preferences during directive execution (code style, task granularity, etc.)",
+              "sections": "notices, scheduled_backup, migration, backup, deferred_notes appear only when they need action; their return statements come with them"
             }
           }
         },
@@ -1355,7 +1354,7 @@
           "then": "create_flow_for_behaviour",
           "details": {
             "steps": [
-              "Pick the theme(s) from structure_summary; add_theme only if no area fits",
+              "Pick the theme(s) from get_all_themes(); add_theme only if no area fits",
               "add_flow(name, theme_ids, description) — one flow per distinct behaviour",
               "add_milestone_flows([[milestone_id, flow_id]]) for the milestone building it",
               "Include it in the task's flow_ids (update_task)"
@@ -1923,11 +1922,21 @@
       "name": "status_management",
       "description": "Retrieves comprehensive project status with context-aware task continuation support."
     },
-    "description": "Retrieves comprehensive project status with historical context for task continuation. For existing projects: reads ProjectBlueprint.md, loads infrastructure, builds priority status tree (sidequests → subtasks → tasks), provides historical context from previous tasks, checks for ambiguities, and generates status report. For new projects: checks for .aimfp/ folder, checks .git/.aimfp/ backup, prompts for restoration or initialization.",
+    "description": "Project status in tiers. aimfp_status() (type='quick', default) is the position check used by completion loops: path, milestone and focused work with their flows/themes, open item names, other open work, structure gap count. aimfp_status(type='summary') is the reload after lost or compacted context (adds purpose/goals, infrastructure, recent files annotated with flows/themes/module, notes, history, core supportive context). For new projects: checks for .aimfp-project/, checks .git/.aimfp/ backup, prompts for restoration or initialization.",
     "md_file_path": "directives/aimfp_status.md",
     "workflow": {
       "trunk": "determine_project_state",
       "branches": [
+        {
+          "if": "status_requested",
+          "then": "choose_tier",
+          "details": {
+            "quick": "Default. Completion loops (task/subtask/sidequest/milestone done, items created), 'where are we', after restore or merge",
+            "summary": "Only after lost or compacted context, or when the user asks for a full status report",
+            "detailed": "Only when the full work tree is needed",
+            "never": "Do not request summary on every loop: it resends the core supportive context"
+          }
+        },
         {
           "if": "aimfp_folder_exists",
           "then": "sync_git_state_on_boot",

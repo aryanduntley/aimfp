@@ -11,7 +11,8 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
   user: "help me create a calculator"
 
   SESSION START
-    1. aimfp_run(is_new_session=true) → full bundle (status, settings, supportive context, watchdog)
+    1. aimfp_run(is_new_session=true) → session bundle (status summary + this reference, settings,
+       and only the sections that need action: notices, due backup, migrations, watchdog, deferred notes)
        .aimfp-project/ missing → offer aimfp_init or restore from backup
        .aimfp-project/ exists → read status → present next actions
        project_continue_on_start=true → auto-continue; otherwise → await user direction
@@ -33,11 +34,8 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
     11. Create ONE task: add_task(milestone_id, name, flow_ids, priority)
         flow_ids from get_flows_for_milestone; new behaviour → add_flow + add_milestone_flows first
         Create items: add_item(reference_table='tasks', reference_id=<task_id>, name, description) or batch via add_items(reference_table='tasks', reference_id=<task_id>, items=[{name, description}, ...])
-    12. Work on items (get_supportive_context(variant='coding') for file loop detail):
-        a. reserve_file(flow_ids) → search_modules for overlap → write FP code → finalize_file
-        b. reserve functions → finalize functions (purpose, parameters, returns populated)
-        c. add_file_to_module (if domain logic), add_interactions, add_types_functions
-        d. Item done → update_item(id=<item_id>, status='completed') or batch via update_items(ids=[...], data={status:'completed'}, reference_table='tasks', reference_id=<task_id>) — every id must belong to that parent
+    12. Work on items: file coding loop for every file (variant='coding').
+        Item done → update_item(id, status='completed') or update_items(ids, data, reference_table, reference_id)
     13. All items done → project_task_complete → update_task(status='completed')
     14. More tasks? → create next (goto 11). No → project_milestone_complete (flow review first)
     15. More milestones? → activate next (goto 10). No → project_completion_check → done
@@ -54,7 +52,8 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
 
   SESSION MANAGEMENT
     aimfp_run(is_new_session=false) → watchdog alerts only (at work checkpoints)
-    aimfp_status() → fresh state. Call when you can't recall milestone + active task.
+    aimfp_status() → quick position: path, milestone, focus + open items, open work, gap count.
+    aimfp_status(type='summary') → full reload after lost/compacted context (includes this reference).
     get_supportive_context(variant) → reload reference material on demand.
     Task completion gate: get_task_context(task_id) → files[] lists files linked to the task; verify each has tracked functions.
     aimfp_end → audit, stop watchdog, log summary.
@@ -80,12 +79,14 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
   Before beginning any task/sidequest/user request:
     search_notes(search_string=<keywords>, exclude_note_types=['completed','obsolete'])
   Returns capped previews → read a relevant one in full with get_notes_comprehensive(note_id=X).
+  aimfp_status(summary).recent_notes is metadata only (type, severity, reference, date): same rule.
   Empty = move on. Hits = review for decisions, deferred work, warnings.
   Handled notes → update_note(note_type='completed' or 'obsolete')
 
 5. DIRECTIVE EXECUTION
 
   ALWAYS load before executing: get_directive_by_name(name).
+  Payloads omit keys with nothing to report; a return statement arrives only with the key it is about.
   Pattern: trunk (main analysis) → branches (conditional) → fallback.
   Deep context: get_directive_content(name). Directive flows ≠ project flows.
 
@@ -100,12 +101,13 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
   Branch naming: aimfp-{user}-{number}. Git directives: git_init, git_detect_external_changes, git_create_branch, git_detect_conflicts, git_merge_branch, git_sync_state.
   Any change to blueprint/paths/themes/flows/milestones MUST have add_note(note_type='evolution').
   Modularity layer: theme (stable area) → flows (behaviour, ≥1 theme) → files; modules = reusable code.
-  Paths link themes, milestones link flows. aimfp_status.structure_health lists gaps; fix, don't defer.
+  Paths link themes, milestones link flows. aimfp_status.structure lists gaps on the active work
+  (get_structure_health lists all); fix, don't defer.
   New behaviour gets a new flow; a flow that grows is split (project_theme_flow_mapping).
 
 8. EDGE CASES & RECOVERY
 
-  Lost context? aimfp_status() → fresh state. get_supportive_context() → reload reference.
+  Lost context? aimfp_status(type='summary') → state + this reference. get_supportive_context(variant) → reference only.
   search_directives(keyword="...") → find the right directive. aimfp_run(is_new_session=true) → full reload.
   Non-FP projects: STOP and REJECT. AIMFP is FP-only.
   DB policy: helpers FIRST → orchestrators → directives → direct SQL (last resort, reads only). Exception: user_directives.db.
@@ -113,7 +115,7 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
 9. ADDITIONAL CONTEXT (auto-provided, reload on demand via get_supportive_context(variant=X))
 
   variant='init'    — auto-provided with aimfp_init() return. Discovery depth, initialization, post-completion paths
-  variant='coding'  — auto-provided with aimfp_run(is_new_session=true) for initialized projects. File loop, DRY, interactions, types_functions
+  variant='coding'  — auto-provided with aimfp_run(is_new_session=true) once a milestone exists. File loop, DRY, interactions, types_functions
   variant='case2'   — auto-provided with aimfp_run(is_new_session=true) when Case 2 active. User directive pipeline, preferences
 
 10. USER SETTINGS

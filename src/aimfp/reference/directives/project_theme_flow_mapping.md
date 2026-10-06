@@ -30,8 +30,8 @@ Interactions record how functions call each other; themes, flows and modules rec
 
 ## When to Apply
 
-- **Session start / status**: `aimfp_status` and `aimfp_run` carry `structure_summary` and `structure_health`. If `structure_health.ok` is false, fix the gaps during the session.
-- **Watchdog reminders** typed `structure_*` (they are recomputed at every checkpoint and persist until fixed).
+- **Session start / status**: `aimfp_status` (and `aimfp_run`) attach flows/themes to the active milestone, the focused work and recent files, and report `structure` = total gap count + `active_gaps` on the work in front of you. The full map is `get_all_themes` / `get_all_flows` / `get_structure_health`. Fix gaps during the session.
+- **Watchdog `structure_gaps` reminder**: one line counting the gaps by kind; recomputed at every checkpoint and persists until they are fixed.
 - **New behaviour**: a task or milestone builds something no flow describes.
 - **A flow grows**: its description starts covering several behaviours.
 - **Milestone completion**: `project_milestone_complete` runs a flow review that routes here.

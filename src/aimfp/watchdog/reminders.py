@@ -12,7 +12,7 @@ from ..wrappers.file_ops import (
     _effect_read_json,
     _effect_write_json_atomic,
 )
-from .config import REMINDER_STRUCTURE_PREFIX, STRUCTURE_REMINDERS
+from .config import REMINDER_STRUCTURE_GAPS, REMINDER_STRUCTURE_PREFIX, STRUCTURE_GAP_LABELS
 
 
 # ============================================================================
@@ -60,29 +60,32 @@ def merge_reminders(
 
 def build_structure_reminders(health: Dict[str, Any]) -> Tuple[Dict[str, str], ...]:
     """
-    Pure: One reminder per reported structure gap item, plus an 'N more' reminder
-    per gap whose list was capped.
+    Pure: One summary reminder counting the structure gaps by kind, or none.
+
+    The same gaps are in get_structure_health (full list) and aimfp_status
+    (those touching the active work), so the reminder carries counts only:
+    restating every gap on every checkpoint buries the file-change reminders
+    that only the watchdog can report.
 
     Args:
         health: structure_health gaps (build_structure_gaps output)
 
     Returns:
-        Tuple of reminder dicts (types prefixed REMINDER_STRUCTURE_PREFIX)
+        () when there are no gaps, else a 1-tuple reminder of type REMINDER_STRUCTURE_GAPS
     """
-    reminders = []
-    for gap, (reminder_type, severity, template) in STRUCTURE_REMINDERS.items():
-        entry = health.get(gap) or {}
-        items = entry.get('items') or ()
-        reminders.extend(
-            create_reminder(reminder_type, severity, item.get('path', ''), template.format(**item))
-            for item in items
-        )
-        hidden = (entry.get('total') or 0) - len(items)
-        if hidden > 0:
-            reminders.append(create_reminder(
-                reminder_type, severity, '',
-                f"...and {hidden} more {gap.replace('_', ' ')}. Call get_structure_health() for the full list."))
-    return tuple(reminders)
+    counts = tuple(
+        f"{(health.get(gap) or {}).get('total', 0)} {label}"
+        for gap, label in STRUCTURE_GAP_LABELS.items()
+        if (health.get(gap) or {}).get('total')
+    )
+    if not counts:
+        return ()
+    total = health.get('total_gaps') or sum(
+        (health.get(gap) or {}).get('total', 0) for gap in STRUCTURE_GAP_LABELS)
+    return (create_reminder(
+        REMINDER_STRUCTURE_GAPS, "warning", "",
+        f"{total} modularity gaps: {', '.join(counts)}. aimfp_status lists the ones on the "
+        "active work; get_structure_health() lists all. Fix them in batches this session."),)
 
 
 def replace_reminders_by_prefix(

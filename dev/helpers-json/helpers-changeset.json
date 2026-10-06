@@ -107,7 +107,7 @@
         "Apply is IDEMPOTENT — re-running is safe. If a delete conflict says 'has inbound dependents' AND the same changeset removes those edges, call apply_state_changeset(changeset) again: the first pass's reference-removes clear the dependents so the delete succeeds on the second pass (apply-to-fixpoint).",
         "data.backup_path is a pre-apply snapshot of main's project.db. If the merge is bad, restore it. On success, COMMIT the merged source + updated project.db to main, then move to the next branch.",
         "Reduce conflicts upstream (InterCommAIMFP): partition workers onto disjoint file/module regions, delegate the full dependency closure for any rename/delete, and forbid workers from adding edges into entities they do not own. Land additive branches before structural/deleting ones.",
-        "After integrating all branches: run aimfp_status to confirm project state and route to git_sync_state to update last_known_git_hash."
+        "After integrating all branches: run aimfp_status() to confirm the position and route to git_sync_state to update last_known_git_hash."
       ],
       "implementation_notes": [
         "Returns Result with data={applied[], conflicts[], minted_ids[], backup_path, base_main_commit}",

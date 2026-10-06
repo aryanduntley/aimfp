@@ -28,6 +28,8 @@ from ._common import (
     TASK_TABLE_MAP,
 )
 from ..project.task_files import WorkItemRef, query_current_focus_row, query_task_file_rows
+from ..shared.detail_level import DETAIL_FULL, DETAIL_LEAN, normalize_detail_level, pick_fields
+from ..shared.return_gates import gate_return_statements
 
 
 # ============================================================================
@@ -684,17 +686,65 @@ def _build_tree(
 # get_task_context
 # ============================================================================
 
+def lean_task_context(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Pure: The lean shape of a task context.
+
+    Keeps what resuming needs and drops what is one lookup away: the work item
+    in full; items with descriptions only while open; flows as id/name; each
+    file with its functions as id/name (signatures via get_functions_by_file);
+    modules as id/name/path/purpose. Interactions and notes pass through.
+
+    Args:
+        data: Full task context (get_task_context with detail_level='full')
+
+    Returns:
+        Lean task context with detail_level='lean'
+    """
+    functions_by_file: Dict[Any, List[Dict[str, Any]]] = {}
+    for fn in data.get('functions') or ():
+        functions_by_file.setdefault(fn.get('file_id'), []).append(
+            {'id': fn.get('id'), 'name': fn.get('name')})
+    items = tuple(
+        {**pick_fields(i, ('id', 'name', 'status')),
+         **({'description': i.get('description')}
+            if i.get('status') != 'completed' and i.get('description') else {})}
+        for i in data.get('items') or ()
+    )
+    files = tuple(
+        {**pick_fields(f, ('id', 'path')), 'functions': tuple(functions_by_file.get(f.get('id'), ()))}
+        for f in data.get('files') or ()
+    )
+    lean = {
+        'task_item': data.get('task_item'),
+        'task_type': data.get('task_type'),
+        'detail_level': DETAIL_LEAN,
+        'items': items,
+        'flows': tuple(pick_fields(f, ('id', 'name')) for f in data.get('flows') or ()),
+        'files': files,
+        'modules': tuple(pick_fields(m, ('id', 'name', 'path', 'purpose'))
+                         for m in data.get('modules') or ()),
+    }
+    extras = {k: data[k] for k in ('interactions', 'notes') if k in data}
+    return {**lean, **extras}
+
+
 def get_task_context(
     task_id: int,
     task_type: Optional[str] = None,
     include_interactions: bool = False,
     include_history: bool = False,
+    detail_level: str = DETAIL_LEAN,
 ) -> Result:
     """
-    Get complete context for resuming work on a specific task/subtask/sidequest.
+    Get context for resuming work on a specific task/subtask/sidequest.
 
     Single call retrieves the item + associated items + flows + files +
     functions, and optionally interactions and note history.
+
+    detail_level='lean' (default) keeps the work item in full but reduces the
+    rest to what resuming needs (see lean_task_context); 'full' returns every
+    record as stored (function signatures, flow and item descriptions).
 
     Files come from the task_files junction: files tracked while the item was
     in_progress, or linked with link_files_to_task. A task's context includes
@@ -706,6 +756,7 @@ def get_task_context(
         task_type: 'task', 'subtask', or 'sidequest' (auto-detected if omitted)
         include_interactions: Include function dependency interactions
         include_history: Include note history for task
+        detail_level: 'lean' (default) or 'full'
 
     Returns:
         Result with data={
@@ -720,6 +771,10 @@ def get_task_context(
             notes: tuple (if requested)
         }
     """
+    level, level_error = normalize_detail_level(detail_level)
+    if level_error:
+        return Result(success=False, error=level_error)
+
     if task_type is not None and task_type not in VALID_TASK_TYPES:
         return Result(
             success=False,
@@ -806,10 +861,12 @@ def get_task_context(
             if include_history:
                 data['notes'] = _get_notes_for_task(conn, task_type, task_id)
 
+            shaped = lean_task_context(data) if level == DETAIL_LEAN else {**data, 'detail_level': DETAIL_FULL}
             return Result(
                 success=True,
-                data=data,
-                return_statements=get_return_statements("get_task_context"),
+                data=shaped,
+                return_statements=gate_return_statements(
+                    get_return_statements("get_task_context"), shaped),
             )
 
         finally:

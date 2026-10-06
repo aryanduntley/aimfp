@@ -490,12 +490,22 @@
     {
       "name": "get_incomplete_tasks",
       "file_path": "helpers/project/tasks.py",
-      "parameters": [],
+      "parameters": [
+        {
+          "name": "detail_level",
+          "type": "string",
+          "required": false,
+          "default": "lean",
+          "description": "'lean' (default): descriptions are null. 'full': descriptions included."
+        }
+      ],
       "purpose": "Get all unfinished tasks (pending, in_progress, blocked) as flat task rows. Does NOT include subtasks, sidequests or items: use get_open_work for the whole open tree (tasks with their open items and subtasks, plus sidequests) in one call.",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "Descriptions are null at detail_level='lean' (default): get_task_context(task_id) for one task, or detail_level='full'. get_open_work returns open tasks with their items and subtasks in one call."
+      ],
       "target_database": "project",
       "used_by_directives": [
         {

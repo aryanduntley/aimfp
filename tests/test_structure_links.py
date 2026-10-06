@@ -413,17 +413,23 @@ from aimfp.watchdog.reminders import (
 )
 
 
-def test_build_structure_reminders_caps_and_formats():
+def test_build_structure_reminders_is_one_summary():
     health = {
         "ok": False,
+        "total_gaps": 4,
         "files_without_flow": {"total": 3, "items": ({"id": 1, "path": "a.py"}, {"id": 2, "path": "b.py"})},
         "flows_without_theme": {"total": 1, "items": ({"id": 4, "name": "F"},)},
     }
     rs = build_structure_reminders(health)
-    assert [r["type"] for r in rs] == ["structure_file_without_flow"] * 3 + ["structure_flow_without_theme"]
-    assert rs[0]["file"] == "a.py" and "add_file_flows" in rs[0]["message"]
-    assert "1 more files without flow" in rs[2]["message"]
-    assert "Flow 'F' (id 4)" in rs[3]["message"]
+    assert len(rs) == 1 and rs[0]["type"] == "structure_gaps"
+    msg = rs[0]["message"]
+    assert msg.startswith("4 modularity gaps")
+    assert "1 flows without a theme" in msg and "3 files without a flow" in msg
+    assert "get_structure_health()" in msg
+
+
+def test_build_structure_reminders_empty_when_ok():
+    assert build_structure_reminders({"ok": True, "total_gaps": 0}) == ()
 
 
 def test_replace_reminders_by_prefix_keeps_other_reminders():
@@ -445,7 +451,7 @@ def test_refresh_structure_reminders_recomputes_from_db(project):
 
     assert refresh_structure_reminders(root) > 0
     types = [r["type"] for r in _effect_read_reminders(path)]
-    assert "file_deleted" in types and "structure_file_without_flow" in types
+    assert "file_deleted" in types and "structure_gaps" in types
 
     # fixing the gap removes its reminder on the next refresh; others survive
     c = sqlite3.connect(db)
@@ -453,5 +459,7 @@ def test_refresh_structure_reminders_recomputes_from_db(project):
     c.commit()
     c.close()
     refresh_structure_reminders(root)
-    types = [r["type"] for r in _effect_read_reminders(path)]
-    assert "file_deleted" in types and "structure_file_without_flow" not in types
+    after = _effect_read_reminders(path)
+    assert "file_deleted" in [r["type"] for r in after]
+    assert not any("files without a flow" in r["message"]
+                   for r in after if r["type"] == "structure_gaps")

@@ -27,6 +27,7 @@ Helpers in this file:
 
 import sqlite3
 import json
+import dataclasses
 from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 
@@ -36,6 +37,7 @@ from ..shared.slugs import mint_slug
 
 # Import common project utilities (DRY principle)
 from .task_files import WorkItemRef, query_task_file_rows
+from ..shared.detail_level import DETAIL_LEAN, normalize_detail_level
 from ._common import (
     _open_connection,
     get_cached_project_root,
@@ -1122,22 +1124,39 @@ def get_incomplete_tasks_by_milestone(
         )
 
 
-def get_incomplete_tasks(project_root: Optional[str] = None) -> TaskQueryResult:
+def lean_task_records(tasks: Tuple[TaskRecord, ...]) -> Tuple[TaskRecord, ...]:
+    """Pure: Task records with descriptions blanked (detail_level='lean')."""
+    return tuple(dataclasses.replace(t, description=None) for t in tasks)
+
+
+def get_incomplete_tasks(
+    project_root: Optional[str] = None,
+    detail_level: str = DETAIL_LEAN,
+) -> TaskQueryResult:
     """
     Get all incomplete tasks (pending, in_progress, blocked) as flat task rows.
 
     Subtasks, sidequests and items are NOT included; get_open_work returns the
     whole open tree in one call.
 
+    Args:
+        detail_level: 'lean' (default) blanks descriptions; 'full' keeps them
+
     Returns:
         TaskQueryResult with all incomplete tasks
     """
+    level, level_error = normalize_detail_level(detail_level)
+    if level_error:
+        return TaskQueryResult(success=False, error=level_error)
+
     project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
         tasks = _query_incomplete_tasks(conn)
         conn.close()
+        if level == DETAIL_LEAN:
+            tasks = lean_task_records(tasks)
 
         return TaskQueryResult(
             success=True,

@@ -241,8 +241,14 @@ def test_task_context_returns_linked_files_functions_and_flows(project):
     r = get_task_context(tid, task_type="task")
     assert r.success, r.error
     assert [f["path"] for f in r.data["files"]] == ["src/c.py", "src/b.py"]
-    assert [fn["name"] for fn in r.data["functions"]] == ["bee"]
+    assert [fn["name"] for f in r.data["files"] for fn in f["functions"]] == ["bee"]
     assert [fl["name"] for fl in r.data["flows"]] == ["Flow A", "Flow B"]
+    assert "description" not in r.data["flows"][0]
+
+    full = get_task_context(tid, task_type="task", detail_level="full")
+    assert [fn["name"] for fn in full.data["functions"]] == ["bee"]
+    assert "description" in full.data["flows"][0]
+    assert not get_task_context(tid, detail_level="everything").success
 
     sub = get_task_context(1, task_type="subtask")
     assert [f["path"] for f in sub.data["files"]] == ["src/b.py"]

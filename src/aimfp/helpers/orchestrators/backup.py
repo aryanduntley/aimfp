@@ -173,9 +173,17 @@ def check_scheduled_backup_due(project_root: Optional[str] = None) -> Result:
         newest, count = _latest_backup(backups_dir)
 
         if newest is None:
+            # Never backed up: the interval runs from when the backups folder
+            # was created (aimfp_init), so a brand-new project is not asked to
+            # back up an empty database on its first session.
+            try:
+                created = datetime.fromtimestamp(os.path.getmtime(backups_dir), timezone.utc)
+                age_days = (datetime.now(timezone.utc) - created).days
+            except OSError:
+                age_days = interval
             return Result(success=True, data={
                 'scheduled': True,
-                'due': True,
+                'due': age_days >= interval,
                 'interval_days': interval,
                 'last_backup': None,
                 'days_since_backup': None,

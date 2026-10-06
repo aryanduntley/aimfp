@@ -98,7 +98,7 @@
         "DESTRUCTIVE TO CURRENT STATE — confirm with the user BEFORE calling this, naming which backup and which databases. Restore is usually run when something has already gone wrong; replacing the wrong database makes it worse.",
         "The replaced files were moved to backups/ as 'replaced-<timestamp>-<filename>', not deleted. Report those paths — they are the way back if this restore was the wrong call.",
         "Review 'skipped': any target listed there was NOT restored because the archive did not contain it. Do not report a partial restore as complete.",
-        "Restored project.db means your cached understanding of tasks, milestones, and tracked files is now stale. Call aimfp_status() before continuing any work.",
+        "Restored project.db means your cached understanding of tasks, milestones, and tracked files is now stale. Call aimfp_status() (quick tier: position, focus, open work) before continuing any work.",
         "Restoring never touches source code — only .aimfp-project/ state. If the code and the restored tracking database now disagree, the watchdog will surface it on the next session; reconcile before trusting the index."
       ],
       "target_database": "project",

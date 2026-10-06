@@ -158,6 +158,9 @@ class TestSearchHelpers:
         r = search_modules("disk quota", project_root=project_root)
         assert r.success, r.error
         assert [m.name for m in r.modules] == ["storage"]
+        assert r.modules[0].description is None          # lean by default
+        full = search_modules("disk quota", project_root=project_root, detail_level="full")
+        assert [m.name for m in full.modules] == ["storage"]
 
     def test_notes_or_semantics(self, project_root):
         r = search_notes("hash digest", project_root=project_root)

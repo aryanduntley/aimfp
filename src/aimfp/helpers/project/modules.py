@@ -35,6 +35,7 @@ Helpers in this file:
 
 import json
 import sqlite3
+import dataclasses
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
@@ -43,6 +44,7 @@ from ..shared.fts_query import (
     tokenize_search_terms, build_fts_match_expression, build_like_clause,
     DEFAULT_SEARCH_LIMIT, validate_result_limit, cap_results,
 )
+from ..shared.detail_level import DETAIL_LEAN, normalize_detail_level
 from ._common import (
     _open_project_connection,
     get_cached_project_root,
@@ -1086,10 +1088,16 @@ def get_unassigned_files(project_root: Optional[str] = None) -> UnassignedFilesR
         conn.close()
 
 
+def lean_module_records(modules: Tuple[ModuleRecord, ...]) -> Tuple[ModuleRecord, ...]:
+    """Pure: Module records with description blanked (detail_level='lean'); purpose stays."""
+    return tuple(dataclasses.replace(m, description=None) for m in modules)
+
+
 def search_modules(
     search_string: str,
     limit: Optional[int] = DEFAULT_SEARCH_LIMIT,
     project_root: Optional[str] = None,
+    detail_level: str = DETAIL_LEAN,
 ) -> ModulesQueryResult:
     """
     Search modules by name, purpose, or description.
@@ -1099,6 +1107,7 @@ def search_modules(
     Args:
         search_string: Search term
         limit: Maximum modules returned, best matches first (default 20; None = all)
+        detail_level: 'lean' (default) blanks descriptions, keeping purpose; 'full' keeps them
 
     Returns:
         ModulesQueryResult with matching modules; total_count is the match count before limit
@@ -1110,12 +1119,18 @@ def search_modules(
     if limit_error:
         return ModulesQueryResult(success=False, error=limit_error)
 
+    level, level_error = normalize_detail_level(detail_level)
+    if level_error:
+        return ModulesQueryResult(success=False, error=level_error)
+
     project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
         rows, total_count = cap_results(_search_modules_effect(conn, search_string.strip()), limit)
         modules = tuple(row_to_module_record(row) for row in rows)
+        if level == DETAIL_LEAN:
+            modules = lean_module_records(modules)
 
         return ModulesQueryResult(
             success=True,

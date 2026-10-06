@@ -184,7 +184,7 @@ aimfp_run checks: project.user_directives_status
 
 **AI Processing**:
 1. Evaluates user request: "continue" = continuation request
-2. Calls `aimfp_status()` for fresh context (not aimfp_run — status is the right tool here)
+2. Calls `aimfp_status()` (quick tier: position, focus, open work) — not aimfp_run; `type='summary'` only if context was lost
 3. `aimfp_status` returns:
    - Current focus: "Implementing matrix operations"
    - Open tasks: "Multiply matrix function incomplete"
