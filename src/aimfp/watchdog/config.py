@@ -8,7 +8,7 @@ All values are immutable (Final + frozenset).
 import fnmatch
 import os
 import re
-from typing import Final, Optional, Pattern
+from typing import Dict, Final, Optional, Pattern, Tuple
 
 from ..database.connection import (
     AIMFP_PROJECT_DIR,
@@ -148,6 +148,39 @@ REMINDER_NEW_FILE: Final[str] = "new_file_detected"
 REMINDER_MISSING_FUNCTION: Final[str] = "missing_function"
 REMINDER_MISSING_DB_FUNCTION: Final[str] = "missing_db_function"
 REMINDER_FILE_DELETED: Final[str] = "file_deleted"
+
+# Structural reminders: recomputed from project.db on every refresh (session
+# start and aimfp_run checkpoints), replacing the previous structure_* set.
+REMINDER_STRUCTURE_PREFIX: Final[str] = "structure_"
+
+# gap key (structure_health) -> (reminder type, severity, message template)
+STRUCTURE_REMINDERS: Final[Dict[str, Tuple[str, str, str]]] = {
+    'files_without_flow': (
+        "structure_file_without_flow", "warning",
+        "File is in no flow. Link it with add_file_flows([[file_id, flow_id]]), or if it truly "
+        "has no flow (config, data) mark it with update_file(file_id, no_flow_reason=...)."),
+    'files_outside_module': (
+        "structure_file_outside_module", "warning",
+        "File sits under module path {module_path} but belongs to no module. "
+        "Assign it with add_files_to_module."),
+    'flows_without_theme': (
+        "structure_flow_without_theme", "warning",
+        "Flow '{name}' (id {id}) belongs to no theme. Link it with add_flow_themes([[flow_id, theme_id]])."),
+    'themes_without_flows': (
+        "structure_theme_without_flows", "info",
+        "Theme '{name}' (id {id}) has no flows. Link flows to it, or delete_theme if obsolete."),
+    'open_paths_without_themes': (
+        "structure_path_without_themes", "info",
+        "Completion path '{name}' (id {id}) advances no theme. Link with add_path_themes."),
+    'open_milestones_without_flows': (
+        "structure_milestone_without_flows", "warning",
+        "Milestone '{name}' (id {id}) builds no flow. Link with add_milestone_flows, adding a "
+        "new flow (add_flow) if the milestone introduces new behaviour."),
+    'oversized_flows': (
+        "structure_oversized_flow", "info",
+        "Flow '{name}' (id {id}) description is {chars} chars: it likely covers several "
+        "behaviours. Split it: add_flow per behaviour, then move_files_to_flow."),
+}
 
 SEVERITY_INFO: Final[str] = "info"
 SEVERITY_WARNING: Final[str] = "warning"

@@ -9,7 +9,8 @@ and the watchdog subprocess (fallback when started manually).
 import json
 import os
 
-from ..database.connection import _effect_query_one, get_project_dir_name
+from ..database.connection import _effect_query_one, _open_connection, get_project_dir_name
+from ..helpers.project.structure_health import collect_structure_health
 from ..wrappers.file_ops import _effect_read_file
 from .config import (
     get_project_db_path,
@@ -26,7 +27,11 @@ from .analyzers import (
     reconcile_deleted_files,
     reconcile_unregistered_files,
 )
-from .reminders import _effect_append_reminders
+from .reminders import (
+    _effect_append_reminders,
+    _effect_replace_structure_reminders,
+    build_structure_reminders,
+)
 
 
 # ============================================================================
@@ -104,6 +109,37 @@ def _read_watchdogignore(project_root: str) -> tuple[str, ...]:
 
 
 # ============================================================================
+# Structural Reminders
+# ============================================================================
+
+def refresh_structure_reminders(project_root: str) -> int:
+    """
+    Effect: Recompute modularity-layer gaps (files without flow or module,
+    flows without theme, ...) and replace the structure_* reminders with them.
+
+    Runs at session start (run_startup_reconciliation) and at every
+    aimfp_run(is_new_session=False) checkpoint. Never raises: a project.db
+    that cannot be read leaves the reminders as they were.
+
+    Returns the number of structural reminders now present.
+    """
+    project_db_path = get_project_db_path(project_root)
+    if not os.path.isfile(project_db_path):
+        return 0
+    try:
+        conn = _open_connection(project_db_path, readonly=True)
+        try:
+            _summary, health = collect_structure_health(conn)
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+    reminders = build_structure_reminders(health)
+    _effect_replace_structure_reminders(get_reminders_path(project_root), reminders)
+    return len(reminders)
+
+
+# ============================================================================
 # Startup Reconciliation
 # ============================================================================
 
@@ -114,6 +150,7 @@ def run_startup_reconciliation(project_root: str) -> int:
     Detects:
     1. Files registered in DB but missing from disk (deleted between sessions)
     2. Files on disk but not registered in DB (created outside tracking)
+    3. Structural gaps in the modularity layer (refresh_structure_reminders)
 
     Returns the number of reminders written.
     """
@@ -121,14 +158,16 @@ def run_startup_reconciliation(project_root: str) -> int:
     if not os.path.isfile(project_db_path):
         return 0
 
+    structure_count = refresh_structure_reminders(project_root)
+
     source_directory = _read_infrastructure_value(project_db_path, 'source_directory')
     if not source_directory:
-        return 0
+        return structure_count
 
     if not os.path.isabs(source_directory):
         source_directory = os.path.join(project_root, source_directory)
     if not os.path.isdir(source_directory):
-        return 0
+        return structure_count
 
     prefs_db_path = get_preferences_db_path(project_root)
     user_dirs, user_exts = _read_user_exclusions(prefs_db_path)
@@ -156,4 +195,4 @@ def run_startup_reconciliation(project_root: str) -> int:
         _effect_append_reminders(reminders_path, unregistered_reminders)
         count += len(unregistered_reminders)
 
-    return count
+    return count + structure_count

@@ -82,7 +82,8 @@ def _collect_entities(conn, idx: Dict[str, Any]) -> Dict[str, Dict[str, Dict[str
 
     for r in _safe_rows(conn, "SELECT * FROM files"):
         add("files", {"path": r["path"]},
-            {"name": r["name"], "language": r["language"], "id_in_name": r["id_in_name"]})
+            {"name": r["name"], "language": r["language"], "id_in_name": r["id_in_name"],
+             "no_flow_reason": _row_get(r, "no_flow_reason")})
 
     for r in _safe_rows(conn, "SELECT * FROM modules"):
         add("modules", {"name": r["name"]},
@@ -204,6 +205,16 @@ def _collect_references(conn, idx: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 
     for r in _safe_rows(conn, "SELECT * FROM flow_themes"):
         put({"kind": "flow_theme", "flow": fl.get(r["flow_id"]), "theme": th.get(r["theme_id"])})
+
+    # completion_path_themes / milestone_flows: absent pre-v1.13 (_safe_rows yields nothing)
+    cp = idx["completion_path"]["id2key"]
+    ms = idx["milestones"]["id2key"]
+    for r in _safe_rows(conn, "SELECT * FROM completion_path_themes"):
+        put({"kind": "path_theme", "completion_path": cp.get(r["completion_path_id"]),
+             "theme": th.get(r["theme_id"])})
+
+    for r in _safe_rows(conn, "SELECT * FROM milestone_flows"):
+        put({"kind": "milestone_flow", "milestone": ms.get(r["milestone_id"]), "flow": fl.get(r["flow_id"])})
 
     # task_files: polymorphic work-item endpoint (reference_table + slug key), absent pre-v1.12
     for r in _safe_rows(conn, "SELECT * FROM task_files"):

@@ -3,479 +3,150 @@
 **Type**: Project
 **Level**: 3 (Operational Execution)
 **Parent Directive**: project_file_write
-**Priority**: MEDIUM - Theme and flow organization
+**Priority**: HIGH - Modularity is how AIMFP projects stay organized and maintainable
 
 ---
 
 ## Purpose
 
-The `project_theme_flow_mapping` directive infers or assigns theme and flow groupings for files based on metadata, updating linking tables in `project.db`. This directive serves as the **organizational coordinator**, maintaining thematic and procedural structure across the codebase.
+`project_theme_flow_mapping` maintains the project's **modularity layer**:
 
-Key responsibilities:
-- **Infer themes from metadata** - Extract theme from AIMFP_METADATA or file path
-- **Assign flows** - Determine procedural flow associations
-- **Create new themes/flows** - Add if not existing
-- **Update linking tables** - Maintain file_flows and flow_themes relationships
-- **Trigger blueprint updates** - Call `project_evolution` when themes/flows change
-- **Support roadmap visualization** - Enable theme-based project views
+```
+completion path --themes--> theme --flows--> flow --files--> file --module--> module
+milestone ------flows-----> flow
+task / sidequest --flow_ids--> flow
+```
 
-This is the **theme/flow organizer** - ensures files are properly categorized for project understanding.
+| Layer | What it is | How it changes |
+|---|---|---|
+| **Theme** | A stable project area ("Authentication", "Data Layer") | Rarely — like completion paths, which link to it |
+| **Flow** | One distinct behaviour the code implements ("Login Flow") | Continuously — milestones add flows and split ones that grow; every flow belongs to ≥ 1 theme |
+| **Module** | A reusable domain code boundary at a directory seam | When reusable logic appears; feature files stay thin orchestrators |
+| **file → flow** | Which behaviour a file implements | Declared at `reserve_file` (`flow_ids`), or an explicit `null` for config/data files |
+
+Interactions record how functions call each other; themes, flows and modules record **where code belongs**. Without them AI work drifts into bulk: one flow that describes everything, files nobody can place, logic duplicated because no module said it already existed.
 
 ---
 
 ## When to Apply
 
-This directive applies when:
-- **New file created** - Assign theme and flow to new files
-- **File metadata updated** - Re-assign based on new AIMFP_METADATA
-- **Theme/flow inference** - Auto-detect from file path or purpose
-- **Manual assignment** - User explicitly assigns themes/flows
-- **Called by other directives**:
-  - `project_file_write` - Assigns themes/flows to new files
-  - `project_update_db` - Updates mappings when files change
-  - User directly - Manual theme/flow management
+- **Session start / status**: `aimfp_status` and `aimfp_run` carry `structure_summary` and `structure_health`. If `structure_health.ok` is false, fix the gaps during the session.
+- **Watchdog reminders** typed `structure_*` (they are recomputed at every checkpoint and persist until fixed).
+- **New behaviour**: a task or milestone builds something no flow describes.
+- **A flow grows**: its description starts covering several behaviours.
+- **Milestone completion**: `project_milestone_complete` runs a flow review that routes here.
+- **Codebase adoption**: after `project_catalog` registers files.
 
 ---
 
 ## Workflow
 
-### Trunk: infer_metadata
+### Trunk: assess_structure
 
-Attempts to determine theme and flow from file metadata.
-
-**Steps**:
-1. **Read AIMFP_METADATA** - Extract theme/flow from file header
-2. **Parse file path** - Infer from directory structure (e.g., `src/auth/` → "Authentication")
-3. **Analyze function purposes** - Infer from function descriptions
-4. **Check existing mappings** - See if similar files have themes/flows
-5. **Prompt user if uncertain** - Ask for clarification if confidence low
+Call `get_structure_health()`. Read the summary (themes → flows → file counts, open paths → themes, open milestones → flows) and the gaps. Every tool below is batch-native: pass many pairs in one call.
 
 ### Branches
 
-**Branch 1: If metadata_present**
-- **Then**: `extract_theme_and_flow`
-- **Details**: Read theme and flow from AIMFP_METADATA
-  - Parse AIMFP_METADATA JSON in file header
-  - Extract `theme` field (e.g., "Authentication")
-  - Extract `flow` field (e.g., "Login Flow")
-  - High confidence (> 0.9) if explicitly specified
-- **Example Metadata**:
-  ```python
-  # AIMFP_METADATA: {
-  #   "function_names": ["hash_password", "validate_token"],
-  #   "theme": "Authentication",
-  #   "flow": "Security Flow",
-  #   ...
-  # }
-  ```
-- **Result**: Theme and flow extracted from metadata
+**new_behaviour_without_flow → create_flow_for_behaviour**
+1. Pick the theme(s) from the summary; `add_theme` only if no area fits.
+2. `add_flow(name, theme_ids, description)` — one flow per distinct behaviour.
+3. `add_milestone_flows([[milestone_id, flow_id]])` for the milestone building it.
+4. Include it in the task's `flow_ids` (`update_task`).
 
-**Branch 2: If no_metadata_infer_from_path**
-- **Then**: `infer_from_file_path`
-- **Details**: Deduce theme from directory structure
-  - Parse file path segments
-  - Map common patterns:
-    - `src/auth/` → "Authentication"
-    - `src/database/` → "Database Operations"
-    - `src/api/` → "API Layer"
-    - `src/utils/` → "Utilities"
-  - Medium confidence (0.5 - 0.7)
-- **Result**: Theme inferred from path, prompt for flow
+Do **not** stretch an unrelated flow's description to cover new behaviour. That is the failure this directive exists to prevent.
 
-**Branch 3: If theme_or_flow_inferred**
-- **Then**: `check_if_exists_in_db`
-- **Details**: Verify theme/flow exist in database
-  - Query `themes` table for matching name
-  - Query `flows` table for matching name
-  - If exists: Use existing ID
-  - If not exists: Create new theme/flow
-- **Query**:
-  **Use helper functions** for all project.db operations. Query available helpers.
+**files_without_flow → link_files_to_flows**
+- `add_file_flows([[file_id, flow_id], ...])` for files implementing a flow.
+- `update_file(file_id, no_flow_reason=...)` for config, data or fixture files that truly have no flow. New files declare this at reserve time with `flow_ids=null`.
 
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-- **Result**: Theme/flow IDs obtained or created
+**files_outside_module → assign_files_to_modules**
+- A file under a module's path that is not a member: `add_files_to_module`.
 
-**Branch 4: If theme_exists**
-- **Then**: `link_to_existing_theme`
-- **Details**: Use existing theme
-  - Get theme_id from themes table
-  - Use for file_flows linking
-- **Result**: Existing theme reused
+**flows_without_theme → link_flows_to_themes**
+- `add_flow_themes([[flow_id, theme_id], ...])`.
 
-**Branch 5: If theme_not_exists**
-- **Then**: `create_new_theme`
-- **Details**: Add new theme to database
-  - Insert into `themes` table
-  - Infer description from name
-  - Trigger `project_evolution` (themes changed)
-- **SQL**:
-  **Use helper functions** for all project.db operations. Query available helpers.
+**paths_or_milestones_unlinked → link_paths_and_milestones**
+- `add_path_themes([[completion_path_id, theme_id], ...])`
+- `add_milestone_flows([[milestone_id, flow_id], ...])`
 
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-- **Result**: New theme created, evolution triggered
+**flow_oversized_or_mixed → split_flow**
+A description past ~1500 characters (`oversized_flows`) has usually absorbed several behaviours.
+1. `add_flow` per distinct behaviour (same `theme_ids` unless it belongs elsewhere).
+2. `move_files_to_flow(file_ids, from_flow_id, to_flow_id)` for each new flow's files — links only, files are never touched.
+3. `add_milestone_flows` for affected open milestones; update open tasks' `flow_ids`.
+4. `update_flow` the original to describe only what remains.
 
-**Branch 6: If flow_not_exists**
-- **Then**: `create_new_flow`
-- **Details**: Add new flow to database
-  - Insert into `flows` table
-  - Infer description from name
-  - Trigger `project_evolution` (flows changed)
-- **SQL**:
-  **Use helper functions** for all project.db operations. Query available helpers.
+**flows_change_theme → regroup_flows**
+- `move_flows_to_theme(flow_ids, from_theme_id, to_theme_id)`.
 
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-- **Result**: New flow created, evolution triggered
+**links_removed → remove_links_with_note**
+- `remove_flow_themes`, `remove_path_themes`, `remove_milestone_flows` require `note_reason`, `note_severity`, `note_source` (an `entry_deletion` note is written per owner).
+- Refused while something depends on the link: a flow's last theme (use `move_flows_to_theme`), a milestone flow still listed by that milestone's open tasks or sidequests.
+- Deletes treat these links as associations too: `delete_theme`, `delete_flow`, `delete_milestone` and `delete_completion_path` are blocked until linked paths, milestones, flows or themes are unlinked.
 
-**Branch 7: If theme_and_flow_obtained**
-- **Then**: `update_file_flows_table`
-- **Details**: Link file to flow
-  - Insert into `file_flows` table (file_id, flow_id)
-  - Update if already exists
-- **SQL**:
-  **Use helper functions** for all project.db operations. Query available helpers.
+**structure_changed → call_project_evolution**
+- `add_note(note_type='evolution')` for every theme/flow added, split, regrouped or retired, and update blueprint section 3.
 
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-- **Result**: File linked to flow
-
-**Branch 8: If flow_obtained**
-- **Then**: `update_flow_themes_table`
-- **Details**: Link flow to theme
-  - Insert into `flow_themes` table (flow_id, theme_id)
-  - Update if already exists
-- **SQL**:
-  **Use helper functions** for all project.db operations. Query available helpers.
-
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-- **Result**: Flow linked to theme
-
-**Branch 9: If theme_or_flow_created**
-- **Then**: `call_project_evolution`
-- **Details**: Update ProjectBlueprint.md
-  - Trigger: `project_evolution` directive
-  - Change type: 'themes_or_flows_change'
-  - Update Section 3 of blueprint
-  - Increment project version
-- **Result**: Blueprint synchronized with new themes/flows
-
-**Branch 10: If confidence_low**
-- **Then**: `prompt_user`
-- **Details**: Ask user for theme/flow assignment
-  - Present file info (path, functions)
-  - Show existing themes and flows
-  - Prompt: "Assign theme and flow for [file]:"
-  - User selects or creates new
-- **Result**: User provides theme/flow
-
-**Branch 11: If no_metadata_and_path_generic**
-- **Then**: `assign_default_theme`
-- **Details**: Use default "Uncategorized" theme
-  - Theme: "Uncategorized"
-  - Flow: "General"
-  - Prompt user to categorize later
-- **Result**: File has default categorization
-
-**Fallback**: `prompt_user`
-- Present file details and ask for theme/flow
-- Log to `notes` for future learning
-
-### Error Handling
-
-**on_failure**: `rollback_and_prompt`
-- If mapping fails: Rollback database transaction
-- Prompt user with specific error
-- Common issues: Database constraint violation, invalid theme/flow names
+**Fallback → prompt_user**: "Which theme/flow should this work belong to?"
 
 ---
 
 ## Examples
 
-### Example 1: File with Explicit Metadata
+### Splitting a catch-all flow
 
-**File**: `src/auth/login.py`
-```python
-# AIMFP_METADATA: {
-#   "function_names": ["hash_password", "validate_credentials"],
-#   "theme": "Authentication",
-#   "flow": "Login Flow",
-#   ...
-# }
+`structure_health.oversized_flows` reports flow 11 "Automation Flow" at 7,400 characters covering scheduling, config validation and monitoring.
+
+```
+add_flow("Schedule Arithmetic Flow", theme_ids=[3], description="...")      -> 21
+add_flow("Config Grammar Flow", theme_ids=[3], description="...")           -> 22
+move_files_to_flow([40, 41], from_flow_id=11, to_flow_id=21)
+move_files_to_flow([42], from_flow_id=11, to_flow_id=22)
+add_milestone_flows([[6, 21], [6, 22]])
+update_flow(11, description="<monitoring only>")
+add_note(note_type='evolution', reference_table='flows', reference_id=11, content="Split ...")
 ```
 
-**AI Execution**:
-1. Reads AIMFP_METADATA: Theme="Authentication", Flow="Login Flow"
-2. Checks if theme exists:
-   **Use helper functions** for all project.db operations. Query available helpers.
+### Fixing a backlog after adoption
 
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-3. Checks if flow exists:
-   **Use helper functions** for all project.db operations. Query available helpers.
-
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-4. Links file to flow:
-   **Use helper functions** for all project.db operations. Query available helpers.
-
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-5. Links flow to theme:
-   **Use helper functions** for all project.db operations. Query available helpers.
-
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-6. No evolution needed (theme/flow already exist)
-7. Logs mapping:
-   **Use helper functions** for all project.db operations. Query available helpers.
-
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-
-### Example 2: Infer from Path, Create New Theme
-
-**File**: `src/payment/processor.py` (no AIMFP_METADATA)
-
-**AI Execution**:
-1. No metadata found → Infer from path
-2. Parses path: `/src/payment/` → Theme="Payment Processing"
-3. Checks if theme exists:
-   **Use helper functions** for all project.db operations. Query available helpers.
-
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-4. Creates new theme:
-   **Use helper functions** for all project.db operations. Query available helpers.
-
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-5. Triggers `project_evolution`:
-   - Change type: 'themes_or_flows_change'
-   - Updates Section 3 of ProjectBlueprint.md
-   - Adds evolution history
-6. Prompts for flow: "Assign flow for payment/processor.py:"
-7. User provides: "Transaction Flow"
-8. Creates new flow:
-   **Use helper functions** for all project.db operations. Query available helpers.
-
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-9. Links file to flow and flow to theme
-10. Logs mapping and evolution
-
-### Example 3: Low Confidence, Prompt User
-
-**File**: `src/utils/helpers.py` (generic name, no metadata)
-
-**AI Execution**:
-1. No metadata found
-2. Path inference: `/src/utils/` → Generic, low confidence
-3. Prompts user:
-   ```
-   Unable to infer theme/flow for: src/utils/helpers.py
-
-   Functions: format_date, parse_json, log_error
-
-   Existing themes:
-   1. Authentication
-   2. Database Operations
-   3. API Layer
-   4. Payment Processing
-
-   Assign theme (or create new):
-   ```
-4. User selects: "4" (create new) → "Utility Functions"
-5. Creates theme "Utility Functions"
-6. Prompts for flow:
-   ```
-   Existing flows:
-   1. Login Flow
-   2. Data Access Flow
-   3. Request Handling
-   4. Transaction Flow
-
-   Assign flow (or create new):
-   ```
-7. User creates: "Helper Functions Flow"
-8. Links file, triggers evolution
-
-### Example 4: Update Existing Mapping
-
-**File**: `src/auth/login.py` (already mapped, metadata changed)
-
-**Old Metadata**: Theme="Authentication", Flow="Login Flow"
-**New Metadata**: Theme="Security", Flow="Identity Verification"
-
-**AI Execution**:
-1. Reads new metadata: Theme="Security", Flow="Identity Verification"
-2. Checks if theme exists:
-   - "Security" not found
-   - Creates new theme
-3. Checks if flow exists:
-   - "Identity Verification" not found
-   - Creates new flow
-4. Updates file_flows mapping:
-   **Use helper functions** for all project.db operations. Query available helpers.
-
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-5. Updates flow_themes mapping:
-   **Use helper functions** for all project.db operations. Query available helpers.
-
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-6. Triggers `project_evolution` (new theme and flow created)
-7. Logs remapping:
-   **Use helper functions** for all project.db operations. Query available helpers.
-
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
-
-### Example 5: Multiple Files Same Theme
-
-**Files**:
-- `src/auth/login.py`
-- `src/auth/register.py`
-- `src/auth/reset_password.py`
-
-**AI Execution**:
-1. Processes login.py: Creates "Authentication" theme, "Login Flow"
-2. Processes register.py: Reuses "Authentication" theme, creates "Registration Flow"
-3. Processes reset_password.py: Reuses "Authentication" theme, creates "Password Reset Flow"
-4. All three flows linked to "Authentication" theme
-5. Single evolution trigger after all three processed
-6. Section 3 updated with:
-   ```markdown
-   ### Themes
-
-   1. **Authentication**
-      - Purpose: User identity and access management
-      - Flows: Login Flow, Registration Flow, Password Reset Flow
-      - Files: src/auth/login.py, src/auth/register.py, src/auth/reset_password.py
-   ```
+```
+add_flow_themes([[1, 2], [2, 2], [3, 5]])
+add_file_flows([[10, 1], [11, 1], [12, 3]])
+update_file(13, no_flow_reason="build config")
+add_files_to_module([10, 11], module_id=4)
+get_structure_health()   # re-check; lists are capped, totals are exact
+```
 
 ---
 
 ## Integration with Other Directives
 
-### Called By:
-- `project_file_write` - Assigns themes/flows to new files
-- `project_update_db` - Updates mappings when files change
-- User directly - Manual theme/flow management
-
-### Calls:
-- `project_evolution` - Updates blueprint when themes/flows change
-- `project_file_read` - Reads AIMFP_METADATA from files
+- **Called by**: `project_file_write`, `project_milestone_complete` (flow review), `project_discovery` (initial layer), `project_catalog` (adoption), user requests.
+- **Calls**: `project_evolution` when the layer changes.
+- **Helpers**: query `get_helpers_for_directive('project_theme_flow_mapping')` for the current set.
 
 ---
 
 ## Database Updates
 
-### Tables Modified:
-
-**project.db**:
-**Use helper functions** for all project.db operations. Query available helpers.
-
-**IMPORTANT**: Never use direct SQL for project.db - always use helpers or call project directives (like project_file_write).
+- `themes`, `flows` — created and described
+- `flow_themes`, `completion_path_themes`, `milestone_flows`, `file_flows`, `module_files` — links
+- `files.no_flow_reason` — explicit flow opt-out
+- `notes` — evolution and entry_deletion audit trail
 
 ---
 
 ## Roadblocks and Resolutions
 
-### Roadblock 1: ambiguous_mapping
-**Issue**: Cannot confidently infer theme or flow
-**Resolution**: Prompt user to specify, show existing themes/flows for selection
-
-### Roadblock 2: missing_metadata
-**Issue**: File lacks AIMFP_METADATA and path is generic
-**Resolution**: Assign default "Uncategorized" theme, prompt user to categorize later
-
-### Roadblock 3: blueprint_update_failed
-**Issue**: Cannot update ProjectBlueprint.md after theme/flow creation
-**Resolution**: Continue with DB update, log warning about blueprint desync
-
-### Roadblock 4: conflicting_themes
-**Issue**: File metadata specifies theme that conflicts with path inference
-**Resolution**: Trust metadata over path inference, log discrepancy
-
----
-
-## Intent Keywords
-
-- "map theme"
-- "assign flow"
-- "categorize file"
-- "organize themes"
-- "link to flow"
-
-**Confidence Threshold**: 0.5
-
----
-
-## Related Directives
-
-- `project_file_write` - Creates files that need theme/flow mapping
-- `project_evolution` - Updates blueprint when themes/flows change
-- `project_file_read` - Reads metadata for inference
-- `project_update_db` - Syncs mappings
-
----
-
-## Inference Patterns
-
-### Path-to-Theme Mapping
-
-| Path Pattern | Inferred Theme | Confidence |
-|--------------|----------------|------------|
-| `src/auth/` | Authentication | 0.8 |
-| `src/database/` | Database Operations | 0.8 |
-| `src/api/` | API Layer | 0.7 |
-| `src/payment/` | Payment Processing | 0.8 |
-| `src/utils/` | Utilities | 0.5 |
-| `src/tests/` | Testing | 0.9 |
-| `src/core/` | Core System | 0.6 |
-
-### Function-to-Flow Mapping
-
-| Function Keywords | Inferred Flow | Confidence |
-|-------------------|---------------|------------|
-| login, authenticate | Login Flow | 0.8 |
-| register, signup | Registration Flow | 0.8 |
-| validate, verify | Validation Flow | 0.7 |
-| process, execute | Processing Flow | 0.6 |
-| fetch, retrieve | Data Retrieval | 0.7 |
-| save, persist | Data Storage | 0.7 |
-
----
-
-## Blueprint Section 3 Format
-
-When themes/flows are created or updated, Section 3 is formatted as:
-
-```markdown
-## 3. Project Themes & Flows
-
-### Themes
-
-1. **Authentication**
-   - Purpose: User identity verification and access management
-   - Files: src/aimfp/auth/
-   - Flows: Login Flow, Registration Flow, Password Reset Flow
-
-2. **Database Operations**
-   - Purpose: Data persistence and retrieval
-   - Files: src/aimfp/database/
-   - Flows: Query Builder Flow, Migration Flow, Connection Pool Flow
-
-### Flows
-
-1. **Login Flow**
-   - Steps: Credential validation → Session creation → Access grant
-   - Related Theme: Authentication
-   - Files: src/aimfp/auth/login.py, src/aimfp/auth/session.py
-
-2. **Data Retrieval Flow**
-   - Steps: Query construction → Execution → Result parsing
-   - Related Theme: Database Operations
-   - Files: src/aimfp/database/query.py, src/aimfp/database/results.py
-```
+- **ambiguous_mapping**: a file serves two behaviours → link both flows; if that keeps happening, the file probably needs splitting.
+- **no_fitting_theme**: create the theme only after confirming with the user; themes are long-lived.
+- **removal_refused**: resolve the listed associations first (link a replacement theme, update task `flow_ids`), then remove.
+- **legacy_project_gaps**: hundreds of gaps after an upgrade → work in batches per theme; the watchdog shows 15 per gap type plus a count.
 
 ---
 
 ## Notes
 
-- **Metadata takes precedence** over path inference
-- **Create themes/flows as needed** - Don't restrict to predefined list
-- **Trigger evolution on creation** - Keep blueprint in sync
-- **Support multiple flows per theme** - One theme can have many flows
-- **Enable visualization** - Themes/flows support roadmap and dependency graphs
-- **Log all mappings** - Audit trail for theme/flow assignments
-- **Confidence scoring** - Use to decide when to prompt user
-- **Reuse existing themes/flows** - Avoid duplicates with similar names
+- Flows are not tasks: a flow describes lasting behaviour, a task describes work. Many tasks touch one flow.
+- Themes are not modules: a theme is an area of the product, a module is a code boundary. A module's files often span one theme; a theme usually spans several modules.
+- The same report drives `aimfp_status`, `aimfp_end`, `get_structure_health` and the watchdog, so they never disagree.

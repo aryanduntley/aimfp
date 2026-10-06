@@ -25,7 +25,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_theme_flow_mapping",
-          "execution_context": "infer_metadata",
+          "execution_context": "assess_structure",
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
@@ -58,7 +58,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_theme_flow_mapping",
-          "execution_context": "infer_metadata",
+          "execution_context": "assess_structure",
           "sequence_order": 2,
           "is_required": true,
           "parameters_mapping": {},
@@ -185,7 +185,10 @@
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "Theme created. A theme is a stable project area: create the flows that implement it with add_flow(name, theme_ids=[<theme_id>], description), and link the completion paths that advance it with add_path_themes([[completion_path_id, theme_id]]).",
+        "Call add_note(note_type='evolution', reference_table='themes', reference_id=<theme_id>) describing the area this theme covers."
+      ],
       "implementation_notes": [
         "Returns: {success: true, id: int} - new theme ID",
         "Inserts into themes table",
@@ -195,7 +198,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_theme_flow_mapping",
-          "execution_context": "update_flow_themes",
+          "execution_context": "create_flow_for_behaviour",
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
@@ -301,7 +304,7 @@
         }
       ],
       "purpose": "Delete theme with flow validation",
-      "error_handling": "- Calls `get_flows_for_theme(theme_id)`",
+      "error_handling": "- Calls `get_flows_for_theme(theme_id)` Also blocked while completion paths are linked to the theme (paths_linked) — remove_path_themes first.",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [],
@@ -325,6 +328,16 @@
           "description": "Flow name"
         },
         {
+          "name": "theme_ids",
+          "type": "array",
+          "required": true,
+          "default": null,
+          "description": "IDs of the theme(s) this flow belongs to — at least one. Every flow belongs to a theme; pick from get_all_themes() or add_theme() first.",
+          "items": {
+            "type": "integer"
+          }
+        },
+        {
           "name": "description",
           "type": "string",
           "required": false,
@@ -346,23 +359,24 @@
           "description": "Confidence score 0-1"
         }
       ],
-      "purpose": "Add project flow",
-      "error_handling": "",
+      "purpose": "Add a project flow (evolving behaviour/architecture description) linked to at least one theme. theme_ids is required: a flow never exists without a theme.",
+      "error_handling": "Returns error if theme_ids is empty or names a theme that does not exist; nothing is written in that case.",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Consider linking relevant files to this flow in file_flows table"
+        "LINK THE FLOW: link it to the milestone that introduced it via add_milestone_flows([[milestone_id, flow_id]]), and include it in the flow_ids of the tasks that build it.",
+        "FILES: files implementing this flow get it via flow_ids at reserve_file/reserve_files time, or add_file_flows for files that already exist.",
+        "Call add_note(note_type='evolution', reference_table='flows', reference_id=<flow_id>) describing the new behaviour this flow captures."
       ],
       "implementation_notes": [
-        "Returns: {success: true, id: int} - new flow ID",
-        "Inserts into flows table",
-        "If ai_generated=true → may trigger project_evolution"
+        "Returns: {success, id, theme_ids}",
+        "Inserts the flow and its flow_themes rows in one transaction; themes validated first"
       ],
       "target_database": "project",
       "used_by_directives": [
         {
           "directive_name": "project_theme_flow_mapping",
-          "execution_context": "update_flow_themes",
+          "execution_context": "create_flow_for_behaviour",
           "sequence_order": 4,
           "is_required": true,
           "parameters_mapping": {},
@@ -445,7 +459,8 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Call add_note(note_type='evolution', directive_name='project_evolution', reference_table='flows', reference_id=<flow_id>) describing the flow change"
+        "Call add_note(note_type='evolution', directive_name='project_evolution', reference_table='flows', reference_id=<flow_id>) describing the flow change",
+        "SPLIT, DON'T GROW: if the description now covers more than one behaviour (or exceeds ~1500 chars — structure_health reports it as oversized), split it: add_flow(name, theme_ids, description) for each distinct behaviour, move_files_to_flow(file_ids, from_flow_id, to_flow_id) for their files, add_milestone_flows for the milestone, and trim this description to what remains."
       ],
       "implementation_notes": [
         "Returns: {success: true}",
@@ -505,7 +520,7 @@
         }
       ],
       "purpose": "Delete flow with file validation",
-      "error_handling": "- Calls `get_files_by_flow(flow_id)`",
+      "error_handling": "- Calls `get_files_by_flow(flow_id)` Also blocked while milestones are linked to the flow (milestones listed) — remove_milestone_flows first.",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [],

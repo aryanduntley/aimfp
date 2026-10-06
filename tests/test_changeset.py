@@ -547,3 +547,43 @@ def test_apply_remove_edge_then_delete_node_single_pass(repo):
     assert "foo" not in names and "bar" in names
     assert c.execute("SELECT COUNT(*) FROM interactions").fetchone()[0] == 0
     c.close()
+
+
+def test_v113_structure_edges_and_no_flow_reason_round_trip(repo):
+    """path_theme and milestone_flow edges, and files.no_flow_reason, survive export -> apply."""
+    root, db = repo
+    m = _seed_base(db)
+    base = _commit(root, "base")
+
+    _git(root, "checkout", "-qb", "work")
+    c = _conn(db)
+    c.execute("INSERT INTO themes (name) VALUES ('Core')")
+    c.execute("INSERT INTO flows (name) VALUES ('Build Flow')")
+    th = c.execute("SELECT id FROM themes").fetchone()[0]
+    fl = c.execute("SELECT id FROM flows").fetchone()[0]
+    cp = c.execute("SELECT id FROM completion_path").fetchone()[0]
+    c.execute("INSERT INTO completion_path_themes (completion_path_id, theme_id) VALUES (?,?)", (cp, th))
+    c.execute("INSERT INTO milestone_flows (milestone_id, flow_id) VALUES (?,?)", (m, fl))
+    c.execute("INSERT INTO files (path, name, language, no_flow_reason) VALUES "
+              "('pyproject.toml','pyproject.toml','TOML','build config')")
+    c.commit(); c.close()
+    _commit(root, "work")
+
+    cs = export_state_changeset(base, "work", worker_id="w1").data
+    kinds = {r["kind"] for r in cs["references"] if r["op"] == "add"}
+    assert {"path_theme", "milestone_flow"} <= kinds
+    pt = next(r for r in cs["references"] if r["kind"] == "path_theme")
+    assert pt["completion_path"] == {"name": "core"} and pt["theme"] == {"name": "Core"}
+    f_add = next(e for e in cs["entities"] if e["kind"] == "files" and e["op"] == "add")
+    assert f_add["attributes"]["no_flow_reason"] == "build config"
+
+    _git(root, "checkout", "-q", _main_branch(root))
+    res = apply_state_changeset(cs)
+    assert res.success, res.error
+    assert res.data["conflicts"] == []
+
+    c = _conn(db)
+    assert c.execute("SELECT COUNT(*) FROM completion_path_themes").fetchone()[0] == 1
+    assert c.execute("SELECT COUNT(*) FROM milestone_flows").fetchone()[0] == 1
+    assert c.execute("SELECT no_flow_reason FROM files WHERE path='pyproject.toml'").fetchone()[0] == "build config"
+    c.close()

@@ -403,7 +403,8 @@
           "then": "create_new_task",
           "details": {
             "link_to_completion_path": true,
-            "update_project_version": true
+            "update_project_version": true,
+            "place_in_modularity_map": "flow_ids from get_flows_for_milestone(milestone_id); if the task builds behaviour no flow describes, add_flow(name, theme_ids, description) + add_milestone_flows first. Identify the module(s) the domain logic belongs in (search_modules) before coding."
           }
         },
         {
@@ -1336,54 +1337,108 @@
       "name": "theme_mapping",
       "description": "Links generated code elements to project themes and flows, triggers ProjectBlueprint.md updates."
     },
-    "description": "Infers or assigns flow and theme groupings based on file metadata, updating linking tables for file_flows and flow_themes within project.db. Maintains thematic and procedural grouping across project files. Supports roadmap visualization and organization. Triggers project_evolution directive when themes or flows are added or modified to update ProjectBlueprint.md accordingly.",
+    "description": "Maintains the project's modularity layer: themes (stable areas, linked to completion paths), flows (evolving behaviour, each in >= 1 theme, linked to milestones and tasks), file-to-flow links, and module membership. Works from get_structure_health gaps and from new work: places new behaviour in a flow (creating one rather than stretching an unrelated flow), splits flows that grow into catch-alls, regroups flows between themes, and records every change as an evolution note.",
     "md_file_path": "directives/project_theme_flow_mapping.md",
     "workflow": {
-      "trunk": "infer_metadata",
+      "trunk": "assess_structure",
       "branches": [
         {
-          "if": "metadata_present",
-          "then": "update_flow_themes",
+          "if": "structure_assessment_requested",
+          "then": "assess_structure",
           "details": {
-            "confidence_score": true
+            "use_helper": "get_structure_health",
+            "read": "summary (themes -> flows -> file counts, paths -> themes, milestones -> flows) and health gaps"
           }
         },
         {
-          "if": "no_metadata",
-          "then": "prompt_user",
+          "if": "new_behaviour_without_flow",
+          "then": "create_flow_for_behaviour",
           "details": {
-            "assign_default": true
+            "steps": [
+              "Pick the theme(s) from structure_summary; add_theme only if no area fits",
+              "add_flow(name, theme_ids, description) — one flow per distinct behaviour",
+              "add_milestone_flows([[milestone_id, flow_id]]) for the milestone building it",
+              "Include it in the task's flow_ids (update_task)"
+            ]
           }
         },
         {
-          "if": "theme_or_flow_updated",
+          "if": "files_without_flow",
+          "then": "link_files_to_flows",
+          "details": {
+            "steps": [
+              "add_file_flows([[file_id, flow_id], ...]) for files implementing a flow",
+              "update_file(file_id, no_flow_reason=...) for config/data files that truly have no flow"
+            ]
+          }
+        },
+        {
+          "if": "files_outside_module",
+          "then": "assign_files_to_modules",
+          "details": {
+            "use_helper": "add_files_to_module",
+            "note": "Files under a module's path that are not members"
+          }
+        },
+        {
+          "if": "flows_without_theme",
+          "then": "link_flows_to_themes",
+          "details": {
+            "use_helper": "add_flow_themes",
+            "pairs": "[[flow_id, theme_id], ...]"
+          }
+        },
+        {
+          "if": "paths_or_milestones_unlinked",
+          "then": "link_paths_and_milestones",
+          "details": {
+            "steps": [
+              "add_path_themes([[completion_path_id, theme_id], ...])",
+              "add_milestone_flows([[milestone_id, flow_id], ...])"
+            ]
+          }
+        },
+        {
+          "if": "flow_oversized_or_mixed",
+          "then": "split_flow",
+          "details": {
+            "steps": [
+              "add_flow per distinct behaviour (same theme_ids unless the behaviour belongs elsewhere)",
+              "move_files_to_flow(file_ids, from_flow_id, to_flow_id) for each new flow's files",
+              "add_milestone_flows for affected open milestones; update open tasks' flow_ids",
+              "update_flow the original to describe only what remains"
+            ]
+          }
+        },
+        {
+          "if": "flows_change_theme",
+          "then": "regroup_flows",
+          "details": {
+            "use_helper": "move_flows_to_theme",
+            "note": "remove_flow_themes refuses to leave a flow theme-less"
+          }
+        },
+        {
+          "if": "links_removed",
+          "then": "remove_links_with_note",
+          "details": {
+            "note": "remove_flow_themes / remove_path_themes / remove_milestone_flows require note_reason, note_severity, note_source and are refused while associations still depend on the link"
+          }
+        },
+        {
+          "if": "structure_changed",
           "then": "call_project_evolution",
           "details": {
             "change_type": "themes_or_flows_change",
+            "add_note": "note_type='evolution'",
             "trigger_blueprint_update": true,
             "update_section": 3
           }
         },
         {
-          "if": "new_theme_created",
-          "then": "call_project_evolution",
-          "details": {
-            "change_type": "themes_or_flows_change",
-            "trigger_blueprint_update": true
-          }
-        },
-        {
-          "if": "new_flow_created",
-          "then": "call_project_evolution",
-          "details": {
-            "change_type": "themes_or_flows_change",
-            "trigger_blueprint_update": true
-          }
-        },
-        {
           "fallback": "prompt_user",
           "details": {
-            "clarify": "Assign theme and flow manually?"
+            "clarify": "Which theme/flow should this work belong to?"
           }
         }
       ],
@@ -1406,10 +1461,14 @@
       }
     ],
     "intent_keywords_json": [
-      "theme",
+      "categorize",
       "flow",
       "grouping",
-      "categorize"
+      "modularity",
+      "organize",
+      "split flow",
+      "structure health",
+      "theme"
     ],
     "confidence_threshold": 0.5
   },
@@ -3058,6 +3117,21 @@
       "branches": [
         {
           "if": "milestone_valid_for_completion",
+          "then": "review_milestone_flows",
+          "details": {
+            "action": "Flow review before closing the milestone — flows evolve with milestones",
+            "steps": [
+              "get_flows_for_milestone(milestone_id) — the flows this milestone built or changed",
+              "For each flow: update_flow its description to match what was actually built",
+              "Split any flow that absorbed several behaviours (structure_health oversized_flows): add_flow per behaviour with theme_ids, move_files_to_flow for its files, add_milestone_flows for this milestone",
+              "Behaviour built with no flow: add_flow and link files/milestone",
+              "get_structure_health(): fix gaps this milestone introduced (files without flow or module, flows without theme)",
+              "add_note(note_type='evolution') summarising flow changes"
+            ]
+          }
+        },
+        {
+          "if": "milestone_valid_for_completion",
           "then": "mark_complete_and_update_path",
           "details": {
             "update_milestone_status": "completed",
@@ -3340,15 +3414,16 @@
           "if": "infrastructure_mapped",
           "then": "define_themes_and_flows",
           "details": {
-            "action": "Establish organizational structure",
+            "action": "Establish the modularity layer: themes, flows, modules",
             "steps": [
               "Discuss project organization with user",
-              "Identify themes — logical groupings of functionality (e.g., 'Database Operations', 'Authentication', 'API Layer')",
-              "Identify flows — cross-cutting workflows and processes (e.g., 'Request Handling Flow', 'Data Pipeline Flow')",
-              "Create initial theme and flow entries in database via create_theme, create_flow helpers",
+              "Identify THEMES — stable project areas that rarely change, like completion paths (e.g., 'Authentication', 'Data Layer', 'API'). Create each with add_theme",
+              "Identify FLOWS — the behaviour the code implements, finer-grained and evolving with milestones (e.g., 'Login Flow', 'Order Checkout Flow'). One flow per distinct behaviour; do not make catch-all flows. Create each with add_flow(name, theme_ids, description) — every flow belongs to at least one theme",
+              "Identify MODULES — reusable domain code boundaries at real directory seams (add_module with path). Feature files stay thin orchestrators that compose module functions",
+              "If catalog ran: link cataloged files to flows (add_file_flows) and modules (add_files_to_module); mark config/data files with update_file(no_flow_reason=...)",
               "Update blueprint section 3 (Project Themes & Flows)"
             ],
-            "note": "Themes and flows will evolve as the project progresses. These are initial definitions, not final."
+            "note": "Themes are mostly static; flows evolve as milestones add behaviour (new flow per new behaviour, split flows that grow). reserve_file requires flow_ids, so flows must exist before coding starts."
           }
         },
         {
@@ -3361,6 +3436,7 @@
               "Replace default completion path placeholder with user-informed path",
               "Each stage should have: name, description, clear entry criteria, exit criteria",
               "Stages should reflect the project's natural progression, not arbitrary divisions",
+              "Link each path to the themes it advances: add_completion_path(..., theme_ids=[...]) or add_path_themes([[completion_path_id, theme_id], ...])",
               "Update completion_path table"
             ],
             "example_stages": [
@@ -3381,6 +3457,7 @@
             "steps": [
               "For each stage in completion path, discuss concrete milestones with user",
               "Create milestone entries with: name, description, acceptance criteria, order_index",
+              "Link each milestone to the flows it builds or changes: add_milestone(..., flow_ids=[...]) or add_milestone_flows([[milestone_id, flow_id], ...]). A milestone introducing behaviour no flow covers gets a new flow (add_flow) now",
               "Milestones should be achievable and verifiable (not vague)",
               "Do NOT create tasks yet — tasks are created incrementally during project_progression",
               "Set first milestone of first stage to status 'in_progress'",
@@ -3411,9 +3488,10 @@
           "details": {
             "action": "Wrap up discovery and prepare for work",
             "steps": [
+              "Run get_structure_health(): every flow has a theme, every open path has themes, every open milestone has flows, cataloged files have flows/modules. Resolve gaps before finishing",
               "Backup blueprint to .aimfp-project/backups/",
               "Log discovery completion in notes (source=directive, directive_name=project_discovery)",
-              "Present summary to user: project shape, stages, milestones, themes, flows",
+              "Present summary to user: project shape, stages, milestones, themes -> flows map, modules",
               "Inform user: 'Project shape defined. First milestone is open. Ready to begin work.'",
               "Flow to aimfp_status — status will route to project_progression for first task creation"
             ]

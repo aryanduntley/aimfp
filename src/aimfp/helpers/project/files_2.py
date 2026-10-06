@@ -110,7 +110,8 @@ def build_update_query(
     file_id: int,
     name: Optional[str],
     path: Optional[str],
-    language: Optional[str]
+    language: Optional[str],
+    no_flow_reason: Optional[str] = None
 ) -> Tuple[str, Tuple]:
     """
     Build SQL UPDATE query with only non-NULL fields.
@@ -122,6 +123,7 @@ def build_update_query(
         name: New name (None = don't update)
         path: New path (None = don't update)
         language: New language (None = don't update)
+        no_flow_reason: Flow opt-out to record (None = don't update, '' = clear)
 
     Returns:
         Tuple of (sql_query, parameters)
@@ -140,6 +142,10 @@ def build_update_query(
     if language is not None:
         updates.append("language = ?")
         params.append(language)
+
+    if no_flow_reason is not None:
+        updates.append("no_flow_reason = ?")
+        params.append(no_flow_reason.strip() or None)
 
     # Always update timestamp
     updates.append("updated_at = CURRENT_TIMESTAMP")
@@ -419,6 +425,7 @@ def update_file(
     name: Optional[str] = None,
     path: Optional[str] = None,
     language: Optional[str] = None,
+    no_flow_reason: Optional[str] = None,
     project_root: Optional[str] = None
 ) -> UpdateResult:
     """
@@ -432,6 +439,8 @@ def update_file(
         name: New file name (None = don't update)
         path: New file path (None = don't update)
         language: New language (None = don't update)
+        no_flow_reason: Mark the file as belonging to no flow, with why (config, data);
+            '' clears it (None = don't update)
 
     Returns:
         UpdateResult with success status and file_id
@@ -452,10 +461,10 @@ def update_file(
         True
     """
     # Validate at least one parameter is provided
-    if name is None and path is None and language is None:
+    if name is None and path is None and language is None and no_flow_reason is None:
         return UpdateResult(
             success=False,
-            error="At least one parameter (name, path, language) must be provided"
+            error="At least one parameter (name, path, language, no_flow_reason) must be provided"
         )
 
     # Effect: open connection
@@ -481,7 +490,7 @@ def update_file(
                 )
 
         # Pure: build update query
-        sql, params = build_update_query(file_id, name, path, language)
+        sql, params = build_update_query(file_id, name, path, language, no_flow_reason)
 
         # Effect: execute update
         _update_file_effect(conn, sql, params)

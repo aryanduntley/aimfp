@@ -26,22 +26,47 @@
           "description": "Programming language (e.g., 'python', 'javascript', 'typescript')"
         },
         {
+          "name": "flow_ids",
+          "type": "array",
+          "required": true,
+          "default": null,
+          "description": "REQUIRED. Flow ID(s) this file implements (get_all_flows / get_task_flows / get_flows_for_milestone). Pass null EXPLICITLY only for a file that belongs to no flow (config, data, fixtures, package markers). An empty list is refused.",
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        {
           "name": "skip_id_naming",
           "type": "boolean",
           "required": false,
           "default": false,
           "description": "If true, skip ID embedding in name (for __init__.py, .db files, MCP tools, or user preference). Sets id_in_name=0 in database."
+        },
+        {
+          "name": "no_flow_reason",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Why the file belongs to no flow (only with flow_ids=null), e.g. 'build config'. Recorded on the file so structure checks skip it."
         }
       ],
-      "purpose": "Reserve a file ID before writing code — part of the mandatory reserve-write-finalize tracking flow. Returns ID to embed in filename.",
-      "error_handling": "Return error if path already exists",
+      "purpose": "Reserve a file ID before writing code, declaring the flow(s) it implements — part of the mandatory reserve-write-finalize tracking flow. flow_ids is required: a list of flows, or an explicit null for a file with no flow. Returns ID to embed in filename.",
+      "error_handling": "Returns error if the path is already tracked, flow_ids is omitted or an empty list, no_flow_reason is passed with flow IDs, or any flow ID does not exist. Nothing is written on error.",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
         "Use returned ID for file naming: {name}_id_{id}.{ext}",
         "IMPORTANT: Plan ALL reservations for this file — all public functions MUST be reserved via reserve_function/reserve_functions AND all exported types MUST be reserved via reserve_type/reserve_types BEFORE writing code. File tracking without function+type tracking is incomplete.",
         "MANDATORY FIELDS: When reserving functions, include purpose, parameters, and returns. When reserving types, include definition_json and description. These fields are the AI's primary lookup mechanism across sessions — null fields make entities invisible to future discovery.",
-        "After finalization, link this file to flow(s) via add_file_to_flow(file_id, flow_id). Use get_all_flows() or get_task_flows(task_id) to identify the correct flow(s).",
+        "FLOWS: the file is linked to the flow_ids you declared (returned in flow_ids). If none of the existing flows described this file's behaviour, the project needs a NEW flow: add_flow(name, theme_ids, description), then add_file_flows. Do not stretch an unrelated flow to fit.",
         "Next: write file to disk with ID in name → finalize_file(file_id, name, path, language)"
       ],
       "target_database": "project",
@@ -64,10 +89,8 @@
         }
       ],
       "implementation_notes": [
-        "Returns {success: true, id: reserved_id, is_reserved: true, id_in_name: !skip_id_naming}",
-        "SQL: INSERT INTO files (name, path, language, is_reserved, id_in_name) VALUES (?, ?, ?, 1, ?) RETURNING id",
-        "Filename pattern: {name}_id_{id}.{extension} (e.g., calculator_id_42.py) unless skip_id_naming=true",
-        "If skip_id_naming=true: id_in_name=0, name stays as-is (for __init__.py, .db files, MCP tools)"
+        "Returns: {success, id, is_reserved, flow_ids}",
+        "files row, file_flows rows and files.no_flow_reason written in one transaction"
       ]
     },
     {
@@ -79,7 +102,7 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of file objects [{name, path, language, skip_id_naming?}, ...]",
+          "description": "Array of file objects [{name, path, language, flow_ids, skip_id_naming?, no_flow_reason?}, ...]. flow_ids is required per file: a list of flow IDs, or null explicitly for a file with no flow (config, data).",
           "items": {
             "anyOf": [
               {
@@ -96,23 +119,41 @@
                   },
                   "skip_id_naming": {
                     "type": "boolean"
+                  },
+                  "flow_ids": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "integer"
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "no_flow_reason": {
+                    "type": "string"
                   }
                 },
                 "required": [
                   "name",
-                  "path"
+                  "path",
+                  "language",
+                  "flow_ids"
                 ]
               },
               {
                 "type": "array",
-                "minItems": 3,
-                "maxItems": 4
+                "minItems": 5,
+                "maxItems": 6
               }
             ]
           }
         }
       ],
-      "purpose": "Batch-reserve file IDs before writing multiple files. Returns IDs in input order for embedding in filenames.",
+      "purpose": "Batch-reserve file IDs before writing code, each declaring the flow(s) it implements (flow_ids list, or explicit null for no flow). Atomic: all reserve or none.",
       "error_handling": "Return error if any path already exists",
       "is_tool": true,
       "is_sub_helper": false,
@@ -120,7 +161,7 @@
         "Use returned IDs for file naming: {name}_id_{id}.{ext}",
         "IMPORTANT: Plan ALL reservations for ALL files — all public functions MUST be reserved via reserve_functions AND all exported types MUST be reserved via reserve_types BEFORE writing code. File tracking without function+type tracking is incomplete.",
         "MANDATORY FIELDS: When reserving functions, include purpose, parameters, and returns. When reserving types, include definition_json and description. These fields are the AI's primary lookup mechanism across sessions — null fields make entities invisible to future discovery.",
-        "After finalization, link all files to flow(s) via add_file_flows([(file_id, flow_id), ...]). Use get_all_flows() or get_task_flows(task_id) to identify the correct flow(s).",
+        "FLOWS: each file is linked to its declared flow_ids. If a file's behaviour fits no existing flow, create one with add_flow(name, theme_ids, description) and link it with add_file_flows — do not stretch an unrelated flow.",
         "Next: write files to disk with IDs in names → finalize_files([{file_id, name, path, language}, ...])"
       ],
       "target_database": "project",
@@ -179,7 +220,7 @@
       "is_sub_helper": false,
       "return_statements": [
         "BLOCKED: Do NOT proceed until all public functions AND all exported types in this file are reserved and finalized. Functions via reserve_function/finalize_function WITH complete fields (purpose, parameters, returns). Types via reserve_type/finalize_type WITH complete fields (definition_json, description). A finalized file with 0 tracked functions or untracked types is incomplete (unless data-only or config-only).",
-        "BLOCKED: Link this file to its flow(s) via add_file_to_flow(file_id, flow_id) or add_file_flows([(file_id, flow_id), ...]). A finalized file with 0 flow assignments is architecturally disconnected. Use get_all_flows() or get_task_flows(task_id) to identify the correct flow(s).",
+        "FLOWS: flows were declared at reserve time. Verify they still describe what this file does now that it is written; add_file_flows / remove_file_from_flow to correct. A file with neither flows nor a no_flow_reason is architecturally disconnected and will be reported by aimfp_status structure_health and the watchdog.",
         "MODULE CHECK: If this file contains domain logic or wraps external dependencies, assign it to a module via add_file_to_module(file_id, module_id). Use get_module_for_file(file_id) to check if already assigned, search_modules() to find the right module, or add_module() to create one. Orchestrator files (pages, handlers, commands) do NOT need module assignment.",
         "If called during project_reserve_finalize: follow project_update_db directive to sync reserved IDs with database.",
         "After file write operations: route to git_sync_state directive to update last_known_git_hash",
@@ -273,7 +314,7 @@
       "is_sub_helper": false,
       "return_statements": [
         "BLOCKED: Do NOT proceed until all public functions AND all exported types in ALL finalized files are reserved and finalized. Functions via reserve_functions/finalize_functions WITH complete fields (purpose, parameters, returns). Types via reserve_types/finalize_types WITH complete fields (definition_json, description). Finalized files with 0 tracked functions or untracked types are incomplete (unless data-only or config-only).",
-        "BLOCKED: Link ALL finalized files to their flow(s) via add_file_to_flow(file_id, flow_id) or add_file_flows([(file_id, flow_id), ...]). Finalized files with 0 flow assignments are architecturally disconnected. Use get_all_flows() or get_task_flows(task_id) to identify the correct flow(s).",
+        "FLOWS: flows were declared at reserve time. Verify they still describe what each file does now that it is written; add_file_flows / remove_file_from_flow to correct. A file with neither flows nor a no_flow_reason is architecturally disconnected and will be reported by aimfp_status structure_health and the watchdog.",
         "MODULE CHECK: For each finalized file containing domain logic or external dependency wrappers, assign to a module via add_file_to_module(file_id, module_id). Use search_modules() to find the right module or add_module() to create one. Orchestrator files (pages, handlers, commands) do NOT need module assignment.",
         "If called during project_reserve_finalize: follow project_update_db directive to sync reserved IDs with database.",
         "After file write operations: route to git_sync_state directive to update last_known_git_hash",
@@ -435,6 +476,13 @@
           "required": false,
           "default": null,
           "description": "Language (NULL = don't update)"
+        },
+        {
+          "name": "no_flow_reason",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Mark the file as belonging to no flow, with why (config, data) — structure checks then skip it. Empty string clears it (NULL = don't update)."
         }
       ],
       "purpose": "Update file metadata",
@@ -444,7 +492,8 @@
       "return_statements": [
         "Ensure name or path changes are updated throughout codebase",
         "If name changed, verify _id_xxx suffix is retained",
-        "If file path or purpose changed, verify file_flows entries are still correct"
+        "If file path or purpose changed, verify file_flows entries are still correct",
+        "If no_flow_reason was set on a file that is linked to flows, remove those links with remove_file_from_flow — a file is either in flows or explicitly flow-less."
       ],
       "target_database": "project",
       "used_by_directives": [

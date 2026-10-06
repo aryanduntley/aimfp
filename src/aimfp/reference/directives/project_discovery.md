@@ -200,22 +200,24 @@ This is a **deep conversation**, not a form fill. AI should ask open-ended quest
 
 ---
 
-### Branch 4: Define Themes and Flows
+### Branch 4: Define the Modularity Layer (Themes, Flows, Modules)
 
-**Action**: Establish the project's organizational structure.
+**Action**: Establish the project's organizational structure. This is the part of AIMFP most often skipped, and skipping it is how code ends up bulked together. Every file reserved later must declare its flows, so this layer has to exist before coding starts.
 
 **Steps**:
 1. Discuss project organization with user
-2. Identify **themes** — logical groupings of functionality
-   - Examples: "Database Operations", "Authentication", "API Layer", "Data Processing"
-   - If catalog ran, use suggested themes as starting point
-3. Identify **flows** — cross-cutting workflows and processes
-   - Examples: "Request Handling Flow", "Data Pipeline Flow", "Build & Deploy Flow"
-   - If catalog ran, use suggested flows as starting point
-4. Create theme and flow entries in database via `create_theme`, `create_flow` helpers
-5. Update blueprint section 3 (Project Themes & Flows)
+2. Identify **themes** — stable project areas that rarely change, like completion paths
+   - Examples: "Authentication", "Data Layer", "API", "Billing"
+   - Create each with `add_theme`
+3. Identify **flows** — the behaviour the code implements; finer-grained than themes and evolving with milestones
+   - Examples: "Login Flow", "Order Checkout Flow", "Nightly Sync Flow"
+   - One flow per distinct behaviour — no catch-all flows
+   - Create each with `add_flow(name, theme_ids, description)`: every flow belongs to at least one theme
+4. Identify **modules** — reusable domain code boundaries at real directory seams (`add_module` with its path). Feature files stay thin orchestrators that compose module functions
+5. If catalog ran: link cataloged files to flows (`add_file_flows`) and modules (`add_files_to_module`); mark config/data files with `update_file(no_flow_reason=...)`
+6. Update blueprint section 3 (Project Themes & Flows)
 
-**Note**: Themes and flows are initial definitions, not final. They evolve as the project progresses via `project_evolution`.
+**Note**: Themes are mostly static. Flows evolve: a milestone that adds new behaviour gets a new flow, and a flow whose description grows to cover several behaviours is split (see `project_theme_flow_mapping`).
 
 ---
 
@@ -233,7 +235,8 @@ This is a **deep conversation**, not a form fill. AI should ask open-ended quest
    - Description
    - Entry criteria (what must be true to start this stage)
    - Exit criteria (what must be true to consider this stage done)
-4. Update `completion_path` table
+4. Link each stage to the themes it advances: `add_completion_path(..., theme_ids=[...])` or `add_path_themes`
+5. Update `completion_path` table
 
 **Example stages** (AI can suggest, user decides):
 - Foundation & Setup
@@ -257,6 +260,7 @@ This is a **deep conversation**, not a form fill. AI should ask open-ended quest
    - Description (what this milestone achieves)
    - Acceptance criteria (how to know it's done)
    - `order_index` (sequence within stage)
+   - The flows it builds or changes: `add_milestone(..., flow_ids=[...])` or `add_milestone_flows`. A milestone introducing behaviour no flow covers gets a new flow now
 3. **Do NOT create tasks yet** — tasks are created incrementally during `project_progression`
 4. Set first milestone of first stage to status `in_progress`
 5. Update `milestones` table
@@ -288,16 +292,17 @@ This is a **deep conversation**, not a form fill. AI should ask open-ended quest
 **Action**: Wrap up and prepare for active work.
 
 **Steps**:
-1. Backup blueprint to `.aimfp-project/backups/`
-2. Log discovery completion in notes (`source=directive`, `directive_name=project_discovery`)
-3. Present summary to user:
+1. Run `get_structure_health()` and resolve its gaps: every flow has a theme, every open path has themes, every open milestone has flows, cataloged files have flows and modules
+2. Backup blueprint to `.aimfp-project/backups/`
+3. Log discovery completion in notes (`source=directive`, `directive_name=project_discovery`)
+4. Present summary to user:
    - Project shape overview
    - Stages and milestones
-   - Themes and flows
+   - Themes -> flows map, and modules
    - Post-completion paths (Added Features, Updates) ready for future use
    - First milestone is open
-4. Inform user: "Project shape defined. First milestone is open. Ready to begin work."
-5. Flow to `aimfp_status` — status routes to `project_progression` for first task creation
+5. Inform user: "Project shape defined. First milestone is open. Ready to begin work."
+6. Flow to `aimfp_status` — status routes to `project_progression` for first task creation
 
 ---
 
@@ -354,7 +359,7 @@ Ask user for missing information needed to define the project shape. If user wan
 
 - **`project_catalog`** — Delegates to catalog for pre-existing FP codebases
 - **`project_blueprint_update`** — Updates ProjectBlueprint.md
-- **Helpers**: `create_theme`, `create_flow`, `add_completion_path`, `add_milestone`, `update_infrastructure_entry`, `project_notes_log`, `create_state_database`, `add_note`
+- **Helpers**: query `get_helpers_for_directive('project_discovery')` for the current set
 
 ### Flows To
 

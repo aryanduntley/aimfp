@@ -1,6 +1,17 @@
 -- project.db Schema
--- Version: 1.12
+-- Version: 1.13
 -- Purpose: Track project-specific data, including files, functions, themes, flows, and completion paths
+-- Changelog v1.13:
+--   - Added completion_path_themes junction: a completion path names the themes (stable project
+--     areas) it advances. Themes change rarely, like paths.
+--   - Added milestone_flows junction: a milestone names the flows (behaviour) it builds or changes.
+--     Flows evolve with the code, like milestones; a milestone that introduces new behaviour should
+--     get a new flow rather than growing an existing flow's description.
+--   - Added files.no_flow_reason: the explicit, recorded opt-out from file_flows. reserve_file(s)
+--     now requires flow_ids; a file with no flow (config, data) must say why. Structure-health
+--     checks skip files that carry a reason.
+--   - Purpose: the modularity layer (themes -> flows -> files, modules) was routinely skipped; the
+--     junctions let status, aimfp_end and the watchdog report the gaps.
 -- Changelog v1.12:
 --   - Added task_files junction: links a task/subtask/sidequest (polymorphic reference_table +
 --     reference_id, same pattern as items) to the files worked on for it
@@ -98,6 +109,7 @@ CREATE TABLE IF NOT EXISTS files (
     language TEXT,                          -- Guessed or set (e.g., 'Python')
     is_reserved BOOLEAN DEFAULT 0,          -- TRUE during reservation, FALSE after finalization
     id_in_name BOOLEAN DEFAULT 1,           -- TRUE if name contains _id_XX pattern, FALSE if ID naming skipped
+    no_flow_reason TEXT,                    -- Explicit opt-out from file_flows (e.g. 'config file'); NULL = file must have flows
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -220,6 +232,24 @@ CREATE TABLE IF NOT EXISTS milestones (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (completion_path_id) REFERENCES completion_path(id) ON DELETE CASCADE
+);
+
+-- Completion-Path-Themes Junction: themes (stable areas) a completion path advances
+CREATE TABLE IF NOT EXISTS completion_path_themes (
+    completion_path_id INTEGER NOT NULL,
+    theme_id INTEGER NOT NULL,
+    PRIMARY KEY (completion_path_id, theme_id),
+    FOREIGN KEY (completion_path_id) REFERENCES completion_path(id) ON DELETE CASCADE,
+    FOREIGN KEY (theme_id) REFERENCES themes(id) ON DELETE CASCADE
+);
+
+-- Milestone-Flows Junction: flows (evolving behaviour) a milestone builds or changes
+CREATE TABLE IF NOT EXISTS milestone_flows (
+    milestone_id INTEGER NOT NULL,
+    flow_id INTEGER NOT NULL,
+    PRIMARY KEY (milestone_id, flow_id),
+    FOREIGN KEY (milestone_id) REFERENCES milestones(id) ON DELETE CASCADE,
+    FOREIGN KEY (flow_id) REFERENCES flows(id) ON DELETE CASCADE
 );
 
 -- Tasks Table: Detailed breakdowns under milestones
@@ -557,6 +587,9 @@ CREATE INDEX IF NOT EXISTS idx_modules_path ON modules(path);
 CREATE INDEX IF NOT EXISTS idx_modules_name ON modules(name);
 CREATE INDEX IF NOT EXISTS idx_module_files_file ON module_files(file_id);
 CREATE INDEX IF NOT EXISTS idx_task_files_file ON task_files(file_id);
+CREATE INDEX IF NOT EXISTS idx_flow_themes_theme ON flow_themes(theme_id);
+CREATE INDEX IF NOT EXISTS idx_completion_path_themes_theme ON completion_path_themes(theme_id);
+CREATE INDEX IF NOT EXISTS idx_milestone_flows_flow ON milestone_flows(flow_id);
 CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 CREATE INDEX IF NOT EXISTS idx_functions_file_id ON functions(file_id);
 CREATE INDEX IF NOT EXISTS idx_completion_path_order ON completion_path(order_index);
@@ -674,4 +707,4 @@ CREATE TABLE IF NOT EXISTS schema_version (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.12');
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.13');

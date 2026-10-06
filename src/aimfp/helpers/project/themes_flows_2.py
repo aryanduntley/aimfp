@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
 from ..utils import get_return_statements
+from .structure_links import PATH_THEMES, insert_links_effect, query_linked_rows, unique_ids, validate_link_targets
 
 # Import common project utilities (DRY principle)
 from ._common import (
@@ -164,6 +165,7 @@ class DeleteCompletionPathResult:
     success: bool
     error: Optional[str] = None
     milestones: Tuple[str, ...] = ()  # Milestone names blocking deletion
+    themes: Tuple[str, ...] = ()  # Linked theme names blocking deletion
     return_statements: Tuple[str, ...] = ()
 
 
@@ -906,6 +908,7 @@ def add_completion_path(
     status: str = "pending",
     description: Optional[str] = None,
     order_index: int = 1,
+    theme_ids: Optional[List[int]] = None,
     project_root: Optional[str] = None
 ) -> AddCompletionPathResult:
     """
@@ -918,6 +921,7 @@ def add_completion_path(
         status: Status ('pending', 'in_progress', 'completed')
         description: Description (optional)
         order_index: Order position (1, 2, 3...)
+        theme_ids: Themes this path advances (optional; link later with add_path_themes)
 
     Returns:
         AddCompletionPathResult with success status and new path ID
@@ -945,6 +949,11 @@ def add_completion_path(
     conn = _open_project_connection(project_root)
 
     try:
+        themes = unique_ids(theme_ids)
+        theme_error = validate_link_targets(conn, PATH_THEMES, themes)
+        if theme_error:
+            return AddCompletionPathResult(success=False, error=theme_error)
+
         path_id = _add_completion_path_effect(
             conn,
             name,
@@ -952,6 +961,9 @@ def add_completion_path(
             description,
             order_index
         )
+        if themes:
+            insert_links_effect(conn, PATH_THEMES, path_id, themes)
+            conn.commit()
 
         return_statements = get_return_statements("add_completion_path")
 
@@ -1230,7 +1242,7 @@ def delete_completion_path(
     """
     Delete completion path with milestone validation.
 
-    Validates no milestones are linked to completion path before deletion.
+    Validates no milestones and no themes are linked to completion path before deletion.
 
     Args:
         id: Completion path ID to delete
@@ -1262,14 +1274,16 @@ def delete_completion_path(
                 error=f"Completion path with ID {id} not found"
             )
 
-        # Check for milestones linked to completion path
+        # Check for milestones and themes linked to completion path
         milestone_names = _get_milestones_for_path_effect(conn, id)
+        theme_names = tuple(t['name'] for t in query_linked_rows(conn, PATH_THEMES, id))
 
-        if milestone_names:
+        if milestone_names or theme_names:
             return DeleteCompletionPathResult(
                 success=False,
-                error="milestones_exist",
-                milestones=tuple(milestone_names)
+                error="milestones_exist" if milestone_names else "themes_linked",
+                milestones=tuple(milestone_names),
+                themes=theme_names
             )
 
         # No blocking milestones - proceed with deletion

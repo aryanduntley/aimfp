@@ -3,8 +3,10 @@ Load via: get_supportive_context(variant='coding')
 
 1. FILE CODING LOOP (every file)
 
-  reserve file → search_modules for existing overlap → reserve functions+types (PUBLIC only)
-  → write FP code with _id_XX names → finalize file → assign to flow(s)
+  place it: theme → flow(s) → module (no fitting flow? add_flow(name, theme_ids) first)
+  → reserve file with flow_ids (list; null ONLY for config/data, + no_flow_reason)
+  → search_modules for existing overlap → reserve functions+types (PUBLIC only)
+  → write FP code with _id_XX names → finalize file → verify flows still fit
   → assign to module (if domain logic: add_file_to_module) → finalize functions+types
   → add interactions → add types_functions
 

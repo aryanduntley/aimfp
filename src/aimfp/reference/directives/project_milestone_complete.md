@@ -49,6 +49,17 @@ Primary execution path for milestone completion and next-phase planning.
 
 ### Branches
 
+**Branch 0: If milestone_valid_for_completion — flow review first**
+- **Then**: `review_milestone_flows`
+- **Why**: flows evolve with milestones. A milestone is where new behaviour lands, so it is where flows drift: descriptions go stale, one flow quietly absorbs three behaviours, new behaviour ships with no flow at all. Closing the milestone is the checkpoint that keeps the modularity layer honest.
+- **Details**:
+  - `get_flows_for_milestone(milestone_id)` — the flows this milestone built or changed
+  - For each: `update_flow` the description to match what was actually built
+  - Split any flow that absorbed several behaviours (`get_structure_health` reports long descriptions as `oversized_flows`): `add_flow` per behaviour with `theme_ids`, `move_files_to_flow` for its files, `add_milestone_flows` for this milestone
+  - Behaviour built with no flow: `add_flow`, link its files and this milestone
+  - `get_structure_health()`: fix the gaps this milestone introduced (files without flow or module, flows without theme)
+  - `add_note(note_type='evolution')` summarising the flow changes
+
 **Branch 1: If milestone_valid_for_completion**
 - **Then**: `mark_complete_and_update_path`
 - **Details**:

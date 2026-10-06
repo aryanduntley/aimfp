@@ -43,6 +43,13 @@ def schema_types(schema: Dict[str, Any]) -> Tuple[str, ...]:
     return (declared,)
 
 
+def accepts_null(schema: Dict[str, Any]) -> bool:
+    """Pure: True when the schema allows null, directly or through an anyOf branch."""
+    return "null" in schema_types(schema) or any(
+        accepts_null(sub) for sub in schema.get("anyOf") or () if isinstance(sub, dict)
+    )
+
+
 def matches_type(json_type: str, value: Any) -> bool:
     """Pure: True when value is an instance of the JSON type (bool is not a number)."""
     if json_type == "null":
@@ -221,13 +228,30 @@ def _validate_array(schema: Dict[str, Any], values: Tuple[Any, ...], path: str) 
     )
 
 
-def _validate_object(schema: Dict[str, Any], value: Dict[str, Any], path: str) -> Tuple[str, ...]:
-    """Pure: Required keys present (non-null), known properties valid, extras allowed."""
-    prefix = f"{path}." if path else ""
-    required = tuple(schema.get("required") or ())
-    missing = tuple(
-        f"{prefix}{key}: required" for key in required if value.get(key) is None
+def missing_required(
+    required: Tuple[str, ...],
+    properties: Dict[str, Any],
+    values: Dict[str, Any],
+    prefix: str = "",
+) -> Tuple[str, ...]:
+    """
+    Pure: Required keys that are absent, or null where their schema does not allow null.
+
+    A required key whose schema accepts null may be an explicit null: the caller
+    made the choice, so it is present (e.g. reserve_file flow_ids=null).
+    """
+    return tuple(
+        f"{prefix}{key}: required" for key in required
+        if key not in values
+        or (values[key] is None and not accepts_null(properties.get(key) or {}))
     )
+
+
+def _validate_object(schema: Dict[str, Any], value: Dict[str, Any], path: str) -> Tuple[str, ...]:
+    """Pure: Required keys present (null only where allowed), known properties valid, extras allowed."""
+    prefix = f"{path}." if path else ""
+    missing = missing_required(
+        tuple(schema.get("required") or ()), schema.get("properties") or {}, value, prefix)
     properties = schema.get("properties") or {}
     invalid = tuple(
         error
@@ -244,7 +268,9 @@ def validate_arguments(input_schema: Dict[str, Any], arguments: Dict[str, Any]) 
 
     Unknown argument names and missing required ones are reported first
     (the helper would otherwise fail with a TypeError). A non-required
-    argument may be null.
+    argument may be null. A required argument whose schema allows null must
+    be present but may be an explicit null (e.g. reserve_file flow_ids=null
+    declares "no flow").
     """
     properties = input_schema.get("properties", {})
     required = tuple(input_schema.get("required", ()))
@@ -252,9 +278,7 @@ def validate_arguments(input_schema: Dict[str, Any], arguments: Dict[str, Any]) 
         f"{name}: unknown argument (valid: {', '.join(sorted(properties)) or 'none'})"
         for name in arguments if name not in properties
     )
-    missing = tuple(
-        f"{name}: required" for name in required if arguments.get(name) is None
-    )
+    missing = missing_required(required, properties, arguments)
     invalid = tuple(
         error
         for name, value in arguments.items()

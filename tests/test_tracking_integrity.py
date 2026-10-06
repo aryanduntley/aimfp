@@ -187,7 +187,7 @@ class TestTypesFunctionsDedup:
 
 class TestFinalizeFilePath:
     def _reserved(self, root):
-        r = reserve_file(name="calc", path="src/calc.py", language="python", project_root=root)
+        r = reserve_file(name="calc", path="src/calc.py", language="python", flow_ids=None, project_root=root)
         assert r.success
         return r.id
 

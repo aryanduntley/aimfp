@@ -307,21 +307,18 @@ def get_project_status(
                 )
 
             if type == 'detailed':
-                # Detailed: all records including full history
-                records = _get_all_records(conn)
-                tree = _build_tree(records)
-                blocked = _get_blocked_items(conn)
+                # Detailed: full history as ONE nested tree. The tree already
+                # holds every record, so the flat per-table lists it was built
+                # from are not repeated, and descriptions are truncated like
+                # summary mode — full text via get_task_context(task_id).
+                tree = _truncate_descriptions(_build_tree(_get_all_records(conn)))
+                blocked = _truncate_descriptions(_get_blocked_items(conn))
                 current_focus = _get_current_focus(conn)
 
                 return Result(
                     success=True,
                     data={
                         'counts': counts,
-                        'completion_paths': records['completion_paths'],
-                        'milestones': records['milestones'],
-                        'tasks': records['tasks'],
-                        'subtasks': records['subtasks'],
-                        'sidequests': records['sidequests'],
                         'blocked_items': blocked,
                         'current_focus': current_focus,
                         'tree': tree,

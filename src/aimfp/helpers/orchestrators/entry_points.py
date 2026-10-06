@@ -50,6 +50,7 @@ from ._common import (
 from .backup import check_and_run_backup
 from .migration import _check_pending_migrations
 from .status import get_project_status
+from ..project.structure_health import collect_structure_health
 from ..project.metadata import (
     reconcile_stored_source_directory,
     root_rewrite_report,
@@ -482,6 +483,17 @@ def _get_initialization_path(init_file: str) -> str:
 # aimfp_status
 # ============================================================================
 
+STRUCTURE_GUIDANCE = (
+    'structure_summary is the modularity map: themes (stable project areas, linked to '
+    'completion paths) group flows (evolving behaviour, linked to milestones and tasks), '
+    'flows group files, modules group reusable code. Place new work in it BEFORE coding: '
+    'pick the theme and flow(s); if no flow describes the new behaviour, add_flow(name, '
+    'theme_ids, description). structure_health lists the gaps; fix them with '
+    'add_flow_themes, add_path_themes, add_milestone_flows, add_file_flows, '
+    'add_files_to_module, or update_file(no_flow_reason=...) for files that truly have no flow.'
+)
+
+
 def aimfp_status(
     type: str = "summary",
 ) -> Result:
@@ -506,6 +518,10 @@ def aimfp_status(
             modules_summary: tuple (id, name, path, file_count per module;
                 purpose omitted — fetch via get_module_by_name/path)
             modules_guidance: str (one-time note on retrieving module detail)
+            structure_summary: dict (themes -> flows with file counts, open
+                paths -> theme_ids, open milestones -> flow_ids)
+            structure_health: dict (ok, total_gaps, capped gap lists)
+            structure_guidance: str
         }
 
     If not initialized:
@@ -552,6 +568,8 @@ def aimfp_status(
         recent_notes = ()
         git_state = ()
         modules_summary = ()
+        structure_summary: Dict[str, Any] = {}
+        structure_health: Dict[str, Any] = {}
 
         project_db_path = get_project_db_path(project_root)
         if database_exists(project_db_path):
@@ -601,6 +619,11 @@ def aimfp_status(
                     "GROUP BY m.id ORDER BY m.name"
                 )
                 modules_summary = rows_to_tuple(cursor.fetchall())
+
+                # Modularity layer: themes -> flows -> files, paths/milestones,
+                # and every gap in it (one collector shared with aimfp_end,
+                # get_structure_health and the watchdog).
+                structure_summary, structure_health = collect_structure_health(conn)
 
             finally:
                 conn.close()
@@ -669,6 +692,9 @@ def aimfp_status(
                 'get_module_by_name(name) / get_module_by_path(path) when you '
                 'need detail for a specific module.'
             ),
+            'structure_summary': structure_summary,
+            'structure_health': structure_health,
+            'structure_guidance': STRUCTURE_GUIDANCE,
             'supportive_context': supportive_context,
         }
 
@@ -790,6 +816,7 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: Optional[bool] = Non
                     return_statements=get_return_statements("aimfp_run"),
                 )
 
+            _refresh_structure_reminders_safe(project_root)
             watchdog_data = _read_reminders(project_root)
             if not _session_watchdog_enabled:
                 watchdog_data = disabled_watchdog_status(watchdog_data)
@@ -1301,6 +1328,19 @@ def _run_reconciliation_sync(project_root: str) -> None:
         pass  # Non-critical — subprocess fallback will catch issues
 
 
+def _refresh_structure_reminders_safe(project_root: str) -> None:
+    """
+    Effect: Recompute the watchdog's structure_* reminders at a checkpoint, so a
+    file tracked mid-session without a flow or module is reported now rather
+    than at the next session start. Never raises.
+    """
+    try:
+        from ...watchdog.reconciliation import refresh_structure_reminders
+        refresh_structure_reminders(project_root)
+    except Exception:
+        pass
+
+
 def _read_reminders(project_root: str) -> Dict[str, Any]:
     """
     Effect: Read watchdog reminders WITHOUT clearing them.
@@ -1542,15 +1582,31 @@ def aimfp_end() -> Result:
     status_result = get_project_status("summary")
     project_state = status_result.data if status_result.success else {}
 
+    # Step 3: Modularity gaps left by this session's work
+    structure_health = _structure_health_safe(project_root)
+
     return Result(
         success=True,
         data={
             'success': True,
             'watchdog': watchdog_data,
             'project_state': project_state,
+            'structure_health': structure_health,
         },
         return_statements=get_return_statements("aimfp_end"),
     )
+
+
+def _structure_health_safe(project_root: str) -> Dict[str, Any]:
+    """Effect: Structure gaps for the project, or {} when they cannot be read."""
+    try:
+        conn = _open_project_connection(project_root)
+        try:
+            return collect_structure_health(conn)[1]
+        finally:
+            conn.close()
+    except Exception:
+        return {}
 
 
 def _stop_watchdog(aimfp_dir: str) -> Dict[str, Any]:

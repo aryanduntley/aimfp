@@ -25,7 +25,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_theme_flow_mapping",
-          "execution_context": "update_flow_themes",
+          "execution_context": "assess_structure",
           "sequence_order": 5,
           "is_required": false,
           "parameters_mapping": {},
@@ -163,6 +163,16 @@
           "required": false,
           "default": 1,
           "description": "Order position (1, 2, 3...)"
+        },
+        {
+          "name": "theme_ids",
+          "type": "array",
+          "required": false,
+          "default": null,
+          "description": "Themes (stable project areas) this path advances. Optional here; link later with add_path_themes.",
+          "items": {
+            "type": "integer"
+          }
         }
       ],
       "purpose": "Add completion path stage",
@@ -170,6 +180,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
+        "THEMES: a completion path advances one or more themes. If theme_ids was not passed, link them now with add_path_themes([[completion_path_id, theme_id], ...]) — get_all_themes() lists them.",
         "Consider creating milestones for this completion path: add_milestone(completion_path_id=<id>, name, status='pending', description)",
         "During project_discovery, after creating all user-defined paths and milestones, ensure two default post-completion paths exist: 'Added Features' (status='completed', order_index=998) and 'Updates' (status='completed', order_index=999). These enable post-completion development cycles without leaving the progression system."
       ],
@@ -445,7 +456,7 @@
         }
       ],
       "purpose": "Delete completion path with milestone validation",
-      "error_handling": "- Calls `get_milestones_by_path(path_id)`",
+      "error_handling": "- Calls `get_milestones_by_path(path_id)` Also blocked while themes are linked to the path (themes_linked) — remove_path_themes first.",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [],
@@ -600,7 +611,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_theme_flow_mapping",
-          "execution_context": "update_flow_themes",
+          "execution_context": "link_files_to_flows",
           "sequence_order": 4,
           "is_required": true,
           "parameters_mapping": {},
@@ -650,7 +661,7 @@
       "used_by_directives": [
         {
           "directive_name": "project_theme_flow_mapping",
-          "execution_context": "update_flow_themes",
+          "execution_context": "link_files_to_flows",
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},

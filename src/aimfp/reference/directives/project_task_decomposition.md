@@ -105,6 +105,7 @@ Loads user-defined preferences for task decomposition.
   - Increment `project.version`
   - Create task with description, acceptance criteria
   - Set priority based on milestone
+  - Place it in the modularity map: `flow_ids` from `get_flows_for_milestone(milestone_id)`; if the task builds behaviour no flow describes, `add_flow(name, theme_ids, description)` and `add_milestone_flows` first. Identify the module the domain logic belongs in (`search_modules`) before coding
 - **SQL**:
   **Use helper functions** for all project.db operations. Query available helpers.
 

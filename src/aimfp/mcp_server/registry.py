@@ -217,6 +217,22 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "update_sidequest": ("aimfp.helpers.project.subtasks_sidequests", "update_sidequest"),
     "update_subtask": ("aimfp.helpers.project.subtasks_sidequests", "update_subtask"),
 
+    # ── Project: Structure Links ─────────────────────────────────────────
+    # helpers/project/structure_links.py (10 tools)
+    "add_flow_themes": ("aimfp.helpers.project.structure_links", "add_flow_themes"),
+    "add_milestone_flows": ("aimfp.helpers.project.structure_links", "add_milestone_flows"),
+    "add_path_themes": ("aimfp.helpers.project.structure_links", "add_path_themes"),
+    "get_flows_for_milestone": ("aimfp.helpers.project.structure_links", "get_flows_for_milestone"),
+    "get_themes_for_path": ("aimfp.helpers.project.structure_links", "get_themes_for_path"),
+    "move_files_to_flow": ("aimfp.helpers.project.structure_links", "move_files_to_flow"),
+    "move_flows_to_theme": ("aimfp.helpers.project.structure_links", "move_flows_to_theme"),
+    "remove_flow_themes": ("aimfp.helpers.project.structure_links", "remove_flow_themes"),
+    "remove_milestone_flows": ("aimfp.helpers.project.structure_links", "remove_milestone_flows"),
+    "remove_path_themes": ("aimfp.helpers.project.structure_links", "remove_path_themes"),
+
+    # helpers/project/structure_health.py (1 tool)
+    "get_structure_health": ("aimfp.helpers.project.structure_health", "get_structure_health"),
+
     # ── Project: Tasks & Milestones ──────────────────────────────────────
     # helpers/project/task_files.py (2 tools)
     "link_files_to_task": ("aimfp.helpers.project.task_files", "link_files_to_task"),

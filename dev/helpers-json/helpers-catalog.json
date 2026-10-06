@@ -210,7 +210,7 @@
       "return_statements": [
         "Files registered. IDs are returned in input order — map them back to your scan results to build the file_id for each function and type.",
         "NEXT: catalog_functions and catalog_types for these files. A cataloged file with 0 tracked functions is incomplete unless it is data-only or config-only.",
-        "THEN: assign to modules via add_files_to_module and to flows via add_file_flows. A file with 0 flow assignments is architecturally disconnected.",
+        "THEN: assign to modules via add_files_to_module and to flows via add_file_flows. A file with 0 flow assignments is architecturally disconnected; a file that truly has no flow (config, data) gets update_file(file_id, no_flow_reason=...). If no existing flow describes a group of cataloged files, add_flow(name, theme_ids, description) for it rather than stretching an unrelated flow. structure_health / the watchdog report whatever is left.",
         "created_count vs updated_count tells you whether this was a first catalog or a re-scan refresh."
       ],
       "target_database": "project",

@@ -39,6 +39,16 @@
       "applies_to_db": "project",
       "applies_from_version": "1.12",
       "introduced_in": "1.49.0"
+    },
+    {
+      "notice_key": "modularity_layer_intro",
+      "title": "Themes, flows and modules are now enforced and reported",
+      "message": "AIMFP now enforces its modularity layer: themes (stable project areas) group flows (the behaviour the code implements), flows group files, and modules group reusable code. Completion paths now link the themes they advance, and milestones link the flows they build.\n\nWhat changed for the AI:\n- reserve_file / reserve_files REQUIRE flow_ids: a list of flows, or an explicit null for a config/data file (optionally with no_flow_reason).\n- add_flow REQUIRES theme_ids: every flow belongs to at least one theme.\n- aimfp_status / aimfp_run now include structure_summary (the themes -> flows map) and structure_health (gaps), aimfp_end reports gaps, and the watchdog raises structure_* reminders until gaps are fixed.\n- New batch tools: add_flow_themes, add_path_themes, add_milestone_flows, move_files_to_flow, move_flows_to_theme (and note-required remove_* counterparts); get_structure_health lists everything.\n\nTELL THE USER how many gaps data.structure_health reports for this project (total_gaps and the biggest categories). Existing projects usually have many: themes were never linked to flows, and paths/milestones had no links at all before this release.\n\nASK THE USER NOW: should we backfill the modularity layer this session (link every flow to a theme, every open path to its themes, every open milestone to its flows, give unflowed files a flow or a no_flow_reason, split oversized flows), or later? Apply the answer; if later, record add_note(note_type='deferred') so it is not lost.",
+      "severity": "warning",
+      "action_required": true,
+      "applies_to_db": "project",
+      "applies_from_version": "1.13",
+      "introduced_in": "1.59.0"
     }
   ]
 }

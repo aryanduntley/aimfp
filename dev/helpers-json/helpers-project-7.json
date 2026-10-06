@@ -31,6 +31,16 @@
           "required": false,
           "default": null,
           "description": "Milestone description"
+        },
+        {
+          "name": "flow_ids",
+          "type": "array",
+          "required": false,
+          "default": null,
+          "description": "Flows this milestone builds or changes. Optional here; link later with add_milestone_flows.",
+          "items": {
+            "type": "integer"
+          }
         }
       ],
       "purpose": "Add milestone to completion path",
@@ -38,7 +48,8 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Milestone ready for tasks. Create tasks when work begins: add_task(milestone_id=<id>, name, description, flow_ids, priority)"
+        "FLOWS: a milestone builds or changes flows. If flow_ids was not passed, link them now with add_milestone_flows([[milestone_id, flow_id], ...]). If this milestone introduces NEW behaviour that no existing flow describes, add_flow(name, theme_ids, description) for it rather than growing an existing flow's description — flows evolve with milestones.",
+        "Milestone ready for tasks. Create tasks when work begins: add_task(milestone_id=<id>, name, description, flow_ids, priority) — task flow_ids normally come from this milestone's flows (get_flows_for_milestone)."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -217,6 +228,7 @@
       "is_sub_helper": false,
       "return_statements": [
         "If milestone status changed: call add_note(note_type='task_context', reference_table='milestones', reference_id=<milestone_id>). If scope changed: call add_note(note_type='evolution', directive_name='project_evolution', reference_table='milestones', reference_id=<milestone_id>)",
+        "If status='completed': FLOW REVIEW — get_flows_for_milestone(milestone_id); for each flow, update_flow its description to match what was actually built; split any flow that absorbed several behaviours (add_flow + move_files_to_flow); add flows for behaviour that has none. Then get_structure_health() and fix gaps this milestone introduced.",
         "If status='completed': call get_milestones_by_path(completion_path_id) — if all completed, call update_completion_path(id, status='completed')",
         "Call aimfp_run(is_new_session=false) — returns watchdog info about external file changes detected since your last check."
       ],
@@ -290,7 +302,7 @@
         }
       ],
       "purpose": "Delete milestone with task validation",
-      "error_handling": "- Calls `get_incomplete_tasks_by_milestone(milestone_id, skip_pending=false)`",
+      "error_handling": "- Calls `get_incomplete_tasks_by_milestone(milestone_id, skip_pending=false)` Also blocked while the milestone is linked to flows — remove_milestone_flows first.",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [],
@@ -358,7 +370,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "BEFORE STARTING WORK: Check get_all_flows() and get_all_themes() for relevant workflow descriptions. Flows describe the intended architecture and user-facing behavior your implementation should match. Themes identify which area of the project this work belongs to. Consulting these BEFORE coding prevents architectural mismatches.",
+        "BEFORE STARTING WORK: place the task in the modularity map. flow_ids normally come from the milestone's flows (get_flows_for_milestone); if this task builds behaviour no flow describes, add_flow(name, theme_ids, description) and add_milestone_flows first, then update_task(flow_ids=...). Every file you reserve for this task must declare its flows (reserve_file flow_ids). Check modules (search_modules) before writing domain logic.",
         "Create items for this task: add_item(reference_table='tasks', reference_id=<task_id>, name=<name>, description=<desc>) or batch via add_items(reference_table='tasks', reference_id=<task_id>, items=[{name:<name>, description:<desc>}, ...])",
         "DB-FIRST LOOKUP: When working on this task, use get_function_by_name, get_type_by_name, get_file_by_name, get_functions_by_file to understand existing code BEFORE reading source files. The DB is the index; source files are the full text."
       ],

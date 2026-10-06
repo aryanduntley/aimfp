@@ -1,0 +1,660 @@
+{
+  "helpers": [
+    {
+      "name": "add_flow_themes",
+      "file_path": "helpers/project/structure_links.py",
+      "parameters": [
+        {
+          "name": "links",
+          "type": "array",
+          "required": true,
+          "default": null,
+          "description": "Array of [flow_id, theme_id] pairs. One pair links one; many pairs (any mix of flow_ids) apply atomically.",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      ],
+      "purpose": "Batch-link flows to themes (flow_themes). Every flow must belong to at least one theme; use this to fix theme-less flows or give a flow a second theme.",
+      "error_handling": "All-or-nothing: returns error if links is empty or names an owner or target that does not exist; nothing is written. Existing links are skipped.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Flows are now grouped under their themes. If aimfp_status structure_health listed other theme-less flows, link those too in the same kind of batch."
+      ],
+      "implementation_notes": [
+        "Returns: {success, added_count, removed_count, skipped_count, linked: [{owner_id, target_ids}], unlinked_owner_ids}"
+      ],
+      "target_database": "project",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "used_by_directives": [
+        {
+          "directive_name": "project_theme_flow_mapping",
+          "execution_context": "link_flows_to_themes",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Link theme-less flows to themes"
+        }
+      ]
+    },
+    {
+      "name": "remove_flow_themes",
+      "file_path": "helpers/project/structure_links.py",
+      "parameters": [
+        {
+          "name": "links",
+          "type": "array",
+          "required": true,
+          "default": null,
+          "description": "Array of [flow_id, theme_id] pairs. One pair links one; many pairs (any mix of flow_ids) apply atomically.",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        {
+          "name": "note_reason",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Why the links are removed (required; written as an entry_deletion note on each owner row)"
+        },
+        {
+          "name": "note_severity",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "'info', 'warning', 'error'"
+        },
+        {
+          "name": "note_source",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "'ai', 'user', or 'directive'"
+        }
+      ],
+      "purpose": "Batch-unlink flows from themes. A note is required. Refused (whole batch) if any flow would be left with no theme — link the replacement first, or use move_flows_to_theme.",
+      "error_handling": "All-or-nothing: returns error if links is empty or names an owner that does not exist. Absent links are counted as skipped. Refused if any flow would be left with no theme. note_reason is required and severity/source are validated.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [],
+      "implementation_notes": [
+        "Returns: {success, added_count, removed_count, skipped_count, linked: [{owner_id, target_ids}], unlinked_owner_ids}"
+      ],
+      "target_database": "project",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "used_by_directives": [
+        {
+          "directive_name": "project_theme_flow_mapping",
+          "execution_context": "remove_links_with_note",
+          "sequence_order": 1,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Unlink flow themes with an audit note"
+        }
+      ]
+    },
+    {
+      "name": "move_flows_to_theme",
+      "file_path": "helpers/project/structure_links.py",
+      "parameters": [
+        {
+          "name": "flow_ids",
+          "type": "array",
+          "required": true,
+          "default": null,
+          "description": "Flows to move",
+          "items": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "from_theme_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "Theme they leave"
+        },
+        {
+          "name": "to_theme_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "Theme they join"
+        }
+      ],
+      "purpose": "Re-point many flows from one theme to another in one transaction (e.g. when a theme is split or merged). Flows not in the source theme are skipped.",
+      "error_handling": "All-or-nothing: returns error if the ID list is empty, from equals to, any listed owner does not exist, or the destination does not exist. Owners not linked to the source are skipped.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Call add_note(note_type='evolution', reference_table='themes', reference_id=<to_theme_id>) describing the regrouping. If the source theme now has no flows, either delete_theme it or give it flows."
+      ],
+      "implementation_notes": [
+        "Returns: {success, added_count, removed_count, skipped_count, linked: [{owner_id, target_ids}], unlinked_owner_ids}"
+      ],
+      "target_database": "project",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "used_by_directives": [
+        {
+          "directive_name": "project_theme_flow_mapping",
+          "execution_context": "regroup_flows",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Move flows between themes atomically"
+        }
+      ]
+    },
+    {
+      "name": "add_path_themes",
+      "file_path": "helpers/project/structure_links.py",
+      "parameters": [
+        {
+          "name": "links",
+          "type": "array",
+          "required": true,
+          "default": null,
+          "description": "Array of [completion_path_id, theme_id] pairs. One pair links one; many pairs (any mix of completion_path_ids) apply atomically.",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      ],
+      "purpose": "Batch-link completion paths to the themes (stable project areas) they advance (completion_path_themes). Themes change rarely, like paths.",
+      "error_handling": "All-or-nothing: returns error if links is empty or names an owner or target that does not exist; nothing is written. Existing links are skipped.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Path themes set. Milestones under these paths should link the flows they build: add_milestone_flows([[milestone_id, flow_id], ...])."
+      ],
+      "implementation_notes": [
+        "Returns: {success, added_count, removed_count, skipped_count, linked: [{owner_id, target_ids}], unlinked_owner_ids}"
+      ],
+      "target_database": "project",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "used_by_directives": [
+        {
+          "directive_name": "project_theme_flow_mapping",
+          "execution_context": "link_paths_and_milestones",
+          "sequence_order": 1,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Link open paths to themes"
+        },
+        {
+          "directive_name": "project_discovery",
+          "execution_context": "create_completion_path",
+          "sequence_order": 1,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Link each path to the themes it advances"
+        }
+      ]
+    },
+    {
+      "name": "remove_path_themes",
+      "file_path": "helpers/project/structure_links.py",
+      "parameters": [
+        {
+          "name": "links",
+          "type": "array",
+          "required": true,
+          "default": null,
+          "description": "Array of [completion_path_id, theme_id] pairs. One pair links one; many pairs (any mix of completion_path_ids) apply atomically.",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        {
+          "name": "note_reason",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Why the links are removed (required; written as an entry_deletion note on each owner row)"
+        },
+        {
+          "name": "note_severity",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "'info', 'warning', 'error'"
+        },
+        {
+          "name": "note_source",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "'ai', 'user', or 'directive'"
+        }
+      ],
+      "purpose": "Batch-unlink completion paths from themes. A note is required.",
+      "error_handling": "All-or-nothing: returns error if links is empty or names an owner that does not exist. Absent links are counted as skipped. note_reason is required and severity/source are validated.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [],
+      "implementation_notes": [
+        "Returns: {success, added_count, removed_count, skipped_count, linked: [{owner_id, target_ids}], unlinked_owner_ids}"
+      ],
+      "target_database": "project",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "used_by_directives": [
+        {
+          "directive_name": "project_theme_flow_mapping",
+          "execution_context": "remove_links_with_note",
+          "sequence_order": 2,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Unlink path themes with an audit note"
+        }
+      ]
+    },
+    {
+      "name": "add_milestone_flows",
+      "file_path": "helpers/project/structure_links.py",
+      "parameters": [
+        {
+          "name": "links",
+          "type": "array",
+          "required": true,
+          "default": null,
+          "description": "Array of [milestone_id, flow_id] pairs. One pair links one; many pairs (any mix of milestone_ids) apply atomically.",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      ],
+      "purpose": "Batch-link milestones to the flows (evolving behaviour) they build or change (milestone_flows). A milestone that introduces new behaviour should get a NEW flow (add_flow) rather than growing an existing flow's description.",
+      "error_handling": "All-or-nothing: returns error if links is empty or names an owner or target that does not exist; nothing is written. Existing links are skipped.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "Milestone flows set. Tasks under a milestone take their flow_ids from these (get_flows_for_milestone)."
+      ],
+      "implementation_notes": [
+        "Returns: {success, added_count, removed_count, skipped_count, linked: [{owner_id, target_ids}], unlinked_owner_ids}"
+      ],
+      "target_database": "project",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "used_by_directives": [
+        {
+          "directive_name": "project_theme_flow_mapping",
+          "execution_context": "link_paths_and_milestones",
+          "sequence_order": 2,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Link open milestones to flows"
+        },
+        {
+          "directive_name": "project_theme_flow_mapping",
+          "execution_context": "create_flow_for_behaviour",
+          "sequence_order": 3,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Link a new flow to the milestone building it"
+        },
+        {
+          "directive_name": "project_discovery",
+          "execution_context": "create_milestones",
+          "sequence_order": 1,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Link each milestone to the flows it builds"
+        },
+        {
+          "directive_name": "project_milestone_complete",
+          "execution_context": "review_milestone_flows",
+          "sequence_order": 3,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Link flows created during the review"
+        }
+      ]
+    },
+    {
+      "name": "remove_milestone_flows",
+      "file_path": "helpers/project/structure_links.py",
+      "parameters": [
+        {
+          "name": "links",
+          "type": "array",
+          "required": true,
+          "default": null,
+          "description": "Array of [milestone_id, flow_id] pairs. One pair links one; many pairs (any mix of milestone_ids) apply atomically.",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        {
+          "name": "note_reason",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Why the links are removed (required; written as an entry_deletion note on each owner row)"
+        },
+        {
+          "name": "note_severity",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "'info', 'warning', 'error'"
+        },
+        {
+          "name": "note_source",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "'ai', 'user', or 'directive'"
+        }
+      ],
+      "purpose": "Batch-unlink milestones from flows. A note is required. Refused (whole batch) while an open task or sidequest of that milestone still lists the flow in its flow_ids — update those first.",
+      "error_handling": "All-or-nothing: returns error if links is empty or names an owner that does not exist. Absent links are counted as skipped. note_reason is required and severity/source are validated. Refused while open tasks/sidequests under the milestone list the flow.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [],
+      "implementation_notes": [
+        "Returns: {success, added_count, removed_count, skipped_count, linked: [{owner_id, target_ids}], unlinked_owner_ids}"
+      ],
+      "target_database": "project",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true
+      },
+      "used_by_directives": [
+        {
+          "directive_name": "project_theme_flow_mapping",
+          "execution_context": "remove_links_with_note",
+          "sequence_order": 3,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Unlink milestone flows with an audit note"
+        }
+      ]
+    },
+    {
+      "name": "move_files_to_flow",
+      "file_path": "helpers/project/structure_links.py",
+      "parameters": [
+        {
+          "name": "file_ids",
+          "type": "array",
+          "required": true,
+          "default": null,
+          "description": "Files to move",
+          "items": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "from_flow_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "Flow they leave"
+        },
+        {
+          "name": "to_flow_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "Flow they join"
+        }
+      ],
+      "purpose": "Re-point many files from one flow to another in one transaction — the tool for splitting an oversized flow or retiring one. Moves links only; files are never touched. Files not in the source flow are skipped.",
+      "error_handling": "All-or-nothing: returns error if the ID list is empty, from equals to, any listed owner does not exist, or the destination does not exist. Owners not linked to the source are skipped.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "If the source flow is being split, update_flow its description to cover only what remains, and check its files with get_files_by_flow. Call add_note(note_type='evolution', reference_table='flows', reference_id=<to_flow_id>)."
+      ],
+      "implementation_notes": [
+        "Returns: {success, added_count, removed_count, skipped_count, linked: [{owner_id, target_ids}], unlinked_owner_ids}"
+      ],
+      "target_database": "project",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "used_by_directives": [
+        {
+          "directive_name": "project_theme_flow_mapping",
+          "execution_context": "split_flow",
+          "sequence_order": 2,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Move a split-off behaviour's files to its new flow"
+        }
+      ]
+    },
+    {
+      "name": "get_themes_for_path",
+      "file_path": "helpers/project/structure_links.py",
+      "parameters": [
+        {
+          "name": "completion_path_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "Completion path ID"
+        }
+      ],
+      "purpose": "Get the themes a completion path advances (id, name, description).",
+      "error_handling": "Returns error if the path does not exist.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "If rows is empty, link the path's themes with add_path_themes([[completion_path_id, theme_id], ...])."
+      ],
+      "implementation_notes": [
+        "Returns: {success, owner_id, rows: [{id, name, description}]}"
+      ],
+      "target_database": "project",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "used_by_directives": [
+        {
+          "directive_name": "project_theme_flow_mapping",
+          "execution_context": "assess_structure",
+          "sequence_order": 2,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Themes a path advances"
+        }
+      ]
+    },
+    {
+      "name": "get_flows_for_milestone",
+      "file_path": "helpers/project/structure_links.py",
+      "parameters": [
+        {
+          "name": "milestone_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "Milestone ID"
+        }
+      ],
+      "purpose": "Get the flows a milestone builds or changes (id, name, description). Use for task flow_ids and before starting milestone work.",
+      "error_handling": "Returns error if the milestone does not exist.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "If rows is empty, link the milestone's flows with add_milestone_flows([[milestone_id, flow_id], ...]) — creating a new flow with add_flow if the milestone introduces new behaviour."
+      ],
+      "implementation_notes": [
+        "Returns: {success, owner_id, rows: [{id, name, description}]}"
+      ],
+      "target_database": "project",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "used_by_directives": [
+        {
+          "directive_name": "project_milestone_complete",
+          "execution_context": "review_milestone_flows",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Flows this milestone built or changed"
+        },
+        {
+          "directive_name": "project_task_decomposition",
+          "execution_context": "create_new_task",
+          "sequence_order": 2,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Pick the new task's flow_ids"
+        }
+      ]
+    },
+    {
+      "name": "get_structure_health",
+      "file_path": "helpers/project/structure_health.py",
+      "parameters": [
+        {
+          "name": "include_summary",
+          "type": "boolean",
+          "required": false,
+          "default": true,
+          "description": "Also return the themes/flows/paths/milestones map (default true)"
+        }
+      ],
+      "purpose": "Report the project's modularity layer and every gap in it: themes -> flows -> files, open paths -> themes, open milestones -> flows, module membership. Gaps: flows without theme, themes without flows, files without flow (and no no_flow_reason), files under a module path but in no module, open paths without themes, open milestones without flows, oversized flow descriptions (split candidates). The same report appears in aimfp_status, aimfp_end and watchdog reminders.",
+      "error_handling": "Returns error only if project.db cannot be read. Works on pre-v1.13 databases (path/milestone links then read as empty).",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "If health.ok is false, fix gaps in batches: add_flow_themes, add_path_themes, add_milestone_flows, add_file_flows, add_files_to_module, update_file(no_flow_reason=...) for files that truly have no flow. Oversized flows: add_flow for each distinct behaviour, then move_files_to_flow.",
+        "Each gap list is capped; 'total' is exact. Re-run after fixing to see the next batch."
+      ],
+      "implementation_notes": [
+        "Returns: {success, summary, health: {ok, total_gaps, <gap>: {total, items}}}",
+        "One collector (collect_structure_health) shared with aimfp_status, aimfp_end and the watchdog"
+      ],
+      "target_database": "project",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true
+      },
+      "used_by_directives": [
+        {
+          "directive_name": "project_theme_flow_mapping",
+          "execution_context": "assess_structure",
+          "sequence_order": 0,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Read the modularity map and its gaps"
+        },
+        {
+          "directive_name": "project_discovery",
+          "execution_context": "finalize_discovery",
+          "sequence_order": 0,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Verify the modularity layer is complete before discovery ends"
+        },
+        {
+          "directive_name": "project_milestone_complete",
+          "execution_context": "review_milestone_flows",
+          "sequence_order": 4,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Fix structure gaps the milestone introduced"
+        }
+      ]
+    }
+  ]
+}

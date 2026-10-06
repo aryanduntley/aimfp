@@ -7,7 +7,10 @@ Load via: get_supportive_context(variant='init')
   2. If pre-existing FP code: delegate to project_catalog first
   3. Blueprint: discuss purpose, goals, scope, constraints with user
   4. Infrastructure: confirm detected values, create state database
-  5. Themes/Flows/Completion Path/Milestones (NO tasks yet)
+  5. Modularity layer: themes (stable areas) → flows (one per behaviour, each with
+     theme_ids) → modules (reusable code at directory seams)
+  6. Completion paths (theme_ids) → milestones (flow_ids) — NO tasks yet
+  7. get_structure_health() must be clean before discovery ends
   Key: Ask, don't assume. Routes to aimfp_status → project_progression.
 
 2. DISCOVERY DEPTH REQUIREMENT

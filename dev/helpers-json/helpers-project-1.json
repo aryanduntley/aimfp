@@ -503,7 +503,10 @@
       "error_handling": "Return error if project already exists",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "Project created. Next: populate infrastructure (source_directory, language, build tool), then route to project_discovery.",
+        "MODULARITY LAYER — required before the first task: themes (add_theme: stable project areas), flows (add_flow(name, theme_ids, description): behaviour, each in >= 1 theme), modules (add_module: reusable code boundaries at real directory seams). Completion paths link their themes (theme_ids), milestones link their flows (flow_ids). reserve_file refuses files that do not declare their flows, so this layer must exist before coding starts."
+      ],
       "target_database": "project",
       "used_by_directives": [
         {

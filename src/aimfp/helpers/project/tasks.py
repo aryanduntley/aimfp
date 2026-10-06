@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 
 from ..utils import get_return_statements
+from .structure_links import MILESTONE_FLOWS, insert_links_effect, query_linked_rows, unique_ids, validate_link_targets
 from ..shared.slugs import mint_slug
 
 # Import common project utilities (DRY principle)
@@ -690,6 +691,7 @@ def add_milestone(
     name: str,
     status: str = "pending",
     description: Optional[str] = None,
+    flow_ids: Optional[List[int]] = None,
     project_root: Optional[str] = None
 ) -> AddResult:
     """
@@ -700,6 +702,7 @@ def add_milestone(
         name: Milestone name
         status: Milestone status ('pending', 'in_progress', 'completed', 'blocked')
         description: Optional milestone description
+        flow_ids: Flows this milestone builds or changes (optional; link later with add_milestone_flows)
 
     Returns:
         AddResult with new milestone ID on success
@@ -724,8 +727,17 @@ def add_milestone(
                 error=f"Completion path ID {completion_path_id} not found"
             )
 
-        # Insert milestone
+        flows = unique_ids(flow_ids)
+        flow_error = validate_link_targets(conn, MILESTONE_FLOWS, flows)
+        if flow_error:
+            conn.close()
+            return AddResult(success=False, error=flow_error)
+
+        # Insert milestone, then its flow links
         milestone_id = _insert_milestone(conn, completion_path_id, name, status, description)
+        if flows:
+            insert_links_effect(conn, MILESTONE_FLOWS, milestone_id, flows)
+            conn.commit()
         conn.close()
 
         # Fetch return statements
@@ -969,6 +981,16 @@ def delete_milestone(
             return DeleteResult(
                 success=False,
                 error=f"Cannot delete milestone: {len(incomplete_tasks)} incomplete task(s) exist"
+            )
+
+        # Check for linked flows (resolve with remove_milestone_flows first)
+        linked_flows = query_linked_rows(conn, MILESTONE_FLOWS, id)
+        if linked_flows:
+            conn.close()
+            return DeleteResult(
+                success=False,
+                error=("Cannot delete milestone: linked to flow(s) "
+                       f"{[f['name'] for f in linked_flows]}; remove_milestone_flows first")
             )
 
         # Create audit note

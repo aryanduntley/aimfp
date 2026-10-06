@@ -140,7 +140,7 @@ def test_file_delete_cascades_and_task_delete_triggers(project):
 def test_reserve_links_to_in_progress_task(project):
     root, db, m = project
     tid = _add_task(db, m, "t")
-    r = reserve_file(name="new", path="src/new.py", language="python", project_root=root)
+    r = reserve_file(name="new", path="src/new.py", language="python", flow_ids=None, project_root=root)
     assert r.success, r.error
     assert _links(db) == [("tasks", tid, r.id)]
 
@@ -148,7 +148,7 @@ def test_reserve_links_to_in_progress_task(project):
 def test_no_focus_means_no_link(project):
     root, db, m = project
     _add_task(db, m, "t", status="pending")
-    r = reserve_files([("x", "src/x.py", "python", True)], project_root=root)
+    r = reserve_files([("x", "src/x.py", "python", True, None)], project_root=root)
     assert r.success, r.error
     assert _links(db) == []
 
@@ -190,7 +190,7 @@ def test_pre_v112_database_tracking_still_succeeds(project):
         "DROP TRIGGER delete_task_task_files; DROP TRIGGER delete_subtask_task_files; "
         "DROP TRIGGER delete_sidequest_task_files; DROP TABLE task_files;")
     c.close()
-    r = reserve_file(name="new", path="src/new.py", language="python", project_root=root)
+    r = reserve_file(name="new", path="src/new.py", language="python", flow_ids=None, project_root=root)
     assert r.success, r.error
     assert update_file_timestamp(1, project_root=root).success
 

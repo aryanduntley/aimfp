@@ -492,7 +492,8 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Create items for this sidequest: add_item(reference_table='sidequests', reference_id=<sidequest_id>, name=<name>, description=<desc>) or batch via add_items(reference_table='sidequests', reference_id=<sidequest_id>, items=[{name:<name>, description:<desc>}, ...])"
+        "Create items for this sidequest: add_item(reference_table='sidequests', reference_id=<sidequest_id>, name=<name>, description=<desc>) or batch via add_items(reference_table='sidequests', reference_id=<sidequest_id>, items=[{name:<name>, description:<desc>}, ...])",
+        "Sidequest flow_ids: pick the flow(s) the interruption touches; files you reserve for it must declare their flows like any other."
       ],
       "target_database": "project",
       "used_by_directives": [

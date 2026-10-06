@@ -27,6 +27,15 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
 from ..utils import get_return_statements
+from .structure_links import (
+    FLOW_THEMES,
+    MILESTONE_FLOWS,
+    PATH_THEMES,
+    insert_links_effect,
+    query_link_owner_names,
+    unique_ids,
+    validate_link_targets,
+)
 from ._common import (
     _open_connection,
     get_cached_project_root,
@@ -124,6 +133,7 @@ class DeleteThemeResult:
     success: bool
     error: Optional[str] = None
     flows: Tuple[str, ...] = ()  # Flow names blocking deletion
+    paths: Tuple[str, ...] = ()  # Completion path names blocking deletion
     return_statements: Tuple[str, ...] = ()
 
 
@@ -132,6 +142,7 @@ class AddFlowResult:
     """Result of flow addition operation."""
     success: bool
     id: Optional[int] = None
+    theme_ids: Tuple[int, ...] = ()
     error: Optional[str] = None
     return_statements: Tuple[str, ...] = ()
 
@@ -161,6 +172,7 @@ class DeleteFlowResult:
     tasks: Tuple[str, ...] = ()  # Task names blocking deletion
     sidequests: Tuple[str, ...] = ()  # Sidequest names blocking deletion
     files: Tuple[str, ...] = ()  # File names blocking deletion
+    milestones: Tuple[str, ...] = ()  # Milestone names blocking deletion
     return_statements: Tuple[str, ...] = ()
 
 
@@ -468,7 +480,7 @@ def _add_flow_effect(
     confidence_score: Optional[float]
 ) -> int:
     """
-    Effect: Insert flow into database.
+    Effect: Insert flow into database (no commit; add_flow commits flow + theme links together).
 
     Args:
         conn: Database connection
@@ -487,7 +499,6 @@ def _add_flow_effect(
         """,
         (name, description, 1 if ai_generated else 0, confidence_score)
     )
-    conn.commit()
     return cursor.lastrowid
 
 
@@ -966,9 +977,9 @@ def delete_theme(
     project_root: Optional[str] = None
 ) -> DeleteThemeResult:
     """
-    Delete theme with flow validation.
+    Delete theme with association validation.
 
-    Validates no flows are linked to theme before deletion.
+    Validates no flows and no completion paths are linked to theme before deletion.
 
     Args:
         theme_id: Theme ID to delete
@@ -1000,14 +1011,16 @@ def delete_theme(
                 error=f"Theme with ID {theme_id} not found"
             )
 
-        # Check for flows linked to theme
+        # Check for flows and completion paths linked to theme
         flow_names = _get_flows_for_theme_effect(conn, theme_id)
+        path_names = query_link_owner_names(conn, PATH_THEMES, theme_id)
 
-        if flow_names:
+        if flow_names or path_names:
             return DeleteThemeResult(
                 success=False,
-                error="flows_exist",
-                flows=tuple(flow_names)
+                error="flows_exist" if flow_names else "paths_linked",
+                flows=tuple(flow_names),
+                paths=path_names
             )
 
         # No blocking flows - proceed with deletion
@@ -1042,18 +1055,21 @@ def delete_theme(
 
 def add_flow(
     name: str,
+    theme_ids: List[int],
     description: Optional[str] = None,
     ai_generated: bool = True,
     confidence_score: Optional[float] = 0.0,
     project_root: Optional[str] = None
 ) -> AddFlowResult:
     """
-    Add project flow.
+    Add project flow linked to at least one theme.
 
-    Creates new flow record in flows table.
+    Creates the flow record and its flow_themes links. A flow never exists
+    without a theme, so theme_ids is required and must name at least one theme.
 
     Args:
         name: Flow name
+        theme_ids: IDs of the theme(s) this flow belongs to (at least one)
         description: Flow description (optional)
         ai_generated: True if AI-generated (default: True)
         confidence_score: Confidence score 0-1 (default: 0.0)
@@ -1064,6 +1080,7 @@ def add_flow(
     Example:
         >>> result = add_flow(
         ...     "User Registration",
+        ...     theme_ids=[2],
         ...     description="Handle user signup and email verification",
         ...     ai_generated=True,
         ...     confidence_score=0.90
@@ -1073,10 +1090,22 @@ def add_flow(
         >>> result.id
         5
     """
+    themes = unique_ids(theme_ids)
+    if not themes:
+        return AddFlowResult(
+            success=False,
+            error=("theme_ids is required: every flow belongs to at least one theme. "
+                   "Pick from get_all_themes(), or add_theme() first if no theme fits.")
+        )
+
     project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
+        theme_error = validate_link_targets(conn, FLOW_THEMES, themes)
+        if theme_error:
+            return AddFlowResult(success=False, error=theme_error)
+
         flow_id = _add_flow_effect(
             conn,
             name,
@@ -1084,12 +1113,15 @@ def add_flow(
             ai_generated,
             confidence_score
         )
+        insert_links_effect(conn, FLOW_THEMES, flow_id, themes)
+        conn.commit()
 
         return_statements = get_return_statements("add_flow")
 
         return AddFlowResult(
             success=True,
             id=flow_id,
+            theme_ids=themes,
             return_statements=return_statements
         )
 
@@ -1229,7 +1261,7 @@ def delete_flow(
     """
     Delete flow with comprehensive validation.
 
-    Validates no open tasks/sidequests reference flow and no files are linked.
+    Validates no open tasks/sidequests reference flow and no files or milestones are linked.
 
     Args:
         flow_id: Flow ID to delete
@@ -1270,14 +1302,18 @@ def delete_flow(
         # Check for files linked to flow
         file_names = _get_files_for_flow_effect(conn, flow_id)
 
+        # Check for milestones linked to flow
+        milestone_names = query_link_owner_names(conn, MILESTONE_FLOWS, flow_id)
+
         # If any blocking entities exist, return error
-        if task_names or sidequest_names or file_names:
+        if task_names or sidequest_names or file_names or milestone_names:
             return DeleteFlowResult(
                 success=False,
                 error="flow_in_use",
                 tasks=tuple(task_names),
                 sidequests=tuple(sidequest_names),
-                files=tuple(file_names)
+                files=tuple(file_names),
+                milestones=milestone_names
             )
 
         # No blocking entities - proceed with deletion

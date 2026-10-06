@@ -54,7 +54,7 @@ def _isolated_process_state(tmp_path, monkeypatch):
 
 
 def _track_one_file(root: str, stem: str) -> None:
-    r = reserve_file(name=stem, path=f"src/{stem}.py", language="python",
+    r = reserve_file(name=stem, path=f"src/{stem}.py", language="python", flow_ids=None,
                      project_root=root)
     assert r.success, r.error
     final_rel = f"src/{stem}_id_{r.id}.py"
@@ -95,7 +95,7 @@ class TestHookA2_RootRelativePaths:
 
     def test_finalize_missing_file_still_errors(self):
         root = _make_bare_project("a2miss")
-        r = reserve_file(name="ghost", path="src/ghost.py", language="python",
+        r = reserve_file(name="ghost", path="src/ghost.py", language="python", flow_ids=None,
                          project_root=root)
         fr = finalize_file(file_id=r.id, name=f"ghost_id_{r.id}.py",
                           path=f"src/ghost_id_{r.id}.py", language="python",
@@ -218,7 +218,7 @@ class TestHookA_TimestampThreading:
         from aimfp.helpers.project.functions_2 import update_function
 
         root = _make_bare_project("tsfn")
-        r = reserve_file(name="mod", path="src/mod.py", language="python",
+        r = reserve_file(name="mod", path="src/mod.py", language="python", flow_ids=None,
                          skip_id_naming=True, project_root=root)
         assert r.success, r.error
         os.makedirs(os.path.join(root, "src"), exist_ok=True)
@@ -259,7 +259,7 @@ class TestHookA_TimestampThreading:
         )
 
         root = _make_bare_project("tsty")
-        r = reserve_file(name="shapes", path="src/shapes.py", language="python",
+        r = reserve_file(name="shapes", path="src/shapes.py", language="python", flow_ids=None,
                          skip_id_naming=True, project_root=root)
         assert r.success, r.error
         os.makedirs(os.path.join(root, "src"), exist_ok=True)

@@ -22,7 +22,8 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
   INITIALIZATION (new project only — get_supportive_context(variant='init') for detail)
     5. aimfp_init(project_root) → creates dirs, DBs, blueprint template, .git if missing
     6. AI detects language/tools, prompts user → create_project() → update infrastructure
-    7. project_discovery → blueprint, themes, flows, completion path, milestones (NO tasks)
+    7. project_discovery → blueprint, themes → flows (add_flow theme_ids) → modules,
+       completion paths (theme_ids), milestones (flow_ids) — NO tasks
        Pre-existing FP code? → project_catalog first
     8. Routes to aimfp_status → project_progression
 
@@ -30,14 +31,15 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
     9. get_all_completion_paths → activate first open path
     10. get_milestones_by_completion_path → activate first open milestone
     11. Create ONE task: add_task(milestone_id, name, flow_ids, priority)
+        flow_ids from get_flows_for_milestone; new behaviour → add_flow + add_milestone_flows first
         Create items: add_item(reference_table='tasks', reference_id=<task_id>, name, description) or batch via add_items(reference_table='tasks', reference_id=<task_id>, items=[{name, description}, ...])
     12. Work on items (get_supportive_context(variant='coding') for file loop detail):
-        a. reserve_file → search_modules for overlap → write FP code → finalize_file
+        a. reserve_file(flow_ids) → search_modules for overlap → write FP code → finalize_file
         b. reserve functions → finalize functions (purpose, parameters, returns populated)
-        c. add_file_to_flow, add_file_to_module (if domain logic), add_interactions, add_types_functions
+        c. add_file_to_module (if domain logic), add_interactions, add_types_functions
         d. Item done → update_item(id=<item_id>, status='completed') or batch via update_items(ids=[...], data={status:'completed'}, reference_table='tasks', reference_id=<task_id>) — every id must belong to that parent
     13. All items done → project_task_complete → update_task(status='completed')
-    14. More tasks? → create next (goto 11). No → project_milestone_complete
+    14. More tasks? → create next (goto 11). No → project_milestone_complete (flow review first)
     15. More milestones? → activate next (goto 10). No → project_completion_check → done
         Alternative: update_project_state(project_root, action, target_type, target_id, data)
 
@@ -97,6 +99,9 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
 
   Branch naming: aimfp-{user}-{number}. Git directives: git_init, git_detect_external_changes, git_create_branch, git_detect_conflicts, git_merge_branch, git_sync_state.
   Any change to blueprint/paths/themes/flows/milestones MUST have add_note(note_type='evolution').
+  Modularity layer: theme (stable area) → flows (behaviour, ≥1 theme) → files; modules = reusable code.
+  Paths link themes, milestones link flows. aimfp_status.structure_health lists gaps; fix, don't defer.
+  New behaviour gets a new flow; a flow that grows is split (project_theme_flow_mapping).
 
 8. EDGE CASES & RECOVERY
 

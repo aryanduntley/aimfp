@@ -24,6 +24,15 @@ from ..utils import get_return_statements
 
 # Import common project utilities (DRY principle)
 from .task_files import link_files_to_current_focus_effect
+from .structure_links import (
+    FILE_FLOWS,
+    FLOWS_NOT_DECLARED,
+    flow_choice_error,
+    insert_links_effect,
+    no_flow_reason_for,
+    unique_ids,
+    validate_link_targets,
+)
 from ._common import (
     _open_connection,
     get_cached_project_root,
@@ -37,17 +46,22 @@ from ._common import (
 # ============================================================================
 
 def _normalize_reserve_files_input(
-    files: Union[List[Tuple[str, str, str, bool]], List[Dict[str, Any]]]
-) -> List[Tuple[str, str, str, bool]]:
-    """Pure: Convert list of dicts to list of tuples for reserve_files."""
-    if not files:
-        return files
-    if isinstance(files[0], dict):
-        return [
-            (f["name"], f["path"], f["language"], f.get("skip_id_naming", False))
-            for f in files
-        ]
-    return files
+    files: Union[List[tuple], List[Dict[str, Any]]]
+) -> List[Tuple[str, str, str, bool, Tuple[int, ...], Optional[str]]]:
+    """
+    Pure: Normalize reserve_files input to (name, path, language, skip_id_naming,
+    flow_ids, no_flow_reason) tuples. flow_ids keeps the caller's declaration as
+    given (list, or None for "no flow"); an omitted declaration becomes
+    FLOWS_NOT_DECLARED so flow_choice_error can refuse it.
+    """
+    def from_dict(f: Dict[str, Any]) -> tuple:
+        return (f["name"], f["path"], f["language"], f.get("skip_id_naming", False),
+                f.get("flow_ids", FLOWS_NOT_DECLARED), f.get("no_flow_reason"))
+
+    def from_tuple(t: tuple) -> tuple:
+        return (tuple(t) + (False, FLOWS_NOT_DECLARED, None)[max(0, len(t) - 3):])[:6]
+
+    return [from_dict(f) if isinstance(f, dict) else from_tuple(f) for f in (files or [])]
 
 
 def _normalize_finalize_files_input(
@@ -93,6 +107,7 @@ class ReserveResult:
     success: bool
     id: Optional[int] = None
     is_reserved: Optional[bool] = None
+    flow_ids: Tuple[int, ...] = ()
     error: Optional[str] = None
     return_statements: Tuple[str, ...] = ()  # AI guidance for next steps
 
@@ -202,10 +217,12 @@ def _reserve_file_effect(
     name: str,
     path: str,
     language: str,
-    id_in_name: bool = True
+    id_in_name: bool = True,
+    flow_ids: Optional[List[int]] = None,
+    no_flow_reason: Optional[str] = None
 ) -> int:
     """
-    Effect: Insert reserved file into database.
+    Effect: Insert reserved file and its file_flows links (no commit; caller commits).
 
     Args:
         conn: Database connection
@@ -213,51 +230,44 @@ def _reserve_file_effect(
         path: File path relative to project root
         language: Programming language
         id_in_name: Whether filename will contain _id_XX pattern (default True)
+        flow_ids: Flows the file implements, or None for no flow (validated by the caller)
+        no_flow_reason: Explanation recorded when flow_ids is None
 
     Returns:
         Reserved file ID
     """
     cursor = conn.execute(
         """
-        INSERT INTO files (name, path, language, is_reserved, id_in_name)
-        VALUES (?, ?, ?, 1, ?)
+        INSERT INTO files (name, path, language, is_reserved, id_in_name, no_flow_reason)
+        VALUES (?, ?, ?, 1, ?, ?)
         """,
-        (name, path, language, 1 if id_in_name else 0)
+        (name, path, language, 1 if id_in_name else 0, no_flow_reason_for(flow_ids, no_flow_reason))
     )
-    conn.commit()
+    insert_links_effect(conn, FILE_FLOWS, cursor.lastrowid, unique_ids(flow_ids))
     return cursor.lastrowid
 
 
 def _reserve_files_batch_effect(
     conn: sqlite3.Connection,
-    files: List[Tuple[str, str, str, bool]]
+    files: List[Tuple[str, str, str, bool, Optional[List[int]], Optional[str]]]
 ) -> Tuple[int, ...]:
     """
-    Effect: Insert multiple reserved files in transaction.
+    Effect: Insert multiple reserved files and their file_flows links in one transaction.
 
     Args:
         conn: Database connection
-        files: List of (name, path, language, id_in_name) tuples
+        files: List of (name, path, language, id_in_name, flow_ids, no_flow_reason) tuples
 
     Returns:
         Tuple of reserved file IDs in same order
     """
-    cursor = conn.cursor()
-    ids = []
-
     try:
-        for name, path, language, id_in_name in files:
-            cursor.execute(
-                """
-                INSERT INTO files (name, path, language, is_reserved, id_in_name)
-                VALUES (?, ?, ?, 1, ?)
-                """,
-                (name, path, language, 1 if id_in_name else 0)
-            )
-            ids.append(cursor.lastrowid)
-
+        ids = tuple(
+            _reserve_file_effect(conn, name, path, language, id_in_name, flow_ids, reason)
+            for name, path, language, id_in_name, flow_ids, reason in files
+        )
         conn.commit()
-        return tuple(ids)
+        return ids
 
     except Exception as e:
         conn.rollback()
@@ -381,32 +391,44 @@ def reserve_file(
     name: str,
     path: str,
     language: str,
+    flow_ids: Optional[List[int]],
     skip_id_naming: bool = False,
+    no_flow_reason: Optional[str] = None,
     project_root: Optional[str] = None
 ) -> ReserveResult:
     """
-    Reserve file ID for naming before creation.
+    Reserve file ID for naming before creation, linked to its flow(s).
 
-    Creates placeholder entry in files table with is_reserved=1.
+    Creates placeholder entry in files table with is_reserved=1, plus its file_flows
+    rows, in one transaction. A file must declare its flows: a list of flow IDs, or
+    an explicit None for a file that belongs to no flow (config, data). None is
+    recorded on the file as no_flow_reason so structure checks skip it.
     Returns ID that should be embedded in filename: {name}_id_{id}.{ext}
 
     Args:
         name: Preliminary file name (will have _id_xxx appended unless skip_id_naming=True)
         path: File path relative to project root
         language: Programming language (e.g., 'python', 'javascript')
+        flow_ids: Flow(s) this file implements, or None to declare it belongs to no flow
         skip_id_naming: If True, skip ID embedding (for __init__.py, .db files, MCP tools)
+        no_flow_reason: Why the file belongs to no flow (only with flow_ids=None)
 
     Returns:
-        ReserveResult with success status and reserved ID
+        ReserveResult with success status, reserved ID and linked flow IDs
 
     Example:
-        >>> result = reserve_file("calculator", "src/calc.py", "python")
+        >>> result = reserve_file("calculator", "src/calc.py", "python", flow_ids=[3])
         >>> result.success
         True
         >>> result.id
         42
         # Use result.id to create: calculator_id_42.py (unless skip_id_naming=True)
     """
+    choice_error = flow_choice_error(flow_ids, no_flow_reason)
+    if choice_error:
+        return ReserveResult(success=False, error=choice_error)
+    flows = unique_ids(flow_ids)
+
     # Effect: open connection
     project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
@@ -420,8 +442,14 @@ def reserve_file(
                 error=f"File path already exists: {path}"
             )
 
-        # Effect: reserve file with id_in_name flag
-        reserved_id = _reserve_file_effect(conn, name, path, language, not skip_id_naming)
+        flow_error = validate_link_targets(conn, FILE_FLOWS, flows)
+        if flow_error:
+            return ReserveResult(success=False, error=flow_error)
+
+        # Effect: reserve file with id_in_name flag and its flow links
+        reserved_id = _reserve_file_effect(
+            conn, name, path, language, not skip_id_naming, flow_ids, no_flow_reason)
+        conn.commit()
         link_files_to_current_focus_effect(conn, (reserved_id,))
 
         # Success - fetch return statements from core database
@@ -431,6 +459,7 @@ def reserve_file(
             success=True,
             id=reserved_id,
             is_reserved=True,
+            flow_ids=flows,
             return_statements=return_statements
         )
 
@@ -449,8 +478,9 @@ def reserve_files(
     All reservations succeed or all fail (atomic operation).
 
     Args:
-        files: List of (name, path, language, skip_id_naming) tuples or dicts
-               skip_id_naming: If True for item, skip ID embedding for that file
+        files: List of dicts {name, path, language, flow_ids, skip_id_naming?, no_flow_reason?}
+               or (name, path, language, skip_id_naming, flow_ids, no_flow_reason) tuples.
+               Every file declares its flows: a list, or None for "no flow".
 
     Returns:
         ReserveBatchResult with success status and reserved IDs
@@ -458,8 +488,8 @@ def reserve_files(
 
     Example:
         >>> files = [
-        ...     ("calculator", "src/calc.py", "python", False),
-        ...     ("__init__", "src/__init__.py", "python", True)  # skip ID for __init__
+        ...     ("calculator", "src/calc.py", "python", False, [3]),
+        ...     ("__init__", "src/__init__.py", "python", True, None, "package marker")
         ... ]
         >>> result = reserve_files(files)
         >>> result.success
@@ -476,6 +506,10 @@ def reserve_files(
             success=False,
             error="Files list cannot be empty"
         )
+    choice_errors = tuple(
+        f"{f[1]}: {err}" for f in files for err in (flow_choice_error(f[4], f[5]),) if err)
+    if choice_errors:
+        return ReserveBatchResult(success=False, error="; ".join(choice_errors))
 
     # Effect: open connection
     project_root = project_root or get_cached_project_root()
@@ -483,7 +517,7 @@ def reserve_files(
 
     try:
         # Check if any paths already exist
-        for name, path, language, skip_id_naming in files:
+        for name, path, language, skip_id_naming, _flows, _reason in files:
             existing = _get_file_by_path_effect(conn, path)
             if existing is not None:
                 return ReserveBatchResult(
@@ -491,10 +525,15 @@ def reserve_files(
                     error=f"File path already exists: {path}"
                 )
 
+        flow_error = validate_link_targets(
+            conn, FILE_FLOWS, unique_ids(fid for f in files for fid in (f[4] or ())))
+        if flow_error:
+            return ReserveBatchResult(success=False, error=flow_error)
+
         # Convert skip_id_naming to id_in_name for effect function
         files_with_id_in_name = [
-            (name, path, language, not skip_id_naming)
-            for name, path, language, skip_id_naming in files
+            (name, path, language, not skip_id_naming, flows, reason)
+            for name, path, language, skip_id_naming, flows, reason in files
         ]
 
         # Effect: reserve all files in transaction

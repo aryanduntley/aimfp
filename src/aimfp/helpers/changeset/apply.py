@@ -47,7 +47,8 @@ from .export import _collect_entities, _ENTITY_KINDS
 
 # Plain (non-relational) attribute -> column maps per kind.
 _PLAIN_COLS: Dict[str, Dict[str, str]] = {
-    "files": {"name": "name", "language": "language", "id_in_name": "id_in_name"},
+    "files": {"name": "name", "language": "language", "id_in_name": "id_in_name",
+              "no_flow_reason": "no_flow_reason"},
     "modules": {"path": "path", "description": "description", "purpose": "purpose",
                 "external_dependencies": "external_dependencies"},
     "themes": {"description": "description", "ai_generated": "ai_generated",
@@ -75,10 +76,10 @@ _DEPENDENTS: Dict[str, List[Tuple[str, str]]] = {
                   ("types_functions", "function_id")],
     "types": [("types_functions", "type_id")],
     "modules": [("module_files", "module_id")],
-    "themes": [("flow_themes", "theme_id")],
-    "flows": [("file_flows", "flow_id"), ("flow_themes", "flow_id")],
-    "completion_path": [("milestones", "completion_path_id")],
-    "milestones": [("tasks", "milestone_id")],
+    "themes": [("flow_themes", "theme_id"), ("completion_path_themes", "theme_id")],
+    "flows": [("file_flows", "flow_id"), ("flow_themes", "flow_id"), ("milestone_flows", "flow_id")],
+    "completion_path": [("milestones", "completion_path_id"), ("completion_path_themes", "completion_path_id")],
+    "milestones": [("tasks", "milestone_id"), ("milestone_flows", "milestone_id")],
     "tasks": [("subtasks", "parent_task_id"), ("sidequests", "paused_task_id")],
     "subtasks": [("sidequests", "paused_subtask_id")],
 }
@@ -151,8 +152,8 @@ def _insert_entity(conn, resolver: _Resolver, kind: str, key: Dict[str, Any],
 
     if kind == "files":
         cur = conn.execute(
-            "INSERT INTO files (path, name, language, id_in_name) VALUES (?,?,?,?)",
-            (key["path"], a.get("name"), a.get("language"), a.get("id_in_name", 1)))
+            "INSERT INTO files (path, name, language, id_in_name, no_flow_reason) VALUES (?,?,?,?,?)",
+            (key["path"], a.get("name"), a.get("language"), a.get("id_in_name", 1), a.get("no_flow_reason")))
     elif kind == "modules":
         cur = conn.execute(
             "INSERT INTO modules (name, path, description, purpose, external_dependencies) VALUES (?,?,?,?,?)",
@@ -377,6 +378,18 @@ def _edge_ids(resolver: _Resolver, ref: Dict[str, Any]):
         if fl is None or th is None:
             return None, "flow_theme endpoint not found"
         return ("flow_themes", {"flow_id": fl, "theme_id": th}, None)
+    if k == "path_theme":
+        cp = resolver.get("completion_path", ref.get("completion_path"))
+        th = resolver.get("themes", ref.get("theme"))
+        if cp is None or th is None:
+            return None, "path_theme endpoint not found"
+        return ("completion_path_themes", {"completion_path_id": cp, "theme_id": th}, None)
+    if k == "milestone_flow":
+        ms = resolver.get("milestones", ref.get("milestone"))
+        fl = resolver.get("flows", ref.get("flow"))
+        if ms is None or fl is None:
+            return None, "milestone_flow endpoint not found"
+        return ("milestone_flows", {"milestone_id": ms, "flow_id": fl}, None)
     if k == "task_file":
         rt = ref.get("reference_table")
         if rt not in ("tasks", "subtasks", "sidequests"):
