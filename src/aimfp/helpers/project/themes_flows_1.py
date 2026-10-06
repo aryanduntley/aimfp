@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
 from ..utils import get_return_statements
+from .note_refs import NoteRef, query_note_refs, note_ref_return_statements
 from .structure_links import (
     FLOW_THEMES,
     MILESTONE_FLOWS,
@@ -80,6 +81,7 @@ class ThemeQueryResult:
     success: bool
     theme: Optional[ThemeRecord] = None
     error: Optional[str] = None
+    notes: Tuple[NoteRef, ...] = ()
     return_statements: Tuple[str, ...] = ()
 
 
@@ -89,6 +91,7 @@ class FlowQueryResult:
     success: bool
     flow: Optional[FlowRecord] = None
     error: Optional[str] = None
+    notes: Tuple[NoteRef, ...] = ()
     return_statements: Tuple[str, ...] = ()
 
 
@@ -690,15 +693,17 @@ def get_theme_by_name(
             return ThemeQueryResult(
                 success=True,
                 theme=None,
-                return_statements=get_return_statements("get_theme_by_name")
+                return_statements=note_ref_return_statements(get_return_statements("get_theme_by_name"), ())
             )
 
         theme_record = row_to_theme_record(row)
+        notes = query_note_refs(conn, 'themes', (theme_record.id,))
 
         return ThemeQueryResult(
             success=True,
             theme=theme_record,
-            return_statements=get_return_statements("get_theme_by_name")
+            notes=notes,
+            return_statements=note_ref_return_statements(get_return_statements("get_theme_by_name"), notes)
         )
 
     except Exception as e:
@@ -743,15 +748,17 @@ def get_flow_by_name(
             return FlowQueryResult(
                 success=True,
                 flow=None,
-                return_statements=get_return_statements("get_flow_by_name")
+                return_statements=note_ref_return_statements(get_return_statements("get_flow_by_name"), ())
             )
 
         flow_record = row_to_flow_record(row)
+        notes = query_note_refs(conn, 'flows', (flow_record.id,))
 
         return FlowQueryResult(
             success=True,
             flow=flow_record,
-            return_statements=get_return_statements("get_flow_by_name")
+            notes=notes,
+            return_statements=note_ref_return_statements(get_return_statements("get_flow_by_name"), notes)
         )
 
     except Exception as e:

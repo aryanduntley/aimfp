@@ -543,14 +543,16 @@ AIMFP installs three ways. **On Claude Code, use the plugin (Method 1)** — two
 
 That's it — no `pip install`, no `claude mcp add`, no config files. The plugin provides:
 
-- the **MCP server**, launched via `uvx aimfp@latest` (always the latest published release, fully self-contained)
+- the **MCP server**, launched via `uvx aimfp==<plugin version>` — each plugin release runs the matching PyPI release, which `uvx` caches, so the server starts offline after the first launch and moves forward when you update the plugin
 - **slash commands**: `/aimfp:run`, `/aimfp:status`, `/aimfp:init`, `/aimfp:end`
 - a tiny **`aimfp-mode` setup skill** + a **SessionStart hook** — these are setup-only: they prompt the AI to install the system prompt (via the `get_system_prompt` tool) and start a session. They are deliberately *not* a copy of the behavioral rules (that would duplicate the system prompt into every session). Your **first move** after install is still to ask the AI to add the AIMFP system prompt — see [Add the System Prompt](#add-the-system-prompt-your-first-move) below; for the plugin the AI does it for you, nothing to download or paste.
 - **session hooks** for write-tracking nudges and an end-of-session audit guard
 
 Updates: `/plugin marketplace update aimfp`. No Anthropic account, approval, or central registry is involved — the marketplace is just this public GitHub repo.
 
-> Tool pre-approval still applies to the plugin's MCP tools — see [Pre-Approve All AIMFP Tools](#claude-code-pre-approve-all-aimfp-tools-optional) below.
+> Tool pre-approval still applies to the plugin's MCP tools (named `mcp__plugin_aimfp_aimfp__*`; the allowlist covers both naming schemes) — see [Pre-Approve All AIMFP Tools](#claude-code-pre-approve-all-aimfp-tools-optional) below.
+
+> **Use one route per project.** If a project's `.mcp.json` already registers an `aimfp` server (Method 2/3), installing the plugin starts a second AIMFP server and every tool appears twice (`mcp__aimfp__*` and `mcp__plugin_aimfp_aimfp__*`). Remove the `.mcp.json` entry, or don't enable the plugin in that project.
 
 #### Method 2: pip install
 
@@ -703,7 +705,7 @@ Claude Code's design prompts you to approve each MCP tool the first time it's ca
 "Set up AIMFP permissions for Claude Code"
 ```
 
-The AI calls the `get_claude_permissions` tool, which returns the complete, current allowlist (generated live from the tool registry, so it can never be out of date or incomplete). The AI then writes — or, if you already have a `.claude/settings.local.json`, **merges into** — that file. Merging preserves every non-AIMFP permission and any other settings you already have; only the AIMFP entries are refreshed. AIMFP itself never writes the file (it never touches anything outside the project) — the AI does, with its normal file-write confirmation. The first call to `get_claude_permissions` is the one prompt you approve to eliminate all the rest.
+The AI calls the `get_claude_permissions` tool, which returns the complete, current allowlist (generated live from the tool registry, so it can never be out of date or incomplete). The AI then writes — or, if you already have a `.claude/settings.local.json`, **merges into** — that file. Merging preserves every non-AIMFP permission and any other settings you already have; only the AIMFP entries are refreshed. Each tool is allowlisted under both names Claude Code can give it — `mcp__aimfp__*` (a `.mcp.json` server) and `mcp__plugin_aimfp_aimfp__*` (the plugin) — so the file is right for either install route. AIMFP itself never writes the file (it never touches anything outside the project) — the AI does, with its normal file-write confirmation. The first call to `get_claude_permissions` is the one prompt you approve to eliminate all the rest.
 
 The two MCP-autostart keys (`enableAllProjectMcpServers` and `enabledMcpjsonServers`) are included automatically so the AIMFP server starts itself when you have a `.mcp.json` in the project.
 

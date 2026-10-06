@@ -120,11 +120,25 @@ def test_permissions_fresh_lists_all_registered_tools():
     assert r.success
     d = r.data
     allow = d["settings"]["permissions"]["allow"]
-    assert d["aimfp_tool_count"] == len(allow) == len(TOOL_REGISTRY)
+    assert d["aimfp_tool_count"] == len(TOOL_REGISTRY)
+    assert len(allow) == 2 * len(TOOL_REGISTRY)  # project .mcp.json + plugin
     assert d["merged"] is False
     assert d["settings"]["enableAllProjectMcpServers"] is True
     assert d["settings"]["enabledMcpjsonServers"] == ["aimfp"]
     assert "mcp__aimfp__get_system_prompt" in allow  # the new tool is included
+    assert "mcp__plugin_aimfp_aimfp__get_system_prompt" in allow
+
+
+def test_permissions_merge_refreshes_both_prefixes():
+    import json
+    existing = json.dumps({"permissions": {"allow": [
+        "mcp__aimfp__no_such_tool", "mcp__plugin_aimfp_aimfp__no_such_tool", "Bash(ls)",
+    ]}})
+    d = get_claude_permissions(existing).data
+    assert d["removed_stale"] == [
+        "mcp__aimfp__no_such_tool", "mcp__plugin_aimfp_aimfp__no_such_tool",
+    ]
+    assert d["preserved_other_permissions"] == ["Bash(ls)"]
 
 
 def test_permissions_merge_preserves_foreign_settings():

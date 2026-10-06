@@ -16,16 +16,26 @@ CALL aimfp_run(is_new_session=true)
 AIMFP TRACKING IS ALWAYS MANDATORY! Done coding? AIMFP TRACK EVERYTHING. Do not wait for or expect user to tell you to do this.
 After planning, DO NOT rely only on internal task creation, USE AIMFP PATHS/MILESTONES/TASKS/ITEMS. Never begin coding without AIMFP tasks. Never stop coding without AIMFP tracking.
 
+MODULARITY — THE "M" IN AIMFP, NOT A SIDENOTE
+
+  The project is a map, and every piece of work is placed on it BEFORE coding:
+    theme (stable area) → flow(s) (behaviour, each with ≥ 1 theme) → files → module (reusable domain code)
+    Completion paths advance themes; milestones build flows; tasks and files carry flow_ids.
+  - Domain logic lives in modules. Feature files are thin orchestrators that compose module functions — never business logic.
+  - Search before writing (search_modules, get_function_by_name): reuse > rewrite. New shared logic goes in its domain module.
+  - New behaviour → new flow: add_flow(name, theme_ids) + add_milestone_flows. A flow covering several behaviours is split; never stretch an unrelated flow or bulk code into one module.
+  - Map views: aimfp_status (flows/themes of the work in front of you + its gaps), get_all_themes / get_all_flows / get_all_modules, get_structure_health.
+  - Structure gaps (aimfp_status, aimfp_end, watchdog structure_gaps) are fixed in-session, never deferred.
+  Skipping the map produces code nobody can find, reuse, or change safely — it defeats the purpose of AIMFP.
+
 ALWAYS
 
 DB Tools: get_file_by_name, get_function_by_name, get_type_by_name, get_interactions_by_function, search_modules
 
-- Write FP-compliant code: pure functions, immutability, no OOP, no classes with methods, modular reuse (domain logic in domain modules — feature files are thin orchestrators that compose domain functions, never contain business logic)
-- BEFORE writing any function: search with DB Tools for overlapping logic. Reuse > rewrite. New shared logic goes in domain modules, not feature files. See get_supportive_context(variant='coding') for full DRY rules.
+- Write FP-compliant code: pure functions, immutability, no OOP, no classes with methods. Full FP + DRY rules: get_supportive_context(variant='coding')
 - Call get_directive_by_name(name) BEFORE executing any directive not in memory
 - Follow return_statements from tools — they are mandatory next-step guidance, not suggestions
 - Use DB Tools before reading source files — DB is the index, source files are last resort
-- Place every task in the modularity map BEFORE coding: theme (stable area) → flow(s) (behaviour) → module (reusable code). aimfp_status shows the flows/themes of the work in front of you and the gaps on it; the full map is get_all_themes / get_all_flows / get_all_modules / get_structure_health. New behaviour with no fitting flow → add_flow(name, theme_ids) — never stretch an unrelated flow or bulk code into one module
 - ALWAYS route ad-hoc work through get_directive_by_name('project_task_decomposition') BEFORE coding
 - Add_note(note_type='evolution') for architecture decisions, scope changes, blueprint edits
 - Update DB from discussions: architecture/infrastructure/task decisions → update_project, update_task, update_milestone, or add_note
@@ -50,7 +60,6 @@ LIFECYCLE & TRACKING GATE
   - Finalize functions with interactions added — DO NOT skip cross-function dependencies
   - Finalize functions with types_functions linked — DO NOT skip tracked type usage
   - Every file declares its flows at reserve (flow_ids; null only for config/data) — every flow has ≥ 1 theme
-  - structure gaps (aimfp_status structure, aimfp_end, watchdog structure_gaps reminder) are fixed in-session, not deferred
   - Assign domain logic files to modules via add_file_to_module — DO NOT skip. Orchestrators (pages, handlers, commands) do not need module assignment.
   - Every finalized code file must have tracked functions — DO NOT leave 0 (unless data-only/config-only)
 

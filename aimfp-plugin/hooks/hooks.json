@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "Before stopping, check: did the user explicitly request to end the session (said 'done', 'wrap up', 'end session', or similar)? If so, has aimfp_end been called for the session audit? If the user requested session end but aimfp_end was not called, respond with {\"decision\": \"block\", \"reason\": \"Call aimfp_end for session audit before stopping.\"}. If this is just a natural end to a response (not an explicit session end request), or if aimfp_end was already called, respond with {\"ok\": true}. Context: $ARGUMENTS",
+            "prompt": "Before stopping, check: did the user explicitly request to end the session (said 'done', 'wrap up', 'end session', or similar)? If so, has aimfp_end been called for the session audit? If the user requested session end but aimfp_end was not called, respond with {\"ok\": false, \"reason\": \"Call aimfp_end for session audit before stopping.\"}. If this is just a natural end to a response (not an explicit session end request), or if aimfp_end was already called, respond with {\"ok\": true}. Context: $ARGUMENTS",
             "timeout": 10
           }
         ]

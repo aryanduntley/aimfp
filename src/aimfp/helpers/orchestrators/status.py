@@ -12,6 +12,7 @@ All helpers target project.db only. No decision logic — AI interprets data.
 
 import json
 import sqlite3
+from dataclasses import asdict
 from typing import Optional, Tuple, Dict, Any, List
 
 from ._common import (
@@ -30,6 +31,7 @@ from ._common import (
 from ..project.task_files import WorkItemRef, query_current_focus_row, query_task_file_rows
 from ..shared.detail_level import DETAIL_FULL, DETAIL_LEAN, normalize_detail_level, pick_fields
 from ..shared.return_gates import gate_return_statements
+from ..project.note_refs import query_note_refs
 
 
 # ============================================================================
@@ -857,9 +859,13 @@ def get_task_context(
                 func_ids = tuple(f.get('id') for f in functions if f.get('id'))
                 data['interactions'] = _get_interactions_for_functions(conn, func_ids)
 
-            # Step 8 (optional): Note history
+            # Step 8: Note history in full, or else references to the attached notes
             if include_history:
                 data['notes'] = _get_notes_for_task(conn, task_type, task_id)
+            else:
+                note_refs = query_note_refs(conn, TASK_TABLE_MAP.get(task_type, ''), (task_id,))
+                if note_refs:
+                    data['notes'] = tuple(asdict(ref) for ref in note_refs)
 
             shaped = lean_task_context(data) if level == DETAIL_LEAN else {**data, 'detail_level': DETAIL_FULL}
             return Result(

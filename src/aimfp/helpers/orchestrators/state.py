@@ -28,7 +28,6 @@ from ._common import (
     ACTION_STATUS_MAP,
     ACTION_TARGET_MAP,
     VALID_PROGRESS_SCOPES,
-    TASK_TABLE_MAP,
 )
 
 
@@ -316,7 +315,7 @@ def update_project_state(
             # Optionally create note
             if create_note:
                 note_id = _create_action_note(
-                    conn, action, target_type, target_id, new_status
+                    conn, action, table, target_id, new_status
                 )
                 result_data['note_created'] = True
                 result_data['note_id'] = note_id
@@ -365,12 +364,11 @@ def _apply_additional_data(
 def _create_action_note(
     conn: sqlite3.Connection,
     action: str,
-    target_type: str,
+    ref_table: str,
     target_id: int,
     new_status: str,
 ) -> int:
-    """Effect: Create audit note for state change action."""
-    ref_table = TASK_TABLE_MAP.get(target_type, target_type + 's')
+    """Effect: Create audit note for state change action on the target's own table."""
     content = f"Action: {action} — status changed to '{new_status}'"
 
     cursor = conn.execute(

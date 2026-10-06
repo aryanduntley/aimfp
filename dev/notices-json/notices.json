@@ -49,6 +49,16 @@
       "applies_to_db": "project",
       "applies_from_version": "1.13",
       "introduced_in": "1.59.0"
+    },
+    {
+      "notice_key": "note_references_intro",
+      "title": "Lookups now show the notes attached to what they return; note references are validated",
+      "message": "Single-entity lookups (get_file_by_name, get_file_by_path, get_function_by_name, get_type_by_name, get_theme_by_name, get_flow_by_name, get_module_by_name, get_module_by_path, get_task_context) now return a 'notes' list: references (id, type, severity, reference_id) to the notes attached to the returned entity. Completed, obsolete and entry_deletion notes are left out. Read a note in full with get_notes_comprehensive(note_id=X). List lookups do not carry them.\n\nA note is attached through reference_table + reference_id, so add_note and update_note now refuse a reference_table that is not a project.db table. Earlier notes were never checked: a misspelled table (for example 'completion_paths' instead of 'completion_path', or 'file' instead of 'files') makes a note invisible to these lookups.\n\nTELL THE USER about the new note references, then OFFER a one-time audit of this project's existing notes: list the distinct reference_table values (get_notes_comprehensive, or query_project on the notes table), compare them with get_project_tables, and for each note on an unknown table, or pointing at a row that no longer exists (other than entry_deletion notes, which point at deleted rows by design), propose the correct reference and fix it with update_note(id, reference_table=..., reference_id=...). Apply only what the user approves.",
+      "severity": "info",
+      "action_required": true,
+      "applies_to_db": "project",
+      "applies_from_version": "1.14",
+      "introduced_in": "1.62.0"
     }
   ]
 }

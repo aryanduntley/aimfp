@@ -35,6 +35,14 @@ from ..utils import get_return_statements, Result
 
 TOOL_PREFIX: str = "mcp__aimfp__"
 
+# Claude Code names a plugin-bundled server's tools
+# mcp__plugin_<plugin>_<server>__<tool>; the aimfp plugin's server is "aimfp".
+PLUGIN_TOOL_PREFIX: str = "mcp__plugin_aimfp_aimfp__"
+
+# Both install routes (project .mcp.json and the Claude Code plugin) are
+# allowlisted, so the file is correct whichever one the user runs.
+TOOL_PREFIXES: tuple = (TOOL_PREFIX, PLUGIN_TOOL_PREFIX)
+
 TARGET_PATH: str = ".claude/settings.local.json"
 
 # Bundled system prompt (same file the MCP server serves via the initialize
@@ -58,12 +66,13 @@ EXTENSIVE_CHARS: int = 600
 # ============================================================================
 
 def _desired_aimfp_entries() -> list:
-    """Pure: the full, sorted set of mcp__aimfp__* allow entries, derived
-    live from TOOL_REGISTRY so it can never drift from the real tool set."""
+    """Pure: the full, sorted set of AIMFP allow entries (one per tool for
+    each prefix in TOOL_PREFIXES), derived live from TOOL_REGISTRY so it can
+    never drift from the real tool set."""
     # Local import: avoids any import-order coupling with the lazy-loading
     # registry (registry imports helper modules on demand via importlib).
     from ...mcp_server.registry import TOOL_REGISTRY
-    return sorted(f"{TOOL_PREFIX}{name}" for name in TOOL_REGISTRY)
+    return sorted(f"{prefix}{name}" for prefix in TOOL_PREFIXES for name in TOOL_REGISTRY)
 
 
 def _parse_existing(existing_settings: str):
@@ -226,7 +235,8 @@ def get_claude_permissions(existing_settings: str = "") -> Result:
             if the file already exists (read it and pass it in). When given,
             the result is a MERGE: every non-AIMFP `permissions.allow` entry
             and every other top-level key is preserved untouched; only the
-            `mcp__aimfp__*` entries are refreshed and the two MCP-autostart
+            AIMFP entries (mcp__aimfp__* and the plugin's
+            mcp__plugin_aimfp_aimfp__*) are refreshed and the two MCP-autostart
             keys are ensured. Omit/empty to get a fresh file.
 
     Returns:
@@ -234,9 +244,10 @@ def get_claude_permissions(existing_settings: str = "") -> Result:
             target_path: str (".claude/settings.local.json", project-relative),
             settings: dict (the final merged settings object),
             settings_json: str (pretty-printed, ready to write verbatim),
-            aimfp_tool_count: int,
-            added: list (mcp__aimfp__* entries newly added vs existing),
-            removed_stale: list (mcp__aimfp__* entries dropped — no longer
+            aimfp_tool_count: int (registered tools; the allowlist holds
+                one entry per tool for each of the two prefixes),
+            added: list (AIMFP entries newly added vs existing),
+            removed_stale: list (AIMFP entries dropped — no longer
                 registered tools),
             preserved_other_permissions: list (non-AIMFP allow entries kept),
             merged: bool (True if merged into supplied existing settings),
@@ -265,11 +276,11 @@ def get_claude_permissions(existing_settings: str = "") -> Result:
 
         existing_aimfp = [
             a for a in allow
-            if isinstance(a, str) and a.startswith(TOOL_PREFIX)
+            if isinstance(a, str) and a.startswith(TOOL_PREFIXES)
         ]
         other_perms = [
             a for a in allow
-            if not (isinstance(a, str) and a.startswith(TOOL_PREFIX))
+            if not (isinstance(a, str) and a.startswith(TOOL_PREFIXES))
         ]
 
         added = sorted(set(desired_aimfp) - set(existing_aimfp))
@@ -308,7 +319,7 @@ def get_claude_permissions(existing_settings: str = "") -> Result:
             "target_path": TARGET_PATH,
             "settings": settings,
             "settings_json": settings_json,
-            "aimfp_tool_count": len(desired_aimfp),
+            "aimfp_tool_count": len(desired_aimfp) // len(TOOL_PREFIXES),
             "added": added,
             "removed_stale": removed_stale,
             "preserved_other_permissions": other_perms,

@@ -1,6 +1,12 @@
 -- project.db Schema
--- Version: 1.13
+-- Version: 1.14
 -- Purpose: Track project-specific data, including files, functions, themes, flows, and completion paths
+-- Changelog v1.14:
+--   - Added idx_notes_reference on notes(reference_table, reference_id): single-entity getters
+--     (file/function/type/theme/flow/module lookups, get_task_context) now return references to
+--     the notes attached to what they return, so that lookup runs on every call.
+--   - add_note / update_note reject a reference_table that is not a project.db table; a note with
+--     a misspelled table ('completion_paths', 'file') could never be found by those lookups.
 -- Changelog v1.13:
 --   - Added completion_path_themes junction: a completion path names the themes (stable project
 --     areas) it advances. Themes change rarely, like paths.
@@ -603,6 +609,7 @@ CREATE INDEX IF NOT EXISTS idx_items_slug ON items(slug);
 CREATE INDEX IF NOT EXISTS idx_functions_entity_key ON functions(entity_key);
 CREATE INDEX IF NOT EXISTS idx_types_entity_key ON types(entity_key);
 CREATE INDEX IF NOT EXISTS idx_notes_directive ON notes(directive_name);
+CREATE INDEX IF NOT EXISTS idx_notes_reference ON notes(reference_table, reference_id);
 CREATE INDEX IF NOT EXISTS idx_notes_severity ON notes(severity);
 CREATE INDEX IF NOT EXISTS idx_notes_source ON notes(source);
 CREATE INDEX IF NOT EXISTS idx_notes_directive_send
@@ -707,4 +714,4 @@ CREATE TABLE IF NOT EXISTS schema_version (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.13');
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.14');

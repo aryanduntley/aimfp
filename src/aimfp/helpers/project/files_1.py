@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, List, Tuple, Union
 
 from ..utils import get_return_statements
+from .note_refs import NoteRef, query_note_refs, note_ref_return_statements
 
 # Import common project utilities (DRY principle)
 from .task_files import link_files_to_current_focus_effect
@@ -145,6 +146,7 @@ class FileQueryResult:
     success: bool
     file: Optional[FileRecord] = None
     error: Optional[str] = None
+    notes: Tuple[NoteRef, ...] = ()
     return_statements: Tuple[str, ...] = ()
 
 
@@ -154,6 +156,7 @@ class FilesQueryResult:
     success: bool
     files: Tuple[FileRecord, ...] = ()
     error: Optional[str] = None
+    notes: Tuple[NoteRef, ...] = ()
     return_statements: Tuple[str, ...] = ()
 
 
@@ -754,11 +757,13 @@ def get_file_by_name(
 
         # Pure: convert rows to immutable records
         file_records = tuple(row_to_file_record(row) for row in rows)
+        notes = query_note_refs(conn, 'files', (f.id for f in file_records))
 
         return FilesQueryResult(
             success=True,
             files=file_records,
-            return_statements=get_return_statements("get_file_by_name")
+            notes=notes,
+            return_statements=note_ref_return_statements(get_return_statements("get_file_by_name"), notes)
         )
 
     except Exception as e:
@@ -807,16 +812,18 @@ def get_file_by_path(
             return FileQueryResult(
                 success=True,
                 file=None,
-                return_statements=get_return_statements("get_file_by_path")
+                return_statements=note_ref_return_statements(get_return_statements("get_file_by_path"), ())
             )
 
         # Pure: convert row to immutable record
         file_record = row_to_file_record(row)
+        notes = query_note_refs(conn, 'files', (file_record.id,))
 
         return FileQueryResult(
             success=True,
             file=file_record,
-            return_statements=get_return_statements("get_file_by_path")
+            notes=notes,
+            return_statements=note_ref_return_statements(get_return_statements("get_file_by_path"), notes)
         )
 
     except Exception as e:

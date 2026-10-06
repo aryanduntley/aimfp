@@ -7,6 +7,9 @@ Files updated:
   - src/aimfp/__init__.py    (__version__ = "X.Y.Z")
   - src/aimfp/mcp_server/server.py  (SERVER_VERSION: Final[str] = "X.Y.Z")
   - .claude-plugin/plugin.json  ("version": "X.Y.Z")
+  - aimfp-plugin/.mcp.json      ("aimfp==X.Y.Z" — the plugin launches the
+                                 matching PyPI release, cached by uvx, so it
+                                 starts offline and updates with the plugin)
 
 After bumping, runs: rm -rf build dist src/*.egg-info && python3 -m build --no-isolation
 """
@@ -38,6 +41,11 @@ VERSION_FILES = {
     ".claude-plugin/plugin.json": {
         "path": ROOT / ".claude-plugin" / "plugin.json",
         "pattern": r'^(\s*"version"\s*:\s*")[^"]+(")',
+        "replace": r'\g<1>{version}\2',
+    },
+    "aimfp-plugin/.mcp.json": {
+        "path": ROOT / "aimfp-plugin" / ".mcp.json",
+        "pattern": r'("aimfp==)[^"]+(")',
         "replace": r'\g<1>{version}\2',
     },
 }

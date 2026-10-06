@@ -23,6 +23,7 @@ from typing import Optional, List, Tuple, Dict, Any
 
 # Import global utilities
 from ..utils import get_return_statements
+from .note_refs import NoteRef, query_note_refs, note_ref_return_statements
 from ..shared.slugs import mint_slug
 from ..shared.fts_query import (
     tokenize_search_terms, build_fts_match_expression, build_like_clause,
@@ -118,6 +119,7 @@ class TypeQueryResult:
     types: Tuple[TypeRecord, ...] = ()
     total_count: int = 0
     error: Optional[str] = None
+    notes: Tuple[NoteRef, ...] = ()
     return_statements: Tuple[str, ...] = ()
 
 
@@ -1369,7 +1371,7 @@ def get_type_by_name(
             return TypeQueryResult(
                 success=False,
                 error=f"No types found with name: {type_name}",
-                return_statements=get_return_statements("get_type_by_name")
+                return_statements=note_ref_return_statements(get_return_statements("get_type_by_name"), ())
             )
 
         # Pure: convert rows to records
@@ -1377,12 +1379,14 @@ def get_type_by_name(
             row_to_type_record(row, include_details=include_details, details_only=details_only)
             for row in rows
         )
+        notes = query_note_refs(conn, 'types', (t.id for t in type_records))
 
         return TypeQueryResult(
             success=True,
             types=type_records,
             total_count=len(type_records),
-            return_statements=get_return_statements("get_type_by_name")
+            notes=notes,
+            return_statements=note_ref_return_statements(get_return_statements("get_type_by_name"), notes)
         )
 
     except Exception as e:

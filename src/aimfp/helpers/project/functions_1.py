@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 
 from ..utils import get_return_statements
+from .note_refs import NoteRef, query_note_refs, note_ref_return_statements
 from ..shared.slugs import mint_slug
 from ..shared.fts_query import (
     tokenize_search_terms, build_fts_match_expression, build_like_clause,
@@ -107,6 +108,7 @@ class FunctionQueryResult:
     functions: Tuple[FunctionRecord, ...] = ()
     total_count: int = 0
     error: Optional[str] = None
+    notes: Tuple[NoteRef, ...] = ()
     return_statements: Tuple[str, ...] = ()
 
 
@@ -1011,12 +1013,14 @@ def get_function_by_name(
             row_to_function_record(row, include_details=include_details, details_only=details_only)
             for row in rows
         )
+        notes = query_note_refs(conn, 'functions', (f.id for f in function_records))
 
         return FunctionQueryResult(
             success=True,
             functions=function_records,
             total_count=len(function_records),
-            return_statements=get_return_statements("get_function_by_name")
+            notes=notes,
+            return_statements=note_ref_return_statements(get_return_statements("get_function_by_name"), notes)
         )
 
     except Exception as e:

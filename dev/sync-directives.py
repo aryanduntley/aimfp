@@ -309,24 +309,26 @@ def load_json_file(filepath: str) -> List[Dict[str, Any]]:
 # CATEGORY MANAGEMENT
 # ===================================
 
-def extract_categories_from_directives(all_entries: List[Dict[str, Any]]) -> Set[Tuple[str, str]]:
+def extract_categories_from_directives(all_entries: List[Dict[str, Any]]) -> Dict[str, str]:
     """
     Extract unique categories from directive entries.
-    Returns set of (name, description) tuples.
+    Returns {name: description}. A category name used with several descriptions
+    keeps the first one in directive load order, so every build is identical
+    (a set made the winner depend on PYTHONHASHSEED).
     """
-    categories = set()
+    categories: Dict[str, str] = {}
     for entry in all_entries:
         if "category" in entry and entry["category"]:
             cat = entry["category"]
             if isinstance(cat, dict):
                 name = cat.get("name", "")
                 description = cat.get("description", "")
-                if name:
-                    categories.add((name, description))
+                if name and name not in categories:
+                    categories[name] = description
     return categories
 
 
-def sync_categories(conn: sqlite3.Connection, categories: Set[Tuple[str, str]]) -> Dict[str, int]:
+def sync_categories(conn: sqlite3.Connection, categories: Dict[str, str]) -> Dict[str, int]:
     """
     Insert categories into categories table.
     Returns mapping of category_name -> category_id.
@@ -338,7 +340,7 @@ def sync_categories(conn: sqlite3.Connection, categories: Set[Tuple[str, str]]) 
     inserted = 0
 
     # Sort categories alphabetically by name for consistent ordering
-    for name, description in sorted(categories, key=lambda x: x[0]):
+    for name, description in sorted(categories.items()):
         # Insert or ignore
         cur.execute("""
             INSERT OR IGNORE INTO categories (name, description)

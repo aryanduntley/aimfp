@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
 from ..utils import get_return_statements
+from .note_refs import NoteRef, query_note_refs, note_ref_return_statements
 from ..shared.fts_query import (
     tokenize_search_terms, build_fts_match_expression, build_like_clause,
     DEFAULT_SEARCH_LIMIT, validate_result_limit, cap_results,
@@ -116,6 +117,7 @@ class ModuleQueryResult:
     success: bool
     module: Optional[ModuleRecord] = None
     error: Optional[str] = None
+    notes: Tuple[NoteRef, ...] = ()
     return_statements: Tuple[str, ...] = ()
 
 
@@ -593,12 +595,15 @@ def get_module_by_name(name: str, project_root: Optional[str] = None) -> ModuleQ
             return ModuleQueryResult(
                 success=True,
                 module=None,
-                return_statements=get_return_statements("get_module_by_name"),
+                return_statements=note_ref_return_statements(get_return_statements("get_module_by_name"), ()),
             )
+        module_record = row_to_module_record(row)
+        notes = query_note_refs(conn, 'modules', (module_record.id,))
         return ModuleQueryResult(
             success=True,
-            module=row_to_module_record(row),
-            return_statements=get_return_statements("get_module_by_name"),
+            module=module_record,
+            notes=notes,
+            return_statements=note_ref_return_statements(get_return_statements("get_module_by_name"), notes),
         )
 
     except Exception as e:
@@ -627,12 +632,15 @@ def get_module_by_path(path: str, project_root: Optional[str] = None) -> ModuleQ
             return ModuleQueryResult(
                 success=True,
                 module=None,
-                return_statements=get_return_statements("get_module_by_path"),
+                return_statements=note_ref_return_statements(get_return_statements("get_module_by_path"), ()),
             )
+        module_record = row_to_module_record(row)
+        notes = query_note_refs(conn, 'modules', (module_record.id,))
         return ModuleQueryResult(
             success=True,
-            module=row_to_module_record(row),
-            return_statements=get_return_statements("get_module_by_path"),
+            module=module_record,
+            notes=notes,
+            return_statements=note_ref_return_statements(get_return_statements("get_module_by_path"), notes),
         )
 
     except Exception as e:

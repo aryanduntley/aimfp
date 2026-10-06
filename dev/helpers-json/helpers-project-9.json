@@ -570,7 +570,7 @@
           "type": "string",
           "required": false,
           "default": null,
-          "description": "Table name this note references (e.g., 'items', 'files', 'completion_path')"
+          "description": "project.db table this note is attached to (e.g. 'files', 'tasks', 'flows', 'completion_path'). Must be an existing project.db table name, exactly: unknown names are refused, because the getters that surface attached notes look them up by table name."
         },
         {
           "name": "reference_id",
@@ -609,7 +609,7 @@
         }
       ],
       "purpose": "Record a decision, architecture change, or context event in the project's audit trail. Supports typed notes with optional directive linking.",
-      "error_handling": "Returns error if project.db not initialized, otherwise continues silently",
+      "error_handling": "Returns error if project.db not initialized, otherwise continues silently Refuses an unknown reference_table (not a project.db table) with the list of valid names and a did-you-mean hint for singular forms.",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [],
@@ -936,7 +936,7 @@
           "type": "string",
           "required": false,
           "default": null,
-          "description": "Update reference table"
+          "description": "New reference table (NULL = don't update). The project.db table the note is attached to (e.g. 'files', 'tasks', 'flows', 'completion_path'). Must be an existing project.db table name, exactly: unknown names are refused, because the getters that surface attached notes look them up by table name."
         },
         {
           "name": "reference_id",
@@ -975,7 +975,7 @@
         }
       ],
       "purpose": "Update note metadata",
-      "error_handling": "",
+      "error_handling": "Refuses an unknown reference_table (not a project.db table) with the list of valid names and a did-you-mean hint for singular forms.",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [],

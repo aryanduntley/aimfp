@@ -33,7 +33,7 @@ from ._common import _HIERARCHY_TABLES, _table_has_column, project_db_rel_path
 
 # Running-schema version the package expects (kept in step with project.sql's
 # schema_version seed). A recorded version below this means a migration is pending.
-EXPECTED_SCHEMA_VERSION = "1.13"
+EXPECTED_SCHEMA_VERSION = "1.14"
 
 
 def version_tuple(version: str) -> Tuple[int, ...]:

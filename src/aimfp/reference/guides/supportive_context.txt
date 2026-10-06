@@ -1,6 +1,6 @@
 AIMFP Supportive Context — Core Reference (get_supportive_context tool)
 
-  1. Modular — domain logic in reusable modules
+  1. Modular — every piece of work sits on the map: theme → flow → files → module; domain logic in reusable modules (NON-NEGOTIABLE)
   2. Functional Procedural — pure functions, immutability, no OOP (NON-NEGOTIABLE)
   3. Directive-Driven — workflows loaded from DB, not memory
   4. Database-Driven — DB is source of truth
@@ -58,7 +58,21 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
     Task completion gate: get_task_context(task_id) → files[] lists files linked to the task; verify each has tracked functions.
     aimfp_end → audit, stop watchdog, log summary.
 
-2. USER REQUEST ROUTING
+2. MODULARITY LAYER (the "M" in AIMFP — core, not optional)
+
+  theme   stable project area (changes rarely, like completion paths)
+  flow    one behaviour the code implements; ≥ 1 theme; evolves with milestones
+  file    declares its flow_ids at reserve (null + no_flow_reason only for config/data)
+  module  reusable domain code at a directory seam; feature files compose modules, never hold logic
+  Links: completion path → themes, milestone → flows, task/sidequest → flow_ids, file → flows, file → module.
+
+  Before any task: which theme? which flow(s)? which module will the logic live in?
+    No fitting flow → add_flow(name, theme_ids) + add_milestone_flows. Never stretch an unrelated flow.
+    No fitting module → add_module, after search_modules shows nothing to reuse.
+  A flow that grows past one behaviour is split (add_flow + move_files_to_flow) — project_theme_flow_mapping.
+  aimfp_status.structure = gaps on the active work; get_structure_health = all gaps. Fix in-session, don't defer.
+
+3. USER REQUEST ROUTING
 
   Route IN ORDER:
   1. Matches existing task/sidequest/subtask → continue progression
@@ -67,14 +81,14 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
   4. Needs code research → get_file_by_name / get_function_by_name / get_interactions_by_function FIRST
   5. Status/continue/resume → answer from context, call aimfp_status() only if stale
 
-3. AD-HOC WORK & ACCUMULATED CHANGES
+4. AD-HOC WORK & ACCUMULATED CHANGES
 
   User requests outside current task → project_task_decomposition FIRST.
   Multiple small fixes/requests accumulate into trackable work. After ANY code change:
   did this modify a tracked file? Add a function? Change params/returns/types?
   If YES → AIMFP tracking mandatory immediately. "Small" ≠ "untracked."
 
-4. NOTES REVIEW ON WORK START
+5. NOTES REVIEW ON WORK START
 
   Before beginning any task/sidequest/user request:
     search_notes(search_string=<keywords>, exclude_note_types=['completed','obsolete'])
@@ -82,43 +96,41 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
   aimfp_status(summary).recent_notes is metadata only (type, severity, reference, date): same rule.
   Empty = move on. Hits = review for decisions, deferred work, warnings.
   Handled notes → update_note(note_type='completed' or 'obsolete')
+  Single-entity lookups (get_file_by_*, get_function/type/theme/flow/module_by_*, get_task_context) also return
+  notes = refs to the notes attached to that entity: read relevant ones before changing it.
 
-5. DIRECTIVE EXECUTION
+6. DIRECTIVE EXECUTION
 
   ALWAYS load before executing: get_directive_by_name(name).
   Payloads omit keys with nothing to report; a return statement arrives only with the key it is about.
   Pattern: trunk (main analysis) → branches (conditional) → fallback.
   Deep context: get_directive_content(name). Directive flows ≠ project flows.
 
-6. FP DIRECTIVES & STATE DATABASE
+7. FP DIRECTIVES & STATE DATABASE
 
   66 FP directives in 18 categories. Find with get_fp_directive_index() or search_directives(type='fp', keyword='...').
   Key categories: purity, immutability, error_handling, composition, side_effects, anti_oop, type_system, testing.
   State database: auto-created via create_state_database. Replaces mutable globals (set_var, get_var, delete_var, increment_var).
 
-7. GIT & EVOLUTION NOTES
+8. GIT & EVOLUTION NOTES
 
   Branch naming: aimfp-{user}-{number}. Git directives: git_init, git_detect_external_changes, git_create_branch, git_detect_conflicts, git_merge_branch, git_sync_state.
   Any change to blueprint/paths/themes/flows/milestones MUST have add_note(note_type='evolution').
-  Modularity layer: theme (stable area) → flows (behaviour, ≥1 theme) → files; modules = reusable code.
-  Paths link themes, milestones link flows. aimfp_status.structure lists gaps on the active work
-  (get_structure_health lists all); fix, don't defer.
-  New behaviour gets a new flow; a flow that grows is split (project_theme_flow_mapping).
 
-8. EDGE CASES & RECOVERY
+9. EDGE CASES & RECOVERY
 
   Lost context? aimfp_status(type='summary') → state + this reference. get_supportive_context(variant) → reference only.
   search_directives(keyword="...") → find the right directive. aimfp_run(is_new_session=true) → full reload.
   Non-FP projects: STOP and REJECT. AIMFP is FP-only.
   DB policy: helpers FIRST → orchestrators → directives → direct SQL (last resort, reads only). Exception: user_directives.db.
 
-9. ADDITIONAL CONTEXT (auto-provided, reload on demand via get_supportive_context(variant=X))
+10. ADDITIONAL CONTEXT (auto-provided, reload on demand via get_supportive_context(variant=X))
 
   variant='init'    — auto-provided with aimfp_init() return. Discovery depth, initialization, post-completion paths
   variant='coding'  — auto-provided with aimfp_run(is_new_session=true) once a milestone exists. File loop, DRY, interactions, types_functions
   variant='case2'   — auto-provided with aimfp_run(is_new_session=true) when Case 2 active. User directive pipeline, preferences
 
-10. USER SETTINGS
+11. USER SETTINGS
 
   User preferences system: set_custom_return_statement (attach guidance to any helper — fires on every call), add_directive_preference (key-value prefs loaded with get_directive_by_name), add_user_setting (project-wide config), add_user_directive_note (AI interaction notes in user_directives.db). Use custom return statements for session-boundary behaviors, directive preferences for workflow customization, and user settings for project-wide flags/config.
 

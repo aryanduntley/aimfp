@@ -349,7 +349,8 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "File names are not unique — if several files match, pick by path. No match for a file that exists on disk means it is untracked: catalog_files (existing code) or reserve_file (new file)."
+        "File names are not unique — if several files match, pick by path. No match for a file that exists on disk means it is untracked: catalog_files (existing code) or reserve_file (new file).",
+        "[when:notes] notes lists the notes attached to the returned file(s) as references (id, type, severity, reference_id). Read the ones relevant to your work in full with get_notes_comprehensive(note_id=X) before acting; a deferred note you resolve -> update_note(note_type='completed')."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -394,7 +395,8 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "file is null for a path that exists on disk → the file is untracked: catalog_files (existing code) or reserve_file (new file)."
+        "file is null for a path that exists on disk → the file is untracked: catalog_files (existing code) or reserve_file (new file).",
+        "[when:notes] notes lists the notes attached to the returned file as references (id, type, severity, reference_id). Read the ones relevant to your work in full with get_notes_comprehensive(note_id=X) before acting; a deferred note you resolve -> update_note(note_type='completed')."
       ],
       "target_database": "project",
       "used_by_directives": [

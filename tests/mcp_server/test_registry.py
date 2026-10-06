@@ -198,20 +198,28 @@ def test_registry_covers_git():
 #
 # To fix a failure, regenerate the file from the registry:
 #
-#   python3 -c "import json; from aimfp.mcp_server.registry import \
-#   TOOL_REGISTRY as R; json.dump({'permissions': {'allow': \
-#   sorted(f'mcp__aimfp__{n}' for n in R)}, 'enableAllProjectMcpServers': \
-#   True, 'enabledMcpjsonServers': ['aimfp']}, \
-#   open('documentation/settings.local.json','w'), indent=2)"
+#   PYTHONPATH=src python3 -c "from aimfp.helpers.shared.claude_setup import \
+#   get_claude_permissions as g; \
+#   open('documentation/settings.local.json','w').write(g().data['settings_json'])"
+#
+# The file allowlists every tool under both prefixes: mcp__aimfp__ (project
+# .mcp.json) and mcp__plugin_aimfp_aimfp__ (Claude Code plugin).
 
 ALLOWLIST_PATH = Path(__file__).parents[2] / "documentation" / "settings.local.json"
 _TOOL_PREFIX = "mcp__aimfp__"
+_PLUGIN_TOOL_PREFIX = "mcp__plugin_aimfp_aimfp__"
 
 
-def _load_allowlist_tool_names() -> set[str]:
+def _load_allowlist_tool_names(prefix: str = _TOOL_PREFIX) -> set[str]:
     data = json.loads(ALLOWLIST_PATH.read_text())
     allow = data["permissions"]["allow"]
-    return {entry[len(_TOOL_PREFIX):] for entry in allow if entry.startswith(_TOOL_PREFIX)}
+    return {entry[len(prefix):] for entry in allow if entry.startswith(prefix)}
+
+
+def test_allowlist_plugin_prefix_matches_registry():
+    """Plugin installs name tools mcp__plugin_aimfp_aimfp__*; the shipped
+    allowlist must cover them exactly as it covers mcp__aimfp__*."""
+    assert _load_allowlist_tool_names(_PLUGIN_TOOL_PREFIX) == set(TOOL_REGISTRY)
 
 
 def test_allowlist_file_exists_and_is_valid_json():

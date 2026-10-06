@@ -30,6 +30,7 @@ from dataclasses import dataclass, replace
 from typing import Optional, List, Tuple
 
 from ..utils import get_return_statements
+from .note_refs import query_note_reference_tables, reference_table_error
 from ..shared.slugs import mint_slug
 from ..shared.fts_query import tokenize_search_terms, build_fts_match_expression, build_like_clause, validate_result_limit
 
@@ -1595,6 +1596,12 @@ def add_note(
     conn = _open_project_connection(project_root)
 
     try:
+        # A note is found through reference_table: an unknown name hides it forever
+        table_error = reference_table_error(reference_table, query_note_reference_tables(conn))
+        if table_error:
+            conn.close()
+            return AddResult(success=False, error=table_error)
+
         # Insert note
         note_id = _insert_note(
             conn, content, note_type, reference_table, reference_id,
@@ -1847,6 +1854,11 @@ def update_note(
                 success=False,
                 error=f"Note ID {id} not found"
             )
+
+        table_error = reference_table_error(reference_table, query_note_reference_tables(conn))
+        if table_error:
+            conn.close()
+            return UpdateResult(success=False, error=table_error)
 
         # Update note
         _update_note_fields(

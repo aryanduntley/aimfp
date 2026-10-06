@@ -272,7 +272,8 @@
         "BEFORE RESUMING WORK: Review the flows[] in the returned context (and the task's flow_ids — a file you add must declare one of them, or a new flow if none fits) — they describe the intended architecture and user-facing behavior. Use the returned files[] and functions as your lookup index BEFORE reading source files.",
         "MODULES: Review modules[] to see which code boundaries the task touches. If multiple modules appear, consider cross-module impacts via get_module_dependencies().",
         "If files[] is empty but work was done on this item (e.g. before it was in_progress): link the files with link_files_to_task(task_id, file_ids, task_type), then re-check.",
-        "[when:detail_level=lean] Lean context: function signatures, flow descriptions and completed items' descriptions are left out. Get them for what you are touching with get_functions_by_file(file_id) / get_function_by_name / get_flow_by_name, or call again with detail_level='full'."
+        "[when:detail_level=lean] Lean context: function signatures, flow descriptions and completed items' descriptions are left out. Get them for what you are touching with get_functions_by_file(file_id) / get_function_by_name / get_flow_by_name, or call again with detail_level='full'.",
+        "[when:notes] notes lists the notes attached to the returned task/subtask/sidequest (without include_history; with it, notes holds the full note history) as references (id, type, severity, reference_id). Read the ones relevant to your work in full with get_notes_comprehensive(note_id=X) before acting; a deferred note you resolve -> update_note(note_type='completed')."
       ],
       "implementation_notes": [
         "Returns: {task_item{}, task_type, items[], flows[], files[], functions[], modules[] (distinct modules owning task files), interactions[]?, notes[]?}",
