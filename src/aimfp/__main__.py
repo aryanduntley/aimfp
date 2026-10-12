@@ -9,6 +9,9 @@ exposing AIMFP helper functions as tools for AI assistants.
 Usage:
     python -m aimfp                  Start the MCP server (stdio)
     python -m aimfp --system-prompt  Print the AIMFP system prompt to stdout
+    python -m aimfp audit [...]      Audit tracking against the source (CI / pre-commit);
+                                     exit 0 clean, 1 blocking findings, 2 error.
+                                     `aimfp audit --help` lists the options.
     python -m aimfp --project-dir <rel>
                                      Keep this folder's project databases at
                                      <cwd>/<rel> instead of <cwd>/.aimfp-project.
@@ -47,7 +50,11 @@ def _apply_server_flags(argv: tuple) -> None:
 
 
 def main() -> None:
-    """Start the AIMFP MCP server, or print system prompt if --system-prompt flag is given."""
+    """Start the AIMFP MCP server, run `aimfp audit`, or print the system prompt."""
+    if len(sys.argv) > 1 and sys.argv[1] == "audit":
+        from .helpers.audit.cli import main_audit
+        sys.exit(main_audit(sys.argv[2:]))
+
     if "--system-prompt" in sys.argv:
         prompt_path = Path(__file__).parent / "reference" / "system_prompt.txt"
         if not prompt_path.exists():

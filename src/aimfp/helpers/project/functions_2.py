@@ -15,8 +15,8 @@ Helpers in this file:
 - delete_function: Delete function with validation and interaction cascade
 """
 
-import sqlite3
 import json
+import sqlite3
 from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 
@@ -25,7 +25,8 @@ from ..utils import get_return_statements
 
 # Import update_file_timestamp from files_2
 from .files_2 import update_file_timestamp
-from ._common import _open_connection, _check_file_exists, _check_function_exists, _create_deletion_note, get_cached_project_root, _open_project_connection
+from .functions_1 import serialize_params, serialize_returns
+from ._common import _open_connection, _check_file_exists, _check_function_exists, _create_deletion_note, get_cached_project_root, _open_project_connection, record_source_hashes
 
 
 # ============================================================================
@@ -101,6 +102,8 @@ class DeleteResult:
     file_id: Optional[int] = None
     error: Optional[str] = None
     type_relationships: Tuple[TypeRelationship, ...] = ()
+    interactions: Tuple[Dict[str, Any], ...] = ()  # edges that would be lost (refusal) or were moved/removed
+    interaction_count: int = 0
     return_statements: Tuple[str, ...] = ()  # AI guidance for next steps
 
 
@@ -125,38 +128,6 @@ def validate_function_id_pattern(name: str, function_id: int) -> bool:
     return expected_pattern in name
 
 
-def serialize_params(params: Optional[List[Dict[str, Any]]]) -> Optional[str]:
-    """
-    Serialize parameters to JSON string.
-
-    Pure function - deterministic serialization.
-
-    Args:
-        params: List of parameter objects
-
-    Returns:
-        JSON string or None
-    """
-    if params is None:
-        return None
-    return json.dumps(params)
-
-
-def serialize_returns(returns: Optional[Dict[str, Any]]) -> Optional[str]:
-    """
-    Serialize return specification to JSON string.
-
-    Pure function - deterministic serialization.
-
-    Args:
-        returns: Return value specification
-
-    Returns:
-        JSON string or None
-    """
-    if returns is None:
-        return None
-    return json.dumps(returns)
 
 
 def build_update_query(
@@ -619,6 +590,12 @@ def update_function(
         # Effect: execute update
         _update_function_effect(conn, sql, params)
 
+        # A rewritten description matches the code as it is now
+        if purpose is not None or parameters is not None or returns is not None:
+            current_name = conn.execute("SELECT name FROM functions WHERE id = ?", (function_id,)).fetchone()[0]
+            record_source_hashes(conn, ((function_id, file_id, current_name),), project_root)
+            conn.commit()
+
         conn.close()
 
         # Effect: update file timestamp (uses separate connection)
@@ -712,7 +689,14 @@ def update_functions_for_file(
                 error=f"Not all functions belong to file {file_id}"
             )
 
-        # Validate name patterns and prepare updates
+        # Validate name patterns and prepare updates (only for rows that use ID naming)
+        id_named = {
+            row["id"]: bool(row["id_in_name"])
+            for row in conn.execute(
+                f"SELECT id, id_in_name FROM functions WHERE id IN ({','.join('?' * len(function_ids))})",
+                tuple(function_ids),
+            ).fetchall()
+        }
         updates = []
         for func in functions:
             function_id = func.get("function_id")
@@ -721,8 +705,8 @@ def update_functions_for_file(
             parameters = func.get("parameters")
             returns = func.get("returns")
 
-            # Validate name pattern if provided
-            if name is not None and not validate_function_id_pattern(name, function_id):
+            # Validate name pattern if provided and the function uses ID naming
+            if name is not None and id_named.get(function_id) and not validate_function_id_pattern(name, function_id):
                 return BatchUpdateResult(
                     success=False,
                     error=f"Function name '{name}' must contain '_id_{function_id}' pattern"
@@ -738,6 +722,18 @@ def update_functions_for_file(
 
         # Effect: execute all updates in transaction
         _update_functions_batch_effect(conn, updates)
+
+        # Rewritten descriptions match the code as it is now
+        described = tuple(
+            f["function_id"] for f in functions
+            if any(f.get(k) is not None for k in ("purpose", "parameters", "returns"))
+        )
+        if described:
+            names = dict(conn.execute(
+                f"SELECT id, name FROM functions WHERE id IN ({','.join('?' * len(described))})", described
+            ).fetchall())
+            record_source_hashes(conn, ((fid, file_id, names[fid]) for fid in described), project_root)
+            conn.commit()
 
         conn.close()
 
@@ -878,19 +874,60 @@ def update_function_file_location(
         pass
 
 
+def plan_edge_repoints(
+    edges: Tuple[Dict[str, Any], ...],
+    function_id: int,
+    repoint_to: int,
+    existing: frozenset,
+) -> Tuple[Tuple[Dict[str, Any], ...], Tuple[Dict[str, Any], ...]]:
+    """
+    Pure: Split a function's edges into ones to move to repoint_to and ones to
+    drop because moving would make a self-edge or duplicate an existing edge.
+
+    Args:
+        edges: interactions rows where function_id is the source or target
+        function_id: The function being deleted
+        repoint_to: The function inheriting its edges
+        existing: (source, target, type) triples already tracked
+
+    Returns:
+        (moves as {id, source_function_id, target_function_id, old}, drops as rows)
+    """
+    moves: list = []
+    drops: list = []
+    taken = set(existing)
+    for edge in edges:
+        source = repoint_to if edge['source_function_id'] == function_id else edge['source_function_id']
+        target = repoint_to if edge['target_function_id'] == function_id else edge['target_function_id']
+        key = (source, target, edge['interaction_type'])
+        if source == target or key in taken:
+            drops.append(edge)
+            continue
+        taken.add(key)
+        moves.append({'id': edge['id'], 'source_function_id': source, 'target_function_id': target,
+                      'old': {'source_function_id': edge['source_function_id'],
+                              'target_function_id': edge['target_function_id']}})
+    return (tuple(moves), tuple(drops))
+
+
 def delete_function(
     function_id: int,
     note_reason: str,
     note_severity: str,
     note_source: str,
     note_type: str = "entry_deletion",
+    repoint_to: Optional[int] = None,
+    confirm_cascade: bool = False,
     project_root: Optional[str] = None
 ) -> DeleteResult:
     """
-    Delete function with validation and interaction cascade.
+    Delete a function, deciding explicitly what happens to its interactions.
 
-    Validates no type relationships exist before deletion. Requires manual unlinking
-    from types_functions first. Interactions cascade automatically via SQL.
+    A function with interactions is refused unless the caller chooses: move its
+    edges to the function that took over its job (repoint_to — the split/move
+    case), or let them go (confirm_cascade). Either way every moved or removed
+    edge is written into the deletion note, so the deletion can be undone.
+    Type relationships must be unlinked first (types_functions_exist).
 
     Args:
         function_id: Function ID to delete
@@ -898,23 +935,18 @@ def delete_function(
         note_severity: 'info', 'warning', 'error'
         note_source: 'ai' or 'user'
         note_type: Note type (default: 'entry_deletion')
+        repoint_to: Function ID that inherits this function's interactions
+            (edges that would become self-edges or duplicates are dropped)
+        confirm_cascade: Delete the function's interactions with it
 
     Returns:
-        DeleteResult with success status or type relationships list
+        DeleteResult with success status, or the interactions that block it
 
     Example:
-        >>> result = delete_function(
-        ...     99,
-        ...     note_reason="Function no longer needed",
-        ...     note_severity="info",
-        ...     note_source="ai"
-        ... )
+        >>> result = delete_function(99, note_reason="Split into parse/validate",
+        ...                          note_severity="info", note_source="ai", repoint_to=101)
         >>> result.success
         True
-        >>> result.deleted_function_id
-        99
-        >>> result.file_id
-        42
     """
     # Effect: open connection
     project_root = project_root or get_cached_project_root()
@@ -946,6 +978,30 @@ def delete_function(
                 type_relationships=type_rels
             )
 
+        if repoint_to is not None and (repoint_to == function_id or not _check_function_exists(conn, repoint_to)):
+            return DeleteResult(
+                success=False,
+                error=f"repoint_to {repoint_to} must be another existing function"
+            )
+
+        # Interactions: never lost silently
+        edges = tuple(dict(row) for row in conn.execute(
+            "SELECT * FROM interactions WHERE source_function_id = ? OR target_function_id = ? ORDER BY id",
+            (function_id, function_id)
+        ).fetchall())
+        if edges and repoint_to is None and not confirm_cascade:
+            return DeleteResult(
+                success=False,
+                error=(
+                    f"interactions_exist: function {function_id} has {len(edges)} interaction(s). "
+                    "Pass repoint_to=<function_id> to move them to the function that took over its "
+                    "job, or confirm_cascade=true to delete them with it (both are recorded in the "
+                    "deletion note)."
+                ),
+                interactions=edges[:50],
+                interaction_count=len(edges),
+            )
+
         # Get file_id before deletion
         file_id = _get_function_file_id(conn, function_id)
         if file_id is None:
@@ -954,19 +1010,43 @@ def delete_function(
                 error=f"Could not retrieve file_id for function {function_id}"
             )
 
-        # No blocking dependencies - proceed with deletion
-        # Create note entry
+        # Move the edges to their new owner first, so only true leftovers cascade
+        moved: Tuple[Dict[str, Any], ...] = ()
+        if repoint_to is not None and edges:
+            existing = frozenset(
+                (row[0], row[1], row[2]) for row in conn.execute(
+                    "SELECT source_function_id, target_function_id, interaction_type FROM interactions "
+                    "WHERE source_function_id = ? OR target_function_id = ?", (repoint_to, repoint_to)
+                ).fetchall()
+            )
+            moved, dropped = plan_edge_repoints(edges, function_id, repoint_to, existing)
+            for move in moved:
+                conn.execute(
+                    "UPDATE interactions SET source_function_id = ?, target_function_id = ? WHERE id = ?",
+                    (move['source_function_id'], move['target_function_id'], move['id'])
+                )
+        else:
+            dropped = edges
+
+        # No blocking dependencies - proceed with deletion; the note carries
+        # every moved and removed edge so the deletion can be undone
+        manifest = (
+            f"\nInteractions repointed to {repoint_to} (old endpoints): {json.dumps(moved)}" if moved else ""
+        ) + (
+            f"\nInteractions removed with the function (full rows): {json.dumps(dropped, default=str)}"
+            if dropped else ""
+        )
         _create_deletion_note(
             conn,
             "functions",
             function_id,
-            note_reason,
+            note_reason + manifest,
             note_severity,
             note_source,
             note_type
         )
 
-        # Delete function (interactions cascade automatically)
+        # Delete function (remaining interactions cascade, already recorded)
         _delete_function_effect(conn, function_id)
 
         # Success - fetch return statements from core database
@@ -976,6 +1056,8 @@ def delete_function(
             success=True,
             deleted_function_id=function_id,
             file_id=file_id,
+            interactions=moved + dropped,
+            interaction_count=len(edges),
             return_statements=return_statements
         )
 

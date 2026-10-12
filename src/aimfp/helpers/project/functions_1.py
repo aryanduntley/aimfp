@@ -16,11 +16,10 @@ Helpers in this file:
 """
 
 import sqlite3
-import json
 from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 
-from ..utils import get_return_statements
+from ..utils import get_return_statements, encode_json_field
 from .note_refs import NoteRef, query_note_refs, note_ref_return_statements
 from ..shared.slugs import mint_slug
 from ..shared.fts_query import (
@@ -35,6 +34,9 @@ from ._common import (
     get_cached_project_root,
     _open_project_connection,
     function_name_warnings,
+    function_signature_warnings,
+    record_source_hashes,
+    strip_dot_slash,
 )
 
 from .files_2 import update_file_timestamp
@@ -141,37 +143,32 @@ def validate_function_id_in_name(name: str, function_id: int) -> bool:
 
 def serialize_params(params: Optional[List[Dict[str, Any]]]) -> Optional[str]:
     """
-    Serialize parameters to JSON string.
+    Pure: Serialize parameters for the functions.parameters column.
 
-    Pure function - deterministic serialization.
+    Delegates to encode_json_field, so a caller passing already-encoded JSON
+    text is stored once, never as a JSON string wrapping JSON.
 
     Args:
-        params: List of parameter objects
+        params: List of parameter objects, pre-encoded JSON text, or None
 
     Returns:
         JSON string or None
     """
-    if params is None:
-        return None
-    return json.dumps(params)
-
+    return encode_json_field(params)
 
 def serialize_returns(returns: Optional[Dict[str, Any]]) -> Optional[str]:
     """
-    Serialize return specification to JSON string.
+    Pure: Serialize a return specification for the functions.returns column.
 
-    Pure function - deterministic serialization.
+    Delegates to encode_json_field (see serialize_params).
 
     Args:
-        returns: Return value specification
+        returns: Return value specification, pre-encoded JSON text, or None
 
     Returns:
         JSON string or None
     """
-    if returns is None:
-        return None
-    return json.dumps(returns)
-
+    return encode_json_field(returns)
 
 def row_to_function_record(
     row: sqlite3.Row,
@@ -691,8 +688,14 @@ def finalize_function(
             final_returns
         )
 
-        # Warn (never refuse) when the name is not defined in the file's source
-        warnings = function_name_warnings(conn, ((file_id, name),), project_root)
+        # Warn (never refuse) when the name is not defined in the file's source,
+        # or the recorded parameters disagree with its signature
+        warnings = function_name_warnings(conn, ((file_id, name),), project_root) + \
+            function_signature_warnings(conn, ((file_id, name, final_params),), project_root)
+
+        # The description now matches the code: remember the code it describes
+        record_source_hashes(conn, ((function_id, file_id, name),), project_root)
+        conn.commit()
 
         conn.close()
 
@@ -843,8 +846,18 @@ def finalize_functions(
         # Effect: finalize all functions in transaction
         _finalize_functions_batch_effect(conn, validated_finalizations)
 
-        # Warn (never refuse) for names not defined in their file's source
-        warnings = function_name_warnings(conn, named_functions, project_root)
+        # Warn (never refuse) for names not defined in their file's source,
+        # and for recorded parameters that disagree with the signature
+        checked = tuple(
+            (file_id, func_id, func_name, func_params)
+            for (file_id, _), (func_id, func_name, _, func_params, _) in zip(named_functions, validated_finalizations)
+        )
+        warnings = function_name_warnings(conn, named_functions, project_root) + \
+            function_signature_warnings(conn, ((f, n, p) for f, _, n, p in checked), project_root)
+
+        # The descriptions now match the code: remember the code they describe
+        record_source_hashes(conn, ((i, f, n) for f, i, n, _ in checked), project_root)
+        conn.commit()
 
         conn.close()
 
@@ -975,6 +988,8 @@ def get_function_by_name(
     function_name: str,
     include_details: bool = True,
     details_only: bool = False,
+    file_path: Optional[str] = None,
+    file_id: Optional[int] = None,
     project_root: Optional[str] = None
 ) -> FunctionQueryResult:
     """
@@ -982,10 +997,13 @@ def get_function_by_name(
 
     Queries functions table for exact name match with file data via JOIN.
     Returns all matches since multiple functions can share the same name
-    across different files (e.g., main() in multiple __main__.py files).
+    across different files (e.g., main() in multiple __main__.py files);
+    file_path or file_id narrows to one file.
 
     Args:
         function_name: Function name to look up (e.g., 'calculate_sum_id_42' or 'main')
+        file_path: Only the function defined in this project-relative file
+        file_id: Only the function defined in this tracked file
 
     Returns:
         FunctionQueryResult with tuple of function records including file_name and file_path
@@ -1006,7 +1024,11 @@ def get_function_by_name(
     conn = _open_project_connection(project_root)
 
     try:
-        rows = _get_function_by_name_effect(conn, function_name)
+        rows = tuple(
+            row for row in _get_function_by_name_effect(conn, function_name)
+            if (file_id is None or row["file_id"] == file_id)
+            and (file_path is None or row["file_path"] == strip_dot_slash(file_path))
+        )
 
         # Pure: convert rows to immutable records
         function_records = tuple(

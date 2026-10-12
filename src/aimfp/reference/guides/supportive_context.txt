@@ -55,7 +55,9 @@ Four databases: aimfp_core.db (read-only directives/helpers), project.db (files/
     aimfp_status() → quick position: path, milestone, focus + open items, open work, gap count.
     aimfp_status(type='summary') → full reload after lost/compacted context (includes this reference).
     get_supportive_context(variant) → reload reference material on demand.
-    Task completion gate: get_task_context(task_id) → files[] lists files linked to the task; verify each has tracked functions.
+    Task completion gate: completing a task/subtask/sidequest audits its linked files (functions, params, types, edges);
+      blocking drift refuses it with the exact fix calls — pre-flight with audit_tracking(task_id) to avoid that.
+      Setting audit_gate = block (default) | warn | off.
     aimfp_end → audit, stop watchdog, log summary.
 
 2. MODULARITY LAYER (the "M" in AIMFP — core, not optional)

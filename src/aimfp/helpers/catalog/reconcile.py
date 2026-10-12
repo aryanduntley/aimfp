@@ -42,6 +42,7 @@ from ..utils import (
 )
 from ..project.interactions import _insert_interaction_if_new
 from ..project.task_files import link_files_to_current_focus_effect
+from ..project._common import store_source_hash
 from ...watchdog.config import build_exclusion_sets, detect_language, should_exclude
 from ...watchdog.reconciliation import _read_user_exclusions, _read_watchdogignore
 from .callgraph import (
@@ -346,14 +347,20 @@ def _effect_sync_file_entities(
     tracked_functions = _effect_names(conn, "functions", file_id)
     tracked_types = _effect_names(conn, "types", file_id)
 
-    functions_added = tuple(
-        {"id": _effect_upsert_function(
+    added: List[Dict[str, Any]] = []
+    for fn in entities.functions:
+        if fn.name in tracked_functions:
+            continue
+        function_id = _effect_upsert_function(
             conn, fn.name, file_id, supplied_or_none(fn.purpose),
             serialize_json_field(list(fn.parameters)),
             serialize_json_field(fn.returns),
-        )[0], "name": fn.name, "path": path}
-        for fn in entities.functions if fn.name not in tracked_functions
-    )
+        )[0]
+        # A docstring purpose describes this code; without one there is nothing to baseline
+        if fn.purpose:
+            store_source_hash(conn, function_id, fn.body_hash)
+        added.append({"id": function_id, "name": fn.name, "path": path})
+    functions_added = tuple(added)
     types_added = tuple(
         {"id": _effect_upsert_type(
             conn, ty.name, file_id, serialize_json_field(ty.definition),

@@ -718,6 +718,54 @@ def parse_json_field(value: Optional[str]) -> Optional[Any]:
         return None
 
 
+def decode_json_layers(value: Any, max_layers: int = 4) -> Any:
+    """
+    Pure: Peel JSON encoding off a value until it is no longer an encoded string.
+
+    A JSON column written by json.dumps over an already-encoded string holds a
+    JSON string that wraps JSON ('"[{\\"name\\": ...}]"'). Each layer is decoded
+    while the value is a str that parses; a str that does not parse is plain
+    text and is returned as-is.
+
+    Args:
+        value: Raw value (str from a column or caller, or an already-decoded value)
+        max_layers: Cap on layers peeled, so pathological input cannot loop
+
+    Returns:
+        The innermost decoded value
+    """
+    current = value
+    for _ in range(max_layers):
+        if not isinstance(current, str):
+            return current
+        try:
+            current = json.loads(current)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return current
+    return current
+
+
+def encode_json_field(value: Any) -> Optional[str]:
+    """
+    Pure: Serialize a value for a JSON column exactly once.
+
+    Callers pass lists/dicts, or strings they already encoded (an MCP client
+    echoing a stored value, a model passing JSON text). Strings are decoded first
+    (decode_json_layers), so the column never holds JSON wrapped in a JSON string.
+    A decoded null is stored as SQL NULL, so completeness gates still see it.
+
+    Args:
+        value: List, dict, scalar, pre-encoded JSON string, or None
+
+    Returns:
+        JSON text, or None when the value is absent
+    """
+    decoded = decode_json_layers(value)
+    if decoded is None:
+        return None
+    return json.dumps(decoded)
+
+
 def json_to_tuple(value: Optional[str]) -> Tuple[Any, ...]:
     """Pure: Parse JSON array field to tuple. Returns empty tuple on failure."""
     parsed = parse_json_field(value)

@@ -273,7 +273,8 @@
         "MODULES: Review modules[] to see which code boundaries the task touches. If multiple modules appear, consider cross-module impacts via get_module_dependencies().",
         "If files[] is empty but work was done on this item (e.g. before it was in_progress): link the files with link_files_to_task(task_id, file_ids, task_type), then re-check.",
         "[when:detail_level=lean] Lean context: function signatures, flow descriptions and completed items' descriptions are left out. Get them for what you are touching with get_functions_by_file(file_id) / get_function_by_name / get_flow_by_name, or call again with detail_level='full'.",
-        "[when:notes] notes lists the notes attached to the returned task/subtask/sidequest (without include_history; with it, notes holds the full note history) as references (id, type, severity, reference_id). Read the ones relevant to your work in full with get_notes_comprehensive(note_id=X) before acting; a deferred note you resolve -> update_note(note_type='completed')."
+        "[when:notes] notes lists the notes attached to the returned task/subtask/sidequest (without include_history; with it, notes holds the full note history) as references (id, type, severity, reference_id). Read the ones relevant to your work in full with get_notes_comprehensive(note_id=X) before acting; a deferred note you resolve -> update_note(note_type='completed').",
+        "BEFORE COMPLETING: audit_tracking(task_id=<id>, task_type=<type>) runs the same audit the completion gate runs. Clear its blocking findings first (its result names the fix calls) so update_task(status='completed') is not refused."
       ],
       "implementation_notes": [
         "Returns: {task_item{}, task_type, items[], flows[], files[], functions[], modules[] (distinct modules owning task files), interactions[]?, notes[]?}",
@@ -419,7 +420,7 @@
           "type": "object",
           "required": false,
           "default": null,
-          "description": "Action-specific data (e.g., blocked_by, completion_notes)"
+          "description": "Action-specific data (e.g., blocked_by, completion_notes) data.audit_override_reason completes a task/subtask/sidequest despite blocking tracking-audit findings (recorded as a warning note); completions are otherwise refused when the item's linked files have blocking drift."
         },
         {
           "name": "create_note",
@@ -436,7 +437,8 @@
       "return_statements": [
         "State updated. If task completed: check if all tasks in milestone are complete, consider marking milestone complete.",
         "If task blocked: create sidequest to resolve blocker, then unblock and resume.",
-        "If task started (action=start_task): BEFORE CODING — check get_all_flows() and get_task_flows(task_id) for relevant workflow descriptions. Use DB lookups (get_function_by_name, get_type_by_name, get_functions_by_file) to understand existing code BEFORE reading source files."
+        "If task started (action=start_task): BEFORE CODING — check get_all_flows() and get_task_flows(task_id) for relevant workflow descriptions. Use DB lookups (get_function_by_name, get_type_by_name, get_functions_by_file) to understand existing code BEFORE reading source files.",
+        "If a complete_* action was REFUSED by the tracking audit: the error lists the blocking categories, the report path and the exact fix calls — run them and retry, or pass data={'audit_override_reason': '<why>'} (recorded as a warning note). data.audit, when present, carries warnings, would_block (audit_gate='warn') or overridden=true."
       ],
       "implementation_notes": [
         "Returns: {success, updated_entity{}, note_created?, note_id?}",
@@ -458,7 +460,7 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "List of update objects: [{target_type, target_id, action, data}, ...]",
+          "description": "List of update objects: [{target_type, target_id, action, data}, ...] data.audit_override_reason completes a task/subtask/sidequest despite blocking tracking-audit findings (recorded as a warning note); completions are otherwise refused when the item's linked files have blocking drift.",
           "items": {
             "type": "object",
             "properties": {
@@ -502,7 +504,8 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Batch update complete. Review any failures and retry individually if needed."
+        "Batch update complete. Review any failures and retry individually if needed.",
+        "If a complete_* action was REFUSED by the tracking audit: the error lists the blocking categories, the report path and the exact fix calls — run them and retry, or pass data={'audit_override_reason': '<why>'} on that update (recorded as a warning note). data.audit, when present, carries warnings, would_block (audit_gate='warn') or overridden=true. A refused completion inside a transaction rolls back the whole batch."
       ],
       "implementation_notes": [
         "Returns: {success, updated_count, failed_count, results[{success, entity, error?}]}",
@@ -658,7 +661,7 @@
       "name": "aimfp_end",
       "file_path": "helpers/orchestrators/entry_points.py",
       "parameters": [],
-      "purpose": "Session termination orchestrator. Gathers session audit data: reads watchdog state and final reminders, queries all files and functions from DB for AI to cross-reference, reads recent notes and task state. Stops watchdog process if running. Returns structured audit data for AI to interpret and act on. No analysis logic — AI determines what is stale or missing.",
+      "purpose": "Session termination orchestrator. Gathers session audit data: reads watchdog state and final reminders, queries all files and functions from DB for AI to cross-reference, reads recent notes and task state. Stops watchdog process if running. Returns structured audit data for AI to interpret and act on. No analysis logic — AI determines what is stale or missing. Also runs the tracking audit (functions, interactions, descriptions) over the session's uncommitted changes (or the in-progress work item's files without git) and returns data.audit with counts, verdict and report_path.",
       "error_handling": "Returns {initialized: false} if .aimfp-project/ does not exist. Returns partial data if watchdog PID file missing (watchdog not implemented or not running). Never fails hard — always returns what it can gather.",
       "is_tool": true,
       "is_sub_helper": false,
@@ -666,6 +669,8 @@
         "AI should compare returned file/function lists against session work to identify untracked items.",
         "AI should review returned task/milestone state for any needed progress updates.",
         "MODULARITY REVIEW: data.structure_health lists gaps in themes/flows/modules. Fix the ones this session created (new files without flows or modules, new flows without themes, milestones without flows) before ending; report the rest to the user with counts. If a flow's description grew this session, check whether it should be split (oversized_flows).",
+        "[when:audit.warnings] data.audit warnings (unconfirmed edges, stale descriptions, missing type links): review them in data.audit.report_path; mention any left unresolved in the session summary.",
+        "[when:audit.blocking] SESSION AUDIT: data.audit found blocking tracking drift in this session's changed files (counts per category; full list in data.audit.report_path). Fix it before ending — apply_audit_fixes(report=<report_path>, apply=[...]) for interactions, stale rows, parameters and JSON; reconcile_paths for missing functions/types; update_function for incomplete prose — then report what remains to the user.",
         "AI should use returned watchdog reminders (if any) to address outstanding issues.",
         "AI should generate session summary from returned data and present to user.",
         "AI handles all FP compliance checking — helper only returns code data for AI to review.",

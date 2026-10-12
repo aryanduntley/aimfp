@@ -1,6 +1,13 @@
 -- project.db Schema
--- Version: 1.14
+-- Version: 1.15
 -- Purpose: Track project-specific data, including files, functions, themes, flows, and completion paths
+-- Changelog v1.15:
+--   - Added interactions.is_indirect: marks a deliberate edge the code does not make by direct call
+--     or name reference (dispatch through a tuple/table of functions, chain data-flow links), so
+--     audit_interactions never reports it as stale.
+--   - Added functions.source_hash: hash of the function's code (docstring excluded, formatting
+--     normalized) recorded when its purpose/parameters/returns are written. audit_descriptions
+--     flags a description whose code changed after it was written.
 -- Changelog v1.14:
 --   - Added idx_notes_reference on notes(reference_table, reference_id): single-entity getters
 --     (file/function/type/theme/flow/module lookups, get_task_context) now return references to
@@ -131,6 +138,7 @@ CREATE TABLE IF NOT EXISTS functions (
     returns JSON,                           -- e.g., '{"type": "int", "description": "Sum of inputs"}'
     is_reserved BOOLEAN DEFAULT 0,          -- TRUE during reservation, FALSE after finalization
     id_in_name BOOLEAN DEFAULT 1,           -- TRUE if name contains _id_XX pattern, FALSE if ID naming skipped
+    source_hash TEXT,                       -- Code hash when purpose/parameters/returns were last written (NULL = never baselined)
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
@@ -171,6 +179,7 @@ CREATE TABLE IF NOT EXISTS interactions (
     target_function_id INTEGER NOT NULL,
     interaction_type TEXT NOT NULL CHECK (interaction_type IN ('call', 'chain', 'borrow', 'compose', 'pipe')),
     description TEXT,
+    is_indirect BOOLEAN DEFAULT 0,          -- Deliberate edge the code makes indirectly (dispatch table, chain link); audits never flag it stale
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (source_function_id) REFERENCES functions(id) ON DELETE CASCADE,
@@ -714,4 +723,4 @@ CREATE TABLE IF NOT EXISTS schema_version (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.14');
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.15');

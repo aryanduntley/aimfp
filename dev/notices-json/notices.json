@@ -59,6 +59,16 @@
       "applies_to_db": "project",
       "applies_from_version": "1.14",
       "introduced_in": "1.62.0"
+    },
+    {
+      "notice_key": "tracking_audit_intro",
+      "title": "Tracking audits: AIMFP now checks project.db against the code, and gates task completion on it",
+      "message": "New tools compare what project.db records with what the source actually says, and repair the drift in bulk:\n- audit_tracking (or the focused audit_functions / audit_interactions / audit_descriptions): missing or stale functions and types, parameter drift (names, order, required vs default), malformed JSON, missing/stale interactions with repoint suggestions when a call moved, descriptions written for older code, and descriptions naming functions that no longer exist. Full findings go to a report file in the project folder's audit/ directory; the tool returns counts and samples.\n- apply_audit_fixes applies whole finding categories straight from a report in one transaction, and writes a restore-manifest note listing every row it deleted or changed.\n\nBEHAVIOUR CHANGES: completing a task, subtask or sidequest now audits its linked files and REFUSES completion on blocking drift (the error names the categories, the report path and the exact fix calls; audit_override_reason completes anyway and records a warning note). The user setting audit_gate controls this: block (default), warn (complete, but report what would block), off. A project with a lot of legacy drift can use warn until it is cleaned up. delete_function now refuses a function that still has interactions unless repoint_to (successor) or confirm_cascade is given. aimfp_end reports an audit of the session's uncommitted changes. The watchdog re-audits changed Python files and keeps one audit_drift reminder per file. `aimfp audit` runs the same audit from the command line for CI (exit 1 on blocking drift).\n\nTELL THE USER about the audits, the completion gate and the audit_gate setting, then ASK whether to run audit_tracking() over the whole project now. Existing projects usually have drift the old tools could not see (in AIMFP's own database: double-encoded JSON, parameters that never followed signature changes, and interaction edges credited to the wrong function). If yes: run it, apply the mechanical categories with apply_audit_fixes(report=..., apply=[...]), catalog missing functions with reconcile_paths, and fix incomplete prose. Descriptions have no code hash yet after this migration: once their prose is reviewed, apply 'unbaselined_descriptions' so later code changes are detected.",
+      "severity": "info",
+      "action_required": true,
+      "applies_to_db": "project",
+      "applies_from_version": "1.15",
+      "introduced_in": "1.63.0"
     }
   ]
 }

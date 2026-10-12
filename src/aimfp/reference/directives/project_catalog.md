@@ -282,6 +282,7 @@ Prompt user to set `source_directory` before cataloging can proceed. Cannot scan
 4. **Log everything** — Use notes for catalog progress and any anomalies
 5. **Don't block on impurity** — Flag it, don't refuse to catalog it
 6. **Reserve-finalize pattern** — Always use reserve → finalize for DB entries
+7. **Verify, then repair in bulk** — after adopting or re-scanning, audit_tracking (whole project or module_path) compares the database with the code; apply_audit_fixes applies its mechanical findings from the report file in one transaction with a restore manifest
 
 ---
 

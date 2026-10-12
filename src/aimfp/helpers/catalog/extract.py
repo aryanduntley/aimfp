@@ -23,6 +23,7 @@ it or register the file with zero entities.
 """
 
 import ast
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
@@ -61,6 +62,7 @@ class ExtractedFunction:
     is_private: bool = False
     is_effect: bool = False
     is_nested: bool = False
+    body_hash: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -302,6 +304,153 @@ def class_field_records(node: ast.ClassDef) -> Tuple[Dict[str, Any], ...]:
     return tuple(records)
 
 
+def function_body_hash(node: ast.AST) -> str:
+    """
+    Pure: A short, stable hash of a function's code.
+
+    Built from the AST, so formatting and comments never change it, and the
+    docstring is left out, so editing the description in the code does not
+    either. The name is left out too: a rename alone does not make a
+    description wrong. Signature, decorators and body all count.
+
+    Args:
+        node: A FunctionDef or AsyncFunctionDef node
+
+    Returns:
+        16 hex characters of a SHA-256 over the normalized code
+    """
+    body = list(node.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0], 'value', None), ast.Constant) \
+            and isinstance(body[0].value.value, str):
+        body = body[1:]
+    parts = (
+        [type(node).__name__, ast.dump(node.args)]
+        + [ast.dump(node.returns) if node.returns is not None else '']
+        + [ast.dump(d) for d in node.decorator_list]
+        + [ast.dump(statement) for statement in body]
+    )
+    return hashlib.sha256('\n'.join(parts).encode('utf-8')).hexdigest()[:16]
+
+
+def python_function_hashes(source: str) -> Dict[str, str]:
+    """
+    Pure: Body hash of every top-level function in Python source.
+
+    Args:
+        source: Full text of a Python file
+
+    Returns:
+        Dict of function name -> function_body_hash; empty when the source
+        does not parse
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return {}
+    return {
+        node.name: function_body_hash(node)
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def bare_parameter_name(name: Any) -> str:
+    """Pure: A parameter name without '*' / '**' and surrounding space."""
+    return str(name).strip().lstrip('*').strip()
+
+
+def recorded_parameter_facts(recorded: Any) -> Optional[Tuple[Tuple[str, Optional[bool]], ...]]:
+    """
+    Pure: (name, required) for each recorded parameter; required is None when
+    the record does not say.
+
+    Recorded parameters come in several shapes. A dict with 'required' says so
+    directly. A dict with 'kind' is a catalog record, where a null 'default'
+    means no default. Any other dict with a 'default' key has a default (null
+    meaning None). A string 'name: type = value' has a default when it has '='.
+
+    Args:
+        recorded: Decoded functions.parameters value
+
+    Returns:
+        Tuple of facts, or None when the value is not a list of parameters
+    """
+    if not isinstance(recorded, list):
+        return None
+    facts: list = []
+    for item in recorded:
+        if isinstance(item, dict) and item.get('name'):
+            name = bare_parameter_name(item['name'])
+            if str(item['name']).lstrip().startswith('*') or item.get('kind') in ('var_positional', 'var_keyword'):
+                required: Optional[bool] = False
+            elif isinstance(item.get('required'), bool):
+                required = item['required']
+            elif 'kind' in item:
+                required = item.get('default') is None
+            elif 'default' in item:
+                required = False
+            else:
+                required = None
+            facts.append((name, required))
+        elif isinstance(item, str) and item.strip():
+            head = item.split('=', 1)[0].split(':', 1)[0]
+            facts.append((bare_parameter_name(head), False if '=' in item else None))
+        else:
+            return None
+    return tuple(facts)
+
+
+def source_parameter_facts(parameters: Tuple[Dict[str, Any], ...]) -> Tuple[Tuple[str, bool], ...]:
+    """Pure: (name, required) for each parameter_records entry."""
+    return tuple(
+        (bare_parameter_name(p['name']),
+         p.get('default') is None and p.get('kind') not in ('var_positional', 'var_keyword'))
+        for p in parameters
+    )
+
+
+def parameter_mismatches(recorded: Any, parameters: Tuple[Dict[str, Any], ...]) -> Tuple[str, ...]:
+    """
+    Pure: How recorded parameters disagree with the code's signature.
+
+    Compares names, their order, and — where the record says — whether each
+    parameter is required (the code gives no default). Empty when they agree.
+
+    Args:
+        recorded: Decoded functions.parameters value
+        parameters: parameter_records of the function in the source
+
+    Returns:
+        One message per disagreement
+    """
+    facts = recorded_parameter_facts(recorded)
+    if facts is None:
+        return ("recorded parameters are not a list of parameters",)
+    code = source_parameter_facts(parameters)
+    recorded_names = tuple(name for name, _ in facts)
+    code_names = tuple(name for name, _ in code)
+    problems: list = []
+    absent = tuple(n for n in code_names if n not in recorded_names)
+    extra = tuple(n for n in recorded_names if n not in code_names)
+    if absent:
+        problems.append(f"not recorded: {', '.join(absent)}")
+    if extra:
+        problems.append(f"recorded but not in the code: {', '.join(extra)}")
+    shared = tuple(n for n in code_names if n in recorded_names)
+    if not absent and not extra and recorded_names != code_names:
+        problems.append(f"order differs: code ({', '.join(code_names)}), recorded ({', '.join(recorded_names)})")
+    elif shared != tuple(n for n in recorded_names if n in code_names):
+        problems.append("order differs among shared parameters")
+    required_in_code = dict(code)
+    for name, required in facts:
+        if required is not None and name in required_in_code and required != required_in_code[name]:
+            problems.append(
+                f"'{name}' recorded as {'required' if required else 'optional'} but the code "
+                f"{'gives no default' if required_in_code[name] else 'gives a default'}"
+            )
+    return tuple(problems)
+
+
 # ============================================================================
 # Python Extraction (full fidelity)
 # ============================================================================
@@ -339,6 +488,7 @@ def extract_python_functions(tree: ast.Module) -> Tuple[ExtractedFunction, ...]:
             is_private=node.name.startswith('_'),
             is_effect=is_effect_function(node.name, docstring),
             is_nested=id(node) not in top_level,
+            body_hash=function_body_hash(node),
         ))
 
     return tuple(sorted(functions, key=lambda f: f.line))

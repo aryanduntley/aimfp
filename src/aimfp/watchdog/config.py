@@ -149,6 +149,10 @@ REMINDER_MISSING_FUNCTION: Final[str] = "missing_function"
 REMINDER_MISSING_DB_FUNCTION: Final[str] = "missing_db_function"
 REMINDER_FILE_DELETED: Final[str] = "file_deleted"
 
+# Tracking drift found by a full-fidelity audit of a changed file: ONE reminder
+# per file, replaced on every re-audit and removed once the file is clean.
+REMINDER_AUDIT_DRIFT: Final[str] = "audit_drift"
+
 # Structural reminders: recomputed from project.db on every refresh (session
 # start and aimfp_run checkpoints), replacing the previous structure_* set.
 REMINDER_STRUCTURE_PREFIX: Final[str] = "structure_"

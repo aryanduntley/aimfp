@@ -48,7 +48,8 @@ from ._common import (
     _validate_priority,
     VALID_TASK_STATUSES,
     VALID_MILESTONE_STATUSES,
-    VALID_PRIORITY_LEVELS
+    VALID_PRIORITY_LEVELS,
+    audit_completion_gate,
 )
 
 
@@ -108,6 +109,7 @@ class UpdateResult:
     success: bool
     error: Optional[str] = None
     return_statements: Tuple[str, ...] = ()
+    audit: Optional[Dict[str, Any]] = None  # completion audit warnings / override, when any
 
 
 @dataclass(frozen=True)
@@ -1366,10 +1368,15 @@ def update_task(
     description: Optional[str] = None,
     flow_ids: Optional[List[int]] = None,
     priority: Optional[str] = None,
+    audit_override_reason: Optional[str] = None,
     project_root: Optional[str] = None
 ) -> UpdateResult:
     """
     Update task metadata.
+
+    Completing a task runs the tracking-audit gate over the files linked to it
+    (and its subtasks): blocking drift refuses completion unless
+    audit_override_reason is given.
 
     Args:
         id: Task ID
@@ -1379,9 +1386,11 @@ def update_task(
         description: New description (None = don't update)
         flow_ids: New flow IDs array (None = don't update)
         priority: New priority (None = don't update)
+        audit_override_reason: Complete despite blocking audit findings; the
+            reason is recorded as a warning note
 
     Returns:
-        UpdateResult with success status
+        UpdateResult with success status (and audit warnings when any)
     """
     # Validate status if provided
     if status is not None and not _validate_status(status, VALID_TASK_STATUSES):
@@ -1433,6 +1442,12 @@ def update_task(
                           f"Complete or remove all items before marking task as completed."
                 )
 
+        # Completion gate: refuse if the task's files have blocking tracking drift
+        gate_error, audit = audit_completion_gate(project_root, "tasks", id, status, conn, audit_override_reason)
+        if gate_error:
+            conn.close()
+            return UpdateResult(success=False, error=gate_error)
+
         # Update task
         _update_task_fields(conn, id, name, milestone_id, status, description, flow_ids, priority)
         conn.close()
@@ -1442,7 +1457,8 @@ def update_task(
 
         return UpdateResult(
             success=True,
-            return_statements=return_stmts
+            return_statements=return_stmts,
+            audit=audit,
         )
 
     except Exception as e:

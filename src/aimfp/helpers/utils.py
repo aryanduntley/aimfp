@@ -68,6 +68,8 @@ from ..database.connection import (
     rows_to_tuple,
     # JSON parsing
     parse_json_field,
+    decode_json_layers,
+    encode_json_field,
     json_to_tuple,
     # Schema introspection
     _get_table_names,
@@ -130,6 +132,8 @@ __all__ = [
     'rows_to_tuple',
     # JSON parsing
     'parse_json_field',
+    'decode_json_layers',
+    'encode_json_field',
     'json_to_tuple',
     # Schema introspection
     '_get_table_names',

@@ -814,6 +814,10 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: Optional[bool] = Non
             if not _session_watchdog_enabled:
                 watchdog_data = disabled_watchdog_status(watchdog_data)
             reminders = watchdog_data.get('reminders', ())
+            # Edits to tracked files never pass through a tracking call: link them
+            # to the work in progress here, so get_task_context and the
+            # completion audit see them
+            _link_changed_files_safe(project_root, reminders)
 
             data = {'watchdog': watchdog_data} if reminders else {}
             return Result(
@@ -1531,7 +1535,10 @@ def aimfp_end() -> Result:
         Result with data={
             success: bool,
             watchdog: {stopped: bool|None, final_reminders: list},
-            project_state: dict (from get_project_status)
+            project_state: dict (from get_project_status),
+            structure_health: dict,
+            audit: tracking audit of uncommitted work {scope, files_audited,
+                counts, blocking, warnings, report_path}
         }
     """
     try:
@@ -1561,16 +1568,55 @@ def aimfp_end() -> Result:
     # Step 3: Modularity gaps left by this session's work
     structure_health = _structure_health_safe(project_root)
 
+    # Step 4: Tracking audit of this session's work (uncommitted changes)
+    from ..audit.tracking_audit import session_audit
+    audit = session_audit(project_root)
+
+    data = {
+        'success': True,
+        'watchdog': watchdog_data,
+        'project_state': project_state,
+        'structure_health': structure_health,
+        'audit': audit,
+    }
     return Result(
         success=True,
-        data={
-            'success': True,
-            'watchdog': watchdog_data,
-            'project_state': project_state,
-            'structure_health': structure_health,
-        },
-        return_statements=get_return_statements("aimfp_end"),
+        data=data,
+        return_statements=gate_return_statements(get_return_statements("aimfp_end"), data),
     )
+
+
+# Watchdog reminder types that mean "this tracked file's content changed".
+CHANGED_FILE_REMINDERS = frozenset({
+    'timestamp_synced', 'audit_drift', 'missing_function', 'missing_db_function',
+})
+
+
+def changed_tracked_paths(reminders: Tuple[Dict[str, Any], ...]) -> Tuple[str, ...]:
+    """Pure: Paths of files whose content changed, from watchdog reminders."""
+    return tuple(dict.fromkeys(
+        r['file'] for r in reminders
+        if r.get('type') in CHANGED_FILE_REMINDERS and r.get('file')
+    ))
+
+
+def _link_changed_files_safe(project_root: str, reminders: Tuple[Dict[str, Any], ...]) -> None:
+    """Effect: Link changed tracked files to the current in-progress work item (best effort)."""
+    paths = changed_tracked_paths(tuple(reminders))
+    if not paths:
+        return
+    try:
+        from ..project.task_files import link_files_to_current_focus_effect
+        conn = _open_project_connection(project_root)
+        try:
+            marks = ', '.join('?' * len(paths))
+            ids = tuple(row[0] for row in conn.execute(
+                f"SELECT id FROM files WHERE path IN ({marks})", paths).fetchall())
+            link_files_to_current_focus_effect(conn, ids)
+        finally:
+            conn.close()
+    except Exception:
+        pass
 
 
 def _structure_health_safe(project_root: str) -> Dict[str, Any]:

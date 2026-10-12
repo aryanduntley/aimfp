@@ -96,7 +96,7 @@ def create_project_backup(project_root: Optional[str] = None) -> Result:
     Create a backup of .aimfp-project/ right now, ignoring any threshold.
 
     The on-demand counterpart to the automatic inactivity check. Zips everything
-    in .aimfp-project/ except backups/ and watchdog/, adds a generated
+    in .aimfp-project/ except backups/, watchdog/ and audit/, adds a generated
     backup_summary.md, and rotates old archives per the backup_count setting.
 
     Args:
@@ -503,12 +503,13 @@ def _create_project_backup(project_root: str) -> Dict[str, Any]:
 
         # Create zip archive
         with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            # Walk .aimfp-project/ and add files, excluding backups/ and watchdog/
+            # Walk .aimfp-project/ and add files, excluding backups/, watchdog/
+            # and audit/ (audit reports are disposable working files)
             for dirpath, dirnames, filenames in os.walk(aimfp_dir):
-                # Filter out backups and watchdog from dirnames to prevent descending
+                # Filter out the excluded folders from dirnames to prevent descending
                 dirnames[:] = [
                     d for d in dirnames
-                    if d != BACKUPS_DIR_NAME and d != 'watchdog'
+                    if d not in (BACKUPS_DIR_NAME, 'watchdog', 'audit')
                 ]
 
                 for filename in filenames:

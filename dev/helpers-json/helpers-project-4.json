@@ -685,6 +685,20 @@
           "required": true,
           "default": null,
           "description": "Interaction type ('call', 'chain', 'borrow', 'compose', 'pipe')"
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "What the dependency is (optional)"
+        },
+        {
+          "name": "is_indirect",
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "description": "True for a deliberate edge the code makes indirectly (dispatch through a tuple/table of functions, a chain data-flow link): audit_interactions never reports it as stale."
         }
       ],
       "purpose": "Record a dependency between two functions by name (call, chain, borrow, compose, pipe). Interactions are how the AI traces dependency graphs. An edge already tracked is not duplicated (already_existed=true).",
@@ -692,7 +706,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Verify all function calls in code are tracked in the interactions table"
+        "audit_interactions(paths=[...]) verifies a file's recorded edges against the code (missing, stale, moved). A deliberate edge the code makes only indirectly (dispatch table, data-flow link): pass is_indirect=true so audits never flag it."
       ],
       "implementation_notes": [
         "Returns: {success: true, id: int} - new interaction ID",
@@ -727,7 +741,7 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of tuples [(source_function_id, target_function_id, interaction_type, description), ...] - type: 'call', 'chain', 'borrow', 'compose', 'pipe'",
+          "description": "Array of tuples [(source_function_id, target_function_id, interaction_type, description[, is_indirect]), ...] - type: 'call', 'chain', 'borrow', 'compose', 'pipe'. Optional 5th element is_indirect (boolean): a deliberate indirect edge audits never report as stale.",
           "items": {
             "type": "array",
             "prefixItems": [
@@ -752,10 +766,13 @@
                   "string",
                   "null"
                 ]
+              },
+              {
+                "type": "boolean"
               }
             ],
             "minItems": 4,
-            "maxItems": 4
+            "maxItems": 5
           }
         }
       ],
@@ -764,7 +781,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Verify all function calls in code are tracked in the interactions table"
+        "audit_interactions(paths=[...]) verifies the recorded edges against the code (missing, stale, moved); scan_call_graph output can be passed here directly. A deliberate indirect edge (dispatch table, data-flow link): add a 5th element true (is_indirect) so audits never flag it."
       ],
       "implementation_notes": [
         "Returns: {success: true, ids: [int, ...]} - inserted interaction IDs",
@@ -826,6 +843,13 @@
           "required": false,
           "default": null,
           "description": "New description (NULL = don't update)"
+        },
+        {
+          "name": "is_indirect",
+          "type": "boolean",
+          "required": false,
+          "default": null,
+          "description": "Mark (true) or clear (false) the deliberate-indirect flag (NULL = don't update). True for a deliberate edge the code makes indirectly (dispatch through a tuple/table of functions, a chain data-flow link): audit_interactions never reports it as stale."
         }
       ],
       "purpose": "Update interaction metadata",
@@ -833,7 +857,8 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Ensure the code reflects this interaction change"
+        "Ensure the code reflects this interaction change",
+        "is_indirect=true marks a deliberate edge the code makes only indirectly (dispatch table, data-flow link): audits never report it as stale."
       ],
       "implementation_notes": [
         "Returns: {success: true}",
@@ -914,9 +939,23 @@
         {
           "name": "function_name",
           "type": "string",
-          "required": true,
+          "required": false,
           "default": null,
-          "description": "Function name to look up interactions for"
+          "description": "Function name to look up (all functions with that name unless file_path narrows it)."
+        },
+        {
+          "name": "function_id",
+          "type": "integer",
+          "required": false,
+          "default": null,
+          "description": "Exact function ID (takes precedence over function_name)."
+        },
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "With function_name: only the function defined in this project-relative file."
         }
       ],
       "purpose": "Get all interactions for a function (both as source and target) — trace dependency graphs",
@@ -924,7 +963,8 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "The graph holds only interactions recorded via add_interactions — before a risky change, confirm callers in source if the list looks incomplete. Missing edges you find are tracking gaps: record them with add_interactions."
+        "The graph holds only interactions recorded via add_interactions — before a risky change, confirm callers in source if the list looks incomplete. Missing edges you find are tracking gaps: record them with add_interactions.",
+        "Names are not unique across files: pass function_id, or function_name with file_path, to mean exactly one function. To compare the recorded graph with the code: audit_interactions(paths=[...])."
       ],
       "implementation_notes": [
         "Returns: {success, interactions: [{id, source_function_id, source_function_name, source_file_name, source_file_path, target_function_id, target_function_name, target_file_name, target_file_path, interaction_type, description, created_at, updated_at}, ...]}",
@@ -952,17 +992,28 @@
         {
           "name": "file_id",
           "type": "integer",
-          "required": true,
+          "required": false,
           "default": null,
           "description": "File ID to look up interactions for"
+        },
+        {
+          "name": "file_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Several file IDs at once (combined with file_id): every edge touching any of them, each once, with source/target names and paths."
         }
       ],
-      "purpose": "Get all interactions for functions in a file — understand file's dependency role",
+      "purpose": "Get all interactions involving functions in a file or a set of files (file_ids), each with source and target function names and file paths — one call for a feature's whole dependency picture.",
       "error_handling": "Return error if query fails",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "The graph holds only interactions recorded via add_interactions — if a known dependency is missing, it is a tracking gap: record it with add_interactions."
+        "The graph holds only interactions recorded via add_interactions — if a known dependency is missing, it is a tracking gap: record it with add_interactions.",
+        "Pass file_ids for several files (a feature, a module) in one call — each edge once, with source and target names and paths."
       ],
       "implementation_notes": [
         "Returns: {success, interactions: [{id, source_function_id, source_function_name, source_file_name, source_file_path, target_function_id, target_function_name, target_file_name, target_file_path, interaction_type, description, created_at, updated_at}, ...]}",

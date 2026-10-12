@@ -113,9 +113,9 @@ delete_file(
 
 For each function in the error's `functions` array:
 
-a) Call `delete_function(function_id, note_reason, note_severity, note_source, note_type)`
+a) Call `delete_function` for the function. A function that still has interactions is refused with the edges listed (`interactions_exist`): pass `repoint_to` when another function took over its job, or `confirm_cascade` when the dependencies are really gone. Either way the deletion note records every moved or removed edge, so the deletion can be undone.
 
-b) If delete_function returns error:
+b) If delete_function returns a type-relationship error:
 ```json
 {
   "success": false,
@@ -237,8 +237,8 @@ If validation fails or user cancels.
 
    a) Delete function 5 (no types_functions):
       ```
-      delete_function(5, "Deleting function before file deletion", "info", "ai", "entry_deletion")
-      → {"success": true, "deleted_function_id": 5, "file_id": 10}
+      delete_function(5, "Deleting function before file deletion", "info", "ai", confirm_cascade=true)
+      → {"success": true, "deleted_function_id": 5, "file_id": 10, "interactions": [...removed edges...]}
       ```
 
    b) Delete function 6 (has types_functions):

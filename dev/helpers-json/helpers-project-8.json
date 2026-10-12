@@ -340,6 +340,13 @@
           "required": false,
           "default": null,
           "description": "'low', 'medium', 'high', 'critical' (NULL = don't update)"
+        },
+        {
+          "name": "audit_override_reason",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Complete despite blocking tracking-audit findings in the linked files. Recorded as a warning note with the outstanding counts; use only when the drift is understood and will be fixed in follow-up work."
         }
       ],
       "purpose": "Update subtask metadata",
@@ -349,7 +356,8 @@
       "return_statements": [
         "If status='in_progress': tracked files now auto-link to this subtask instead of its parent task (get_task_context for the parent still includes them).",
         "If status changed: call add_note(note_type='task_context', reference_table='subtasks', reference_id=<subtask_id>) describing the change",
-        "If status='completed': check get_incomplete_subtasks_by_task(task_id) — if empty, parent task can resume"
+        "If status='completed': check get_incomplete_subtasks_by_task(task_id) — if empty, parent task can resume",
+        "If status='completed' was REFUSED by the tracking audit: the error lists the blocking categories, the report path and the exact fix calls (reconcile_paths / apply_audit_fixes / prose updates) — run them and complete again, or pass audit_override_reason='<why>' (recorded as a warning note). If the result carries audit: warnings to review, would_block (the user set audit_gate='warn': completion succeeded, but fix those soon), or overridden=true. Read audit.report_path for the full list."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -793,6 +801,13 @@
           "required": false,
           "default": null,
           "description": "'low', 'medium', 'high', 'critical' (NULL = don't update)"
+        },
+        {
+          "name": "audit_override_reason",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Complete despite blocking tracking-audit findings in the linked files. Recorded as a warning note with the outstanding counts; use only when the drift is understood and will be fixed in follow-up work."
         }
       ],
       "purpose": "Update sidequest metadata",
@@ -802,7 +817,8 @@
       "return_statements": [
         "If status='in_progress': tracked files now auto-link to this sidequest instead of the paused task, until it leaves in_progress.",
         "If status changed: call add_note(note_type='task_context', reference_table='sidequests', reference_id=<sidequest_id>) describing the change",
-        "If status='completed': paused task/subtask can now resume (check paused_task_id/paused_subtask_id)"
+        "If status='completed': paused task/subtask can now resume (check paused_task_id/paused_subtask_id)",
+        "If status='completed' was REFUSED by the tracking audit: the error lists the blocking categories, the report path and the exact fix calls (reconcile_paths / apply_audit_fixes / prose updates) — run them and complete again, or pass audit_override_reason='<why>' (recorded as a warning note). If the result carries audit: warnings to review, would_block (the user set audit_gate='warn': completion succeeded, but fix those soon), or overridden=true. Read audit.report_path for the full list."
       ],
       "target_database": "project",
       "used_by_directives": [

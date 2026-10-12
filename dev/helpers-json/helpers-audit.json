@@ -1,0 +1,665 @@
+{
+  "helpers": [
+    {
+      "name": "audit_interactions",
+      "file_path": "helpers/audit/interactions_audit.py",
+      "parameters": [
+        {
+          "name": "file_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Tracked file IDs to audit."
+        },
+        {
+          "name": "paths",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "required": false,
+          "default": null,
+          "description": "Project-relative file paths to audit (tracked or not)."
+        },
+        {
+          "name": "since_commit",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Audit files changed since this git ref ('HEAD' = uncommitted work, or a branch/commit): committed, staged, unstaged and new untracked files."
+        },
+        {
+          "name": "task_id",
+          "type": "integer",
+          "required": false,
+          "default": null,
+          "description": "Audit the files linked to this task (a task includes its subtasks' files)."
+        },
+        {
+          "name": "task_type",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "'task' (default), 'subtask' or 'sidequest' — the kind of work item task_id names."
+        },
+        {
+          "name": "module_path",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Audit every file under this project-relative directory."
+        }
+      ],
+      "purpose": "Audit tracked interactions against the call graph the code makes, for the callers in scope. Read-only. Expected edges: calls AND functions used as values (map(fn, xs), partial, dispatch dicts built in the body), credited through untracked same-file helpers, resolved through imports, aliases and re-exports. Categories: missing_interactions (code makes it, DB lacks it), stale_interactions (target name no longer referenced by the caller — certain), repoint_interactions (a stale edge that is the same dependency moved: call moved to another function in the same file, or target moved under the same name — one change, not delete+add), unconfirmed_interactions (target still named but not resolvable to it: mark indirect or delete), indirect_interactions (is_indirect edges and chain/compose/pipe/borrow types — never flagged). Python callers only (full fidelity); other files listed in unchecked_files. Scope selectors combine as a union; with none, the whole project (tracked files plus untracked source files) is audited. Writes the full report to <project folder>/audit/ and returns counts + samples + report_path.",
+      "error_handling": "Returns error when a selector cannot be resolved (unknown git ref, task not found, invalid task_type). Unparseable files are listed in unchecked_files, never abort the audit.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "[when:report_path] The FULL findings are in report_path (JSON: findings.<category> lists every row with IDs). The result shows counts and up to 5 samples per category — read the file for the rest instead of re-running the audit; delete it when done (or apply_audit_fixes(cleanup=true)).",
+        "[when:clean=true] No blocking or warning findings in this scope.",
+        "[when:scope.schema_1_15=false] This database predates schema 1.15 (no is_indirect / source_hash): run migrate_databases first; indirect marks and description hashes are unavailable until then.",
+        "[when:counts.unchecked_files] unchecked_files lists in-scope files no full-fidelity check covered (names_only / none extraction, or untracked). Verify those by reading them; never treat their absence of findings as clean.",
+        "[when:counts.repoint_interactions] repoint_interactions: each is ONE existing edge to move (change='source' or 'target', from_function_id -> to_function_id) — a split or moved call. Apply with apply_audit_fixes(report=<report_path>, apply=['repoint_interactions', ...]).",
+        "[when:blocking] Blocking categories are fixed mechanically: apply_audit_fixes(reason=..., report=<report_path>, apply=['repoint_interactions','missing_interactions','stale_interactions']). Dry-run first with dry_run=true when the counts are large. Before applying stale deletes, check each stale edge's description: a deliberate conceptual link (dispatch table, chain data flow) should be KEPT by marking it: apply_audit_fixes(mark_indirect_ids=[...]) first — report deletes skip indirect edges.",
+        "[when:counts.unconfirmed_interactions] unconfirmed_interactions need judgement, never auto-apply: the target name still appears in the caller but resolves to a different function or ambiguously. Deliberate -> mark_indirect_ids; wrong target -> delete_interaction_ids (and add the right edge).",
+        "[when:counts.unresolved_calls] unresolved_calls: call names matching several tracked functions, dropped rather than guessed. Add the real edges explicitly if they matter."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_catalog",
+          "execution_context": "map_interactions",
+          "sequence_order": 6,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Verify the recorded graph: no missing or stale edges remain after add_interactions"
+        }
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "apply_audit_fixes",
+      "file_path": "helpers/audit/apply_fixes.py",
+      "parameters": [
+        {
+          "name": "reason",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Why these changes are made; recorded in the restore-manifest note."
+        },
+        {
+          "name": "report",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "report_path returned by an audit tool (project-relative path, absolute path, or bare file name in the audit folder)."
+        },
+        {
+          "name": "apply",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "missing_interactions",
+              "stale_interactions",
+              "repoint_interactions",
+              "stale_functions",
+              "stale_types",
+              "param_mismatch",
+              "malformed_json",
+              "missing_type_links",
+              "unbaselined_descriptions"
+            ]
+          },
+          "required": false,
+          "default": null,
+          "description": "Finding categories of the report to apply. missing_interactions=add, stale_interactions=delete (indirect edges kept), repoint_interactions=move source/target, stale_functions/stale_types=delete (cascades recorded), param_mismatch=refresh parameters from source keeping descriptions, malformed_json=re-encode once, missing_type_links=link, unbaselined_descriptions=record current code hash (only after reviewing the prose)."
+        },
+        {
+          "name": "add_interactions",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source_function_id": {
+                "type": "integer"
+              },
+              "target_function_id": {
+                "type": "integer"
+              },
+              "interaction_type": {
+                "type": "string",
+                "enum": [
+                  "call",
+                  "chain",
+                  "borrow",
+                  "compose",
+                  "pipe"
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "is_indirect": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "source_function_id",
+              "target_function_id"
+            ]
+          },
+          "required": false,
+          "default": null,
+          "description": "Edges to add (interaction_type defaults to 'call')."
+        },
+        {
+          "name": "repoint_interactions",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "interaction_id": {
+                "type": "integer"
+              },
+              "source_function_id": {
+                "type": "integer"
+              },
+              "target_function_id": {
+                "type": "integer"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "interaction_id"
+            ]
+          },
+          "required": false,
+          "default": null,
+          "description": "Edges to move to a new source and/or target."
+        },
+        {
+          "name": "delete_interaction_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Interactions to delete."
+        },
+        {
+          "name": "mark_indirect_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Interactions to mark is_indirect: deliberate edges the code makes indirectly. Audits never flag them; report deletes skip them."
+        },
+        {
+          "name": "unmark_indirect_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Interactions to clear is_indirect on."
+        },
+        {
+          "name": "delete_function_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Functions to delete; their interactions and type links cascade and are recorded in the manifest."
+        },
+        {
+          "name": "delete_type_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Types to delete; their type links cascade and are recorded in the manifest."
+        },
+        {
+          "name": "refresh_signature_function_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Functions whose parameters are re-read from the source (names, order, types, required/default), keeping each surviving parameter's description."
+        },
+        {
+          "name": "baseline_hash_function_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Functions whose current code hash is recorded as matching their description. Only after reviewing purpose/parameters/returns."
+        },
+        {
+          "name": "add_type_links",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type_id": {
+                "type": "integer"
+              },
+              "function_id": {
+                "type": "integer"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "factory",
+                  "transformer",
+                  "operator",
+                  "pattern_matcher",
+                  "accessor",
+                  "validator",
+                  "combinator"
+                ]
+              }
+            },
+            "required": [
+              "type_id",
+              "function_id"
+            ]
+          },
+          "required": false,
+          "default": null,
+          "description": "types_functions links to add."
+        },
+        {
+          "name": "dry_run",
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "description": "Do everything, then roll back: the result is exactly what a real run does."
+        },
+        {
+          "name": "cleanup",
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "description": "Delete the report file after a successful real run."
+        }
+      ],
+      "purpose": "Apply audit findings in ONE call and ONE transaction, with a restore manifest written in the same transaction. Name report categories (report + apply) so thousands of IDs never pass through the conversation, and/or pass explicit changes. Every report finding is re-checked against its row first: an edge whose endpoints changed since the audit, or an entity already gone or renamed, is skipped with a reason. One entry_deletion note lists every deleted row (cascaded edges and type links included) and the old values of every changed row, so any change can be undone. Judgement categories (unconfirmed_interactions, stale_descriptions, dangling_mentions, missing_functions, untracked_files) are refused: they need prose, a mark, or reconcile_paths.",
+      "error_handling": "Refuses without a reason, with apply but no report, with non-appliable categories, or with nothing to apply. Any SQL error rolls back everything (nothing partial is ever written).",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "[when:skipped_count] skipped lists rows not changed and why (up to 20; skipped_count is the total) — usually the database moved on since the audit. Re-run the audit for a fresh report if many were skipped.",
+        "[when:dry_run=true] DRY RUN: nothing was written. Call again with dry_run=false to apply.",
+        "[when:applied] Re-run the same audit to confirm the categories you applied are now empty. manifest_note_id is the restore record (get_notes_comprehensive(note_id=...))."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_task_complete",
+          "execution_context": "mark_complete_and_items",
+          "sequence_order": 2,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Apply the mechanical findings named by the pre-flight audit or a gate refusal"
+        },
+        {
+          "directive_name": "project_subtask_complete",
+          "execution_context": "mark_complete",
+          "sequence_order": 2,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Apply mechanical audit findings before completing the subtask"
+        },
+        {
+          "directive_name": "project_sidequest_complete",
+          "execution_context": "mark_complete_and_log",
+          "sequence_order": 2,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Apply mechanical audit findings before completing the sidequest"
+        },
+        {
+          "directive_name": "aimfp_end",
+          "execution_context": "verify_all_functions_tracked",
+          "sequence_order": 2,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Apply the mechanical categories of data.audit's report"
+        },
+        {
+          "directive_name": "project_catalog",
+          "execution_context": "report_catalog_summary",
+          "sequence_order": 2,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Apply the catalog audit's mechanical categories in one transaction"
+        }
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false
+      }
+    },
+    {
+      "name": "audit_functions",
+      "file_path": "helpers/audit/functions_audit.py",
+      "parameters": [
+        {
+          "name": "file_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Tracked file IDs to audit."
+        },
+        {
+          "name": "paths",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "required": false,
+          "default": null,
+          "description": "Project-relative file paths to audit (tracked or not)."
+        },
+        {
+          "name": "since_commit",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Audit files changed since this git ref ('HEAD' = uncommitted work, or a branch/commit): committed, staged, unstaged and new untracked files."
+        },
+        {
+          "name": "task_id",
+          "type": "integer",
+          "required": false,
+          "default": null,
+          "description": "Audit the files linked to this task (a task includes its subtasks' files)."
+        },
+        {
+          "name": "task_type",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "'task' (default), 'subtask' or 'sidequest' — the kind of work item task_id names."
+        },
+        {
+          "name": "module_path",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Audit every file under this project-relative directory."
+        }
+      ],
+      "purpose": "Audit tracked files, functions and types against the source. Read-only. Python files (full fidelity): missing_functions (public, untracked), stale_functions (tracked, gone from the source), incomplete_functions (purpose/parameters/returns empty), malformed_json (not one JSON encoding of a list/object; double-encoded is fixable), reserved_functions (never finalized), param_mismatch (recorded parameters vs the signature: names, order, required vs default), missing_types, stale_types (name defined nowhere in the file), incomplete_types, missing_type_links (a tracked type named in a signature with no types_functions link, role suggested), private_tracked and files_without_functions (informational). Every file: missing_files (tracked, gone from disk), untracked_files. Regex languages only report names_only_missing (warning) and never claim anything stale. Untracked _private functions are never reported. Scope selectors combine as a union; with none, the whole project (tracked files plus untracked source files) is audited. Writes the full report to <project folder>/audit/ and returns counts + samples + report_path.",
+      "error_handling": "Returns error when a selector cannot be resolved (unknown git ref, task not found, invalid task_type). Unparseable files are listed in unchecked_files, never abort the audit.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "[when:report_path] The FULL findings are in report_path (JSON: findings.<category> lists every row with IDs). The result shows counts and up to 5 samples per category — read the file for the rest instead of re-running the audit; delete it when done (or apply_audit_fixes(cleanup=true)).",
+        "[when:clean=true] No blocking or warning findings in this scope.",
+        "[when:scope.schema_1_15=false] This database predates schema 1.15 (no is_indirect / source_hash): run migrate_databases first; indirect marks and description hashes are unavailable until then.",
+        "[when:counts.unchecked_files] unchecked_files lists in-scope files no full-fidelity check covered (names_only / none extraction, or untracked). Verify those by reading them; never treat their absence of findings as clean.",
+        "[when:counts.untracked_files] untracked_files / missing_functions / missing_types: catalog them in one call with reconcile_paths(paths=<the report's reconcile_paths list>) — it adds signatures and docstring purposes and never overwrites prose — then give new files flows and modules (add_file_flows, add_files_to_module).",
+        "[when:counts.stale_functions] stale_functions / stale_types: the code is gone. If it was removed on purpose, apply_audit_fixes(report=<report_path>, apply=['stale_functions','stale_types']) deletes them with every cascaded edge and type link recorded in the restore manifest. If it was renamed, update_function(name=...) keeps the row's prose instead.",
+        "[when:counts.param_mismatch] param_mismatch: apply_audit_fixes(report=<report_path>, apply=['param_mismatch']) re-reads parameters from the source and keeps each surviving parameter's description; then review the function's purpose in case the behaviour changed with the signature.",
+        "[when:counts.malformed_json] malformed_json entries with fixable=true are double-encoded: apply_audit_fixes(apply=['malformed_json']). fixable=false ones need rewriting with update_function / update_type.",
+        "[when:counts.incomplete_functions] incomplete_functions / incomplete_types need prose: fill the listed fields with update_function / update_functions_for_file / update_type (a function returning nothing gets returns {\"type\": \"None\"}).",
+        "[when:counts.missing_type_links] missing_type_links carry a suggested role; check it, then apply_audit_fixes(apply=['missing_type_links']) or add_types_functions with corrected roles.",
+        "[when:counts.reserved_functions] reserved_functions were reserved but never finalized: finalize_function(s) if the code exists, else delete them."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_catalog",
+          "execution_context": "scan_functions_per_file",
+          "sequence_order": 4,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Verify cataloged functions: empty fields, malformed JSON, parameter drift"
+        }
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "audit_descriptions",
+      "file_path": "helpers/audit/descriptions_audit.py",
+      "parameters": [
+        {
+          "name": "file_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Tracked file IDs to audit."
+        },
+        {
+          "name": "paths",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "required": false,
+          "default": null,
+          "description": "Project-relative file paths to audit (tracked or not)."
+        },
+        {
+          "name": "since_commit",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Audit files changed since this git ref ('HEAD' = uncommitted work, or a branch/commit): committed, staged, unstaged and new untracked files."
+        },
+        {
+          "name": "task_id",
+          "type": "integer",
+          "required": false,
+          "default": null,
+          "description": "Audit the files linked to this task (a task includes its subtasks' files)."
+        },
+        {
+          "name": "task_type",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "'task' (default), 'subtask' or 'sidequest' — the kind of work item task_id names."
+        },
+        {
+          "name": "module_path",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Audit every file under this project-relative directory."
+        }
+      ],
+      "purpose": "Audit function and type descriptions for drift from the code. Read-only. stale_descriptions: the function's code changed after its purpose/parameters/returns were written (functions.source_hash, recorded on every prose write, differs from the current code hash; formatting, comments and docstrings never change the hash). dangling_mentions: a description names a callable that exists nowhere — 'name()' or 'snake_name(...)' not defined, imported or called anywhere in the tracked Python files, not tracked, not a builtin (attribute calls, ALLCAPS and 'file(s)' plurals are ignored). unbaselined_descriptions (info): described functions with no hash yet. Warnings only — never blocks a task. Scope selectors combine as a union; with none, the whole project (tracked files plus untracked source files) is audited. Writes the full report to <project folder>/audit/ and returns counts + samples + report_path.",
+      "error_handling": "Returns error when a selector cannot be resolved (unknown git ref, task not found, invalid task_type). On a database before schema 1.15 there are no hashes: only dangling_mentions are checked.",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "[when:report_path] The FULL findings are in report_path (JSON: findings.<category> lists every row with IDs). The result shows counts and up to 5 samples per category — read the file for the rest instead of re-running the audit; delete it when done (or apply_audit_fixes(cleanup=true)).",
+        "[when:clean=true] No blocking or warning findings in this scope.",
+        "[when:scope.schema_1_15=false] This database predates schema 1.15 (no is_indirect / source_hash): run migrate_databases first; indirect marks and description hashes are unavailable until then.",
+        "[when:counts.unchecked_files] unchecked_files lists in-scope files no full-fidelity check covered (names_only / none extraction, or untracked). Verify those by reading them; never treat their absence of findings as clean.",
+        "[when:counts.stale_descriptions] stale_descriptions: read each function's code and its purpose/parameters/returns. Wrong -> rewrite with update_function (that records the new hash). Still right -> apply_audit_fixes(baseline_hash_function_ids=[...]) records the current code as described.",
+        "[when:counts.dangling_mentions] dangling_mentions: the description names a callable that no longer exists (renamed or removed). Rewrite that sentence with update_function / update_type.",
+        "[when:counts.unbaselined_descriptions] unbaselined_descriptions have no code hash yet, so drift cannot be seen. After reviewing their prose (or trusting it), apply_audit_fixes(report=<report_path>, apply=['unbaselined_descriptions']) records the current code hashes."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "aimfp_end",
+          "execution_context": "verify_all_functions_tracked",
+          "sequence_order": 3,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Focused check of prose the session may have made wrong (stale descriptions, dangling mentions)"
+        }
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
+    },
+    {
+      "name": "audit_tracking",
+      "file_path": "helpers/audit/tracking_audit.py",
+      "parameters": [
+        {
+          "name": "file_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Tracked file IDs to audit."
+        },
+        {
+          "name": "paths",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "required": false,
+          "default": null,
+          "description": "Project-relative file paths to audit (tracked or not)."
+        },
+        {
+          "name": "since_commit",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Audit files changed since this git ref ('HEAD' = uncommitted work, or a branch/commit): committed, staged, unstaged and new untracked files."
+        },
+        {
+          "name": "task_id",
+          "type": "integer",
+          "required": false,
+          "default": null,
+          "description": "Audit the files linked to this task (a task includes its subtasks' files)."
+        },
+        {
+          "name": "task_type",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "'task' (default), 'subtask' or 'sidequest' — the kind of work item task_id names."
+        },
+        {
+          "name": "module_path",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Audit every file under this project-relative directory."
+        },
+        {
+          "name": "include",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "functions",
+              "interactions",
+              "descriptions",
+              "structure"
+            ]
+          },
+          "required": false,
+          "default": null,
+          "description": "Audits to run (default all): functions (files, functions, types, parameters, JSON, type links), interactions (missing/stale/repoint edges), descriptions (stale prose, dangling mentions), structure (modularity gaps, project-wide)."
+        }
+      ],
+      "purpose": "Run EVERY tracking audit over one scope with one code index and one report: files, functions, types, parameters, JSON encoding, type links (audit_functions), interactions with repoints (audit_interactions), stale prose and dangling mentions (audit_descriptions), plus modularity gaps (structure_gaps). Read-only. The same audit gates task/subtask/sidequest completion (over the item's linked files), runs in aimfp_end over uncommitted work, runs per changed file in the watchdog, and runs in CI as `aimfp audit`. Scope selectors combine as a union; with none, the whole project (tracked files plus untracked source files) is audited. Writes the full report to <project folder>/audit/ and returns counts + samples + block/warn verdict + report_path.",
+      "error_handling": "Returns error for an unknown include name or a selector that cannot be resolved (unknown git ref, task not found, invalid task_type).",
+      "is_tool": true,
+      "is_sub_helper": false,
+      "return_statements": [
+        "[when:report_path] The FULL findings are in report_path (JSON: findings.<category> lists every row with IDs). The result shows counts and up to 5 samples per category — read the file for the rest instead of re-running the audit; delete it when done (or apply_audit_fixes(cleanup=true)).",
+        "[when:clean=true] No blocking or warning findings in this scope.",
+        "[when:scope.schema_1_15=false] This database predates schema 1.15 (no is_indirect / source_hash): run migrate_databases first; indirect marks and description hashes are unavailable until then.",
+        "[when:counts.unchecked_files] unchecked_files lists in-scope files no full-fidelity check covered (names_only / none extraction, or untracked). Verify those by reading them; never treat their absence of findings as clean.",
+        "[when:blocking] Blocking findings, fix order: (1) reconcile_paths(paths=<report.reconcile_paths>) catalogs untracked files and missing functions/types; (2) apply_audit_fixes(reason=..., report=<report_path>, apply=['repoint_interactions','missing_interactions','stale_interactions','stale_functions','stale_types','param_mismatch','malformed_json']) — mark deliberate indirect edges first (mark_indirect_ids); (3) update_function / update_type for incomplete prose; finalize_file(s) for reserved_files. Re-run audit_tracking to confirm.",
+        "[when:warnings] Warnings never block a task: unconfirmed_interactions and stale_descriptions need judgement; missing_type_links carry a suggested role (apply_audit_fixes apply=['missing_type_links'] after checking); structure_gaps are listed by get_structure_health."
+      ],
+      "target_database": "project",
+      "used_by_directives": [
+        {
+          "directive_name": "project_task_complete",
+          "execution_context": "mark_complete_and_items",
+          "sequence_order": 1,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Pre-flight: the same audit the completion gate runs over the task's linked files; clear blocking findings before update_task(status='completed')"
+        },
+        {
+          "directive_name": "project_subtask_complete",
+          "execution_context": "mark_complete",
+          "sequence_order": 1,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Pre-flight audit of the subtask's linked files before marking it complete"
+        },
+        {
+          "directive_name": "project_sidequest_complete",
+          "execution_context": "mark_complete_and_log",
+          "sequence_order": 1,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Pre-flight audit of the sidequest's linked files before marking it complete"
+        },
+        {
+          "directive_name": "aimfp_end",
+          "execution_context": "verify_all_functions_tracked",
+          "sequence_order": 1,
+          "is_required": false,
+          "parameters_mapping": {},
+          "description": "Extend the session audit (data.audit) to work committed mid-session via since_commit"
+        },
+        {
+          "directive_name": "project_catalog",
+          "execution_context": "report_catalog_summary",
+          "sequence_order": 1,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Verify the whole catalog against the code before reporting"
+        }
+      ],
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true
+      }
+    }
+  ]
+}

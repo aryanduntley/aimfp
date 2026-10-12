@@ -96,11 +96,10 @@ Call the `aimfp_end` helper to gather all audit data from the database. The help
 **Action**: Cross-reference session work against database.
 
 **Steps**:
-1. AI identifies files written or modified during this session (from context/memory)
-2. Compare against `files` list returned by helper
-3. If any file missing from DB: register it using `reserve_file` + `finalize_file`
-4. If any file has stale `updated_at`: correct the timestamp
-5. Report discrepancies found and actions taken
+1. Start from `data.audit`: the helper already ran the tracking audit over this session's uncommitted changes (or the in-progress work item's files without git) — counts per category, block/warn verdict, full findings in `report_path`
+2. Fix blocking findings from the report (apply_audit_fixes for mechanical categories, reconcile_paths for untracked files and missing functions/types)
+3. Cover what the audit could not: files in `unchecked_files`, and work committed mid-session (audit_tracking with since_commit set to the session's starting commit)
+4. Report discrepancies found and actions taken
 
 ---
 
@@ -109,11 +108,10 @@ Call the `aimfp_end` helper to gather all audit data from the database. The help
 **Action**: Cross-reference functions against database.
 
 **Steps**:
-1. For each file modified during session, scan for function definitions
-2. Compare against `functions` list returned by helper
-3. If any function missing from DB: register it using `reserve_function` + `finalize_function`
-4. If any DB function missing from actual file: flag for user review (may have been removed or renamed during session)
-5. Report discrepancies found and actions taken
+1. `data.audit` covers function, parameter, type and interaction drift for the session's changed files (Python at full fidelity)
+2. Missing functions: catalog via reconcile_paths. Stale functions (gone from the file): delete if removed on purpose, update the row's name if renamed — flag for user review when unsure
+3. Stale descriptions and dangling mentions (warnings): rewrite the prose the session made wrong
+4. Report discrepancies found and actions taken
 
 ---
 

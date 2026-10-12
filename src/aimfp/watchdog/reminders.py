@@ -97,6 +97,19 @@ def replace_reminders_by_prefix(
     return tuple(r for r in existing if not str(r.get('type', '')).startswith(prefix)) + new
 
 
+def replace_file_reminders(
+    existing: Tuple[Dict[str, str], ...],
+    reminder_type: str,
+    file_path: str,
+    new: Tuple[Dict[str, str], ...],
+) -> Tuple[Dict[str, str], ...]:
+    """Pure: Drop existing reminders of one type for one file, then append new."""
+    return tuple(
+        r for r in existing
+        if not (r.get('type') == reminder_type and r.get('file') == file_path)
+    ) + new
+
+
 # ============================================================================
 # Effect Functions
 # ============================================================================
@@ -166,6 +179,25 @@ def _effect_replace_structure_reminders(
     """
     existing = _effect_read_reminders(reminders_path)
     merged = replace_reminders_by_prefix(existing, REMINDER_STRUCTURE_PREFIX, structure_reminders)
+    if merged == existing:
+        return True
+    return _effect_write_reminders(reminders_path, merged)
+
+
+def _effect_replace_file_reminders(
+    reminders_path: str,
+    reminder_type: str,
+    file_path: str,
+    new_reminders: Tuple[Dict[str, str], ...],
+) -> bool:
+    """
+    Effect: Swap one file's reminders of one type for a freshly computed set
+    (possibly empty), leaving every other reminder untouched.
+
+    Returns True on success.
+    """
+    existing = _effect_read_reminders(reminders_path)
+    merged = replace_file_reminders(existing, reminder_type, file_path, new_reminders)
     if merged == existing:
         return True
     return _effect_write_reminders(reminders_path, merged)

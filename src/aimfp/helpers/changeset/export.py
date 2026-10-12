@@ -114,7 +114,8 @@ def _collect_entities(conn, idx: Dict[str, Any]) -> Dict[str, Dict[str, Dict[str
         fpath = fref["path"] if fref else None
         add("functions", code_entity_key(fpath, r["name"], _row_get(r, "entity_key")),
             {"file": fpath, "name": r["name"], "purpose": r["purpose"],
-             "parameters": r["parameters"], "returns": r["returns"], "id_in_name": r["id_in_name"]})
+             "parameters": r["parameters"], "returns": r["returns"], "id_in_name": r["id_in_name"],
+             "source_hash": _row_get(r, "source_hash")})
 
     for r in _safe_rows(conn, "SELECT * FROM types"):
         fref = file_ref(r["file_id"])
@@ -190,7 +191,8 @@ def _collect_references(conn, idx: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         put({"kind": "interaction",
              "from": fn.get(r["source_function_id"]), "to": fn.get(r["target_function_id"]),
              "interaction_type": r["interaction_type"],
-             "attributes": {"description": r["description"]}})
+             "attributes": {"description": r["description"],
+                            "is_indirect": _row_get(r, "is_indirect") or 0}})
 
     for r in _safe_rows(conn, "SELECT * FROM types_functions"):
         put({"kind": "type_usage",

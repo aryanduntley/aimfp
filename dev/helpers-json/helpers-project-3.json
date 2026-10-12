@@ -268,7 +268,8 @@
         "NAME CHECK: if warnings[] is non-empty, a finalized name is not defined in its file's source (checked for Python). Make them match before continuing: rename the tracked function via update_function, or rename it in the code.",
         "BLOCKED: Do NOT proceed to next task or mark work complete until interactions are added for this function. If this function calls, chains, borrows from, composes with, or pipes to ANY other tracked function, those interactions MUST be recorded via add_interaction or add_interactions. A finalized function that imports from other tracked files with zero recorded interactions = incomplete tracking. Interactions are how the AI understands the dependency graph — without them, refactoring impact analysis is blind.",
         "TYPES_FUNCTIONS CHECK: Scan this function's parameters and returns for tracked type names. If it consumes or produces a tracked type, add the relationship via add_types_functions. Auto-infer role: returns type only → 'factory'; params AND returns same type → 'transformer'; params with boolean/Result return → 'validator'; params only → 'accessor'. This is how the AI answers 'what functions use TypeX?' without scanning all files.",
-        "If called during project_reserve_finalize: follow project_update_db directive to sync function dependencies."
+        "If called during project_reserve_finalize: follow project_update_db directive to sync function dependencies.",
+        "PARAM CHECK: warnings[] entries starting 'PARAM CHECK' mean the recorded parameters disagree with the signature (names, order, required vs default). Fix with update_function(parameters=...) or apply_audit_fixes(refresh_signature_function_ids=[...]) — the task-completion audit blocks on parameter drift."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -378,7 +379,8 @@
         "NAME CHECK: if warnings[] is non-empty, a finalized name is not defined in its file's source (checked for Python). Make them match before continuing: rename the tracked function via update_function, or rename it in the code.",
         "BLOCKED: Do NOT proceed to next task or mark work complete until interactions are added for ALL finalized functions. For EVERY function that calls, chains, borrows from, composes with, or pipes to ANY other tracked function, those interactions MUST be recorded via add_interaction or add_interactions (batch). Finalized functions that import from other tracked files with zero recorded interactions = incomplete tracking. Do NOT batch-finalize functions and move on without interaction planning — the finalize → interact flow is atomic.",
         "TYPES_FUNCTIONS CHECK: Scan ALL finalized functions' parameters and returns for tracked type names. For each function that consumes or produces a tracked type, add the relationship via add_types_functions. Auto-infer roles: returns type only → 'factory'; params AND returns same type → 'transformer'; params with boolean/Result return → 'validator'; params only → 'accessor'. This covers 80%+ of cases automatically — correct or add remaining roles manually.",
-        "If called during project_reserve_finalize: follow project_update_db directive to sync function dependencies."
+        "If called during project_reserve_finalize: follow project_update_db directive to sync function dependencies.",
+        "PARAM CHECK: warnings[] entries starting 'PARAM CHECK' mean recorded parameters disagree with a signature (names, order, required vs default). Fix with update_function(s) or apply_audit_fixes(refresh_signature_function_ids=[...]) — the task-completion audit blocks on parameter drift."
       ],
       "target_database": "project",
       "used_by_directives": [],
@@ -415,6 +417,20 @@
           "required": false,
           "default": false,
           "description": "If true, return only id/name + purpose/parameters/returns (when AI already has the rest)"
+        },
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Only the function defined in this project-relative file (names are not unique across files)."
+        },
+        {
+          "name": "file_id",
+          "type": "integer",
+          "required": false,
+          "default": null,
+          "description": "Only the function defined in this tracked file."
         }
       ],
       "purpose": "Look up a tracked function by name with file location — use BEFORE reading source files. Returns purpose, parameters, returns, and file path.",
@@ -423,7 +439,8 @@
       "is_sub_helper": false,
       "return_statements": [
         "Function names are not unique — if several match, pick by file_path. No match: try search_functions with descriptive words before concluding the function does not exist.",
-        "[when:notes] notes lists the notes attached to the returned function(s) as references (id, type, severity, reference_id). Read the ones relevant to your work in full with get_notes_comprehensive(note_id=X) before acting; a deferred note you resolve -> update_note(note_type='completed')."
+        "[when:notes] notes lists the notes attached to the returned function(s) as references (id, type, severity, reference_id). Read the ones relevant to your work in full with get_notes_comprehensive(note_id=X) before acting; a deferred note you resolve -> update_note(note_type='completed').",
+        "Several functions share this name? Narrow with file_path or file_id; use the returned id with get_interactions_by_function(function_id=...)."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -600,7 +617,7 @@
       "return_statements": [
         "Ensure name, parameter, or return changes are updated in all function calls",
         "If name changed, verify _id_xxx suffix is retained",
-        "If function signature changed, verify existing interactions in the interactions table are still valid"
+        "If the signature or body changed: audit_tracking(paths=['<file>']) checks the file's parameters, interactions and descriptions in one call; apply_audit_fixes repairs the mechanical part. Writing purpose/parameters/returns records the current code hash, so this description now counts as current."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -705,7 +722,7 @@
       "return_statements": [
         "If any names changed, verify _id_xxx suffix is retained for each",
         "Ensure any parameter or return changes are updated in all function calls",
-        "If any function signatures changed, verify existing interactions in the interactions table are still valid"
+        "If signatures or bodies changed: audit_tracking(file_ids=[<file_id>]) checks the file's parameters, interactions and descriptions in one call; apply_audit_fixes repairs the mechanical part. Entries that rewrote purpose/parameters/returns record the current code hash."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -821,15 +838,30 @@
           "required": false,
           "default": "entry_deletion",
           "description": "'entry_deletion'"
+        },
+        {
+          "name": "repoint_to",
+          "type": "integer",
+          "required": false,
+          "default": null,
+          "description": "Function ID that takes over this function's interactions (the split/move case). Edges that would become self-edges or duplicates are dropped. Every moved or dropped edge is written into the deletion note."
+        },
+        {
+          "name": "confirm_cascade",
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "description": "Delete the function's interactions with it. Without repoint_to or confirm_cascade, a function with interactions is refused and the edges are listed."
         }
       ],
-      "purpose": "Delete function with validation and interaction cascade",
+      "purpose": "Delete a function, deciding explicitly what happens to its interactions: refused (with the edges listed) unless repoint_to moves them to the function that took over its job, or confirm_cascade removes them. Every moved or removed edge is recorded in the deletion note so it can be undone. Type relationships must be unlinked first.",
       "error_handling": "Return error if types_functions exist - requires manual unlinking first",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
         "Ensure the function code is also removed from the file, not just the database",
-        "Interactions referencing this function were automatically removed via CASCADE. No further cleanup needed."
+        "If refused with interactions_exist: the result lists the edges (interactions, interaction_count). Choose repoint_to=<id of the function that now does this job> (split/move), or confirm_cascade=true if the dependencies are really gone.",
+        "On success, interactions lists the edges that were moved or removed; the deletion note holds the full old rows for restoring them."
       ],
       "target_database": "project",
       "used_by_directives": [

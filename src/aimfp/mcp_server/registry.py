@@ -363,6 +363,14 @@ TOOL_REGISTRY: Final[Dict[str, Tuple[str, str]]] = {
     "catalog_functions": ("aimfp.helpers.catalog.register", "catalog_functions"),
     "catalog_types": ("aimfp.helpers.catalog.register", "catalog_types"),
 
+    # ── Tracking Audit ───────────────────────────────────────────────────
+    # helpers/audit/ (database vs source verification, bulk repair)
+    "audit_interactions": ("aimfp.helpers.audit.interactions_audit", "audit_interactions"),
+    "audit_functions": ("aimfp.helpers.audit.functions_audit", "audit_functions"),
+    "audit_descriptions": ("aimfp.helpers.audit.descriptions_audit", "audit_descriptions"),
+    "audit_tracking": ("aimfp.helpers.audit.tracking_audit", "audit_tracking"),
+    "apply_audit_fixes": ("aimfp.helpers.audit.apply_fixes", "apply_audit_fixes"),
+
     # ── User Directives ──────────────────────────────────────────────────
     # helpers/user_directives/monitoring.py (3 tools)
     # AI-facing read side of the hook execution model. The runtime hooks in

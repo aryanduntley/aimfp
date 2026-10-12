@@ -795,6 +795,13 @@
           "required": false,
           "default": null,
           "description": "'low', 'medium', 'high', 'critical' (NULL = don't update)"
+        },
+        {
+          "name": "audit_override_reason",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Complete despite blocking tracking-audit findings in the linked files. Recorded as a warning note with the outstanding counts; use only when the drift is understood and will be fixed in follow-up work."
         }
       ],
       "purpose": "Update task metadata",
@@ -806,7 +813,8 @@
         "If status='in_progress': files you now reserve, finalize, catalog, or update (or whose functions/types you do) auto-link to this task — unless a subtask or sidequest is also in_progress, which takes precedence. Keep only the item you are actually working on in_progress.",
         "If task status changed: call add_note(note_type='task_context', reference_table='tasks', reference_id=<task_id>) describing the status change",
         "If status='completed': call get_incomplete_tasks_by_milestone(milestone_id, skip_pending=false) — if empty, call update_milestone(id, status='completed')",
-        "Call aimfp_run(is_new_session=false) — returns watchdog info about external file changes detected since your last check."
+        "Call aimfp_run(is_new_session=false) — returns watchdog info about external file changes detected since your last check.",
+        "If status='completed' was REFUSED by the tracking audit: the error lists the blocking categories, the report path and the exact fix calls (reconcile_paths / apply_audit_fixes / prose updates) — run them and complete again, or pass audit_override_reason='<why>' (recorded as a warning note). If the result carries audit: warnings to review, would_block (the user set audit_gate='warn': completion succeeded, but fix those soon), or overridden=true. Read audit.report_path for the full list."
       ],
       "target_database": "project",
       "used_by_directives": [

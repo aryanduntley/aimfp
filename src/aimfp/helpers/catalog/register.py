@@ -21,14 +21,14 @@ be re-run after the source changes without corrupting the index. The counts retu
 distinguish created from updated so the caller can see which happened.
 """
 
-import json
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from ..utils import get_return_statements, get_cached_project_root, _open_project_connection
+from ..utils import get_return_statements, get_cached_project_root, _open_project_connection, encode_json_field
 from ..shared.slugs import mint_slug
 from ..project.task_files import link_files_to_current_focus_effect
+from ..project._common import record_source_hashes
 
 
 # ============================================================================
@@ -71,8 +71,9 @@ def serialize_json_field(value: Any) -> Optional[str]:
     """
     Pure: Serialize a parameters/returns/definition value to a JSON string.
 
-    Values already stored as strings pass through untouched, so a caller echoing a
-    previous scan result back in does not get double-encoded JSON.
+    Delegates to encode_json_field: a caller echoing a previous scan result
+    (already-encoded text) back in is stored once, and text that was itself
+    double-encoded is unwrapped rather than passed through.
 
     Args:
         value: List, dict, pre-encoded string, or None
@@ -80,12 +81,7 @@ def serialize_json_field(value: Any) -> Optional[str]:
     Returns:
         JSON string, or None when the value is absent
     """
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value
-    return json.dumps(value)
-
+    return encode_json_field(value)
 
 def supplied_or_none(value: Any) -> Any:
     """
@@ -397,6 +393,12 @@ def catalog_functions(
             ids.append(function_id)
             created += 1 if was_created else 0
 
+        # Functions given a purpose now have a description matching the code
+        record_source_hashes(conn, (
+            (function_id, int(record['file_id']), record['name'])
+            for function_id, record in zip(ids, records)
+            if supplied_or_none(record.get('purpose')) is not None
+        ), project_root)
         conn.commit()
         link_files_to_current_focus_effect(conn, (int(r['file_id']) for r in records))
 

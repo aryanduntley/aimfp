@@ -5,6 +5,7 @@ Orchestrates file watching by connecting the filesystem_observer wrapper
 to the analyzer and reminder modules. Handles debouncing and event routing.
 """
 
+import os
 import time
 import datetime
 from typing import Dict, Optional, Pattern, Tuple, Any
@@ -22,17 +23,23 @@ from ..wrappers.file_ops import _effect_read_file, _effect_file_mtime
 from .config import (
     should_exclude,
     get_relative_path,
+    detect_language,
     DEBOUNCE_SECONDS,
+    REMINDER_AUDIT_DRIFT,
 )
 from .analyzers import (
+    build_audit_drift_reminders,
+    content_digest,
     generate_file_reminders,
     generate_delete_reminders,
+    _effect_file_audit_blocking,
+    _effect_get_all_known_file_paths,
     _effect_get_file_by_path,
     _effect_is_file_reserved,
     _effect_get_finalized_functions,
     _effect_update_file_timestamp,
 )
-from .reminders import _effect_append_reminders
+from .reminders import _effect_append_reminders, _effect_replace_file_reminders
 
 
 # ============================================================================
@@ -72,14 +79,17 @@ def _effect_process_file_event(
     project_db_path: str,
     reminders_path: str,
     function_pattern: Optional[Pattern[str]],
+    content_hashes: Optional[Dict[str, str]] = None,
 ) -> None:
     """
     Effect: Process a file modified/created event.
 
-    1. Check DB registration
-    2. Sync timestamp if stale
-    3. Run function diff if applicable
-    4. Write reminders
+    1. Skip a byte-identical rewrite (content_hashes: path -> last seen digest)
+    2. Check DB registration
+    3. Sync timestamp if stale
+    4. Run function diff (regex) for non-Python files; audit Python files at
+       full fidelity and keep ONE audit_drift reminder per file
+    5. Write reminders
     """
     relative_path = get_relative_path(event.src_path, project_root)
 
@@ -98,6 +108,16 @@ def _effect_process_file_event(
     if file_mtime is None:
         return
 
+    # A rewrite with identical bytes (a regenerated file) changed nothing
+    if content_hashes is not None:
+        digest = content_digest(file_content)
+        if content_hashes.get(relative_path) == digest:
+            return
+        content_hashes[relative_path] = digest
+
+    # Tracked Python files get the full-fidelity audit instead of the regex diff
+    audit_python = db_file_row is not None and detect_language(relative_path) == 'python'
+
     # Get finalized functions if file is registered
     db_functions: Tuple[Dict[str, Any], ...] = ()
     if db_file_row is not None:
@@ -111,7 +131,7 @@ def _effect_process_file_event(
         file_content=file_content,
         db_file_row=db_file_row,
         db_functions=db_functions,
-        function_pattern=function_pattern,
+        function_pattern=None if audit_python else function_pattern,
         file_mtime=file_mtime,
     )
 
@@ -129,6 +149,28 @@ def _effect_process_file_event(
     # Write reminders if any
     if reminders:
         _effect_append_reminders(reminders_path, reminders)
+
+    # Re-audit the file; its audit_drift reminder is replaced (or cleared when clean)
+    if audit_python:
+        blocking = _effect_file_audit_blocking(project_root, relative_path)
+        if blocking is not None:
+            _effect_replace_file_reminders(
+                reminders_path, REMINDER_AUDIT_DRIFT, relative_path,
+                build_audit_drift_reminders(relative_path, blocking),
+            )
+
+
+def _effect_seed_content_hashes(project_root: str, project_db_path: str) -> Dict[str, str]:
+    """
+    Effect: Digest of every tracked file as it is now, so the first rewrite
+    after startup that changes nothing is recognised as a no-op too.
+    """
+    hashes: Dict[str, str] = {}
+    for relative_path in _effect_get_all_known_file_paths(project_db_path):
+        content = _effect_read_file(os.path.join(project_root, relative_path))
+        if content is not None:
+            hashes[relative_path] = content_digest(content)
+    return hashes
 
 
 def _effect_process_delete_event(
@@ -170,6 +212,7 @@ def _effect_create_event_callback(
         held only by the callback closure.
     """
     debounce_dict: Dict[str, float] = {}
+    content_hashes: Dict[str, str] = _effect_seed_content_hashes(project_root, project_db_path)
 
     def on_event(event: FileEvent) -> None:
         # Exclusion check — pass the project-relative path so .watchdogignore
@@ -190,7 +233,7 @@ def _effect_create_event_callback(
         if event.event_type in (EVENT_MODIFIED, EVENT_CREATED):
             _effect_process_file_event(
                 event, source_dir, project_root, project_db_path,
-                reminders_path, function_pattern,
+                reminders_path, function_pattern, content_hashes,
             )
         elif event.event_type == EVENT_DELETED:
             _effect_process_delete_event(
@@ -218,7 +261,7 @@ def _effect_create_event_callback(
                         timestamp=event.timestamp,
                     ),
                     source_dir, project_root, project_db_path,
-                    reminders_path, function_pattern,
+                    reminders_path, function_pattern, content_hashes,
                 )
 
     return (on_event, debounce_dict)

@@ -16,6 +16,7 @@ import sqlite3
 from typing import Optional, Tuple, Dict, Any, List
 
 from ..shared.detail_level import DETAIL_FULL, DETAIL_LEAN, normalize_detail_level
+from ..project._common import audit_completion_gate
 from ._common import (
     _open_project_connection,
     _close_connection,
@@ -236,7 +237,9 @@ def update_project_state(
         action: Operation name (e.g., 'start_task', 'complete_task', 'block_subtask')
         target_type: Entity type ('task', 'subtask', 'sidequest', 'milestone', 'completion_path')
         target_id: ID of target entity
-        data: Optional action-specific data (e.g., blocked_by, completion_notes)
+        data: Optional action-specific data (e.g., blocked_by, completion_notes).
+            data.audit_override_reason completes a task/subtask/sidequest despite
+            blocking tracking-audit findings (recorded as a warning note)
         create_note: Auto-log action as note in notes table
 
     Returns:
@@ -287,6 +290,14 @@ def update_project_state(
                     error=f"{target_type} with id {target_id} not found in {table}",
                 )
 
+            # Completion gate: blocking tracking drift in the item's files refuses it
+            gate_error, audit = audit_completion_gate(
+                project_root, table, target_id, new_status, conn,
+                (data or {}).get('audit_override_reason'),
+            )
+            if gate_error:
+                return Result(success=False, error=gate_error)
+
             # Update status
             conn.execute(
                 f"UPDATE {table} SET status = ? WHERE id = ?",
@@ -310,6 +321,7 @@ def update_project_state(
                 'updated_entity': updated_entity,
                 'note_created': False,
                 'note_id': None,
+                **({'audit': audit} if audit else {}),
             }
 
             # Optionally create note
@@ -477,6 +489,14 @@ def batch_update_progress(
                         raise ValueError(
                             f"{target_type} id {target_id} not found"
                         )
+
+                    # Completion gate (tasks, subtasks, sidequests)
+                    gate_error, _audit = audit_completion_gate(
+                        project_root, table, target_id, new_status, conn,
+                        (update_data or {}).get('audit_override_reason'),
+                    )
+                    if gate_error:
+                        raise ValueError(gate_error)
 
                     # Update
                     conn.execute(

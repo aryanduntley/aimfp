@@ -6,6 +6,7 @@ function diffing, and reminder generation.
 Effect functions for database queries.
 """
 
+import hashlib
 import re
 from typing import Dict, Any, Optional, Pattern, Tuple
 
@@ -21,6 +22,7 @@ from .config import (
     REMINDER_MISSING_FUNCTION,
     REMINDER_MISSING_DB_FUNCTION,
     REMINDER_FILE_DELETED,
+    REMINDER_AUDIT_DRIFT,
     SEVERITY_INFO,
     SEVERITY_WARNING,
 )
@@ -179,6 +181,31 @@ def generate_file_reminders(
     return tuple(reminders)
 
 
+def content_digest(content: str) -> str:
+    """Pure: SHA-256 of a file's text, to tell a real edit from a byte-identical rewrite."""
+    return hashlib.sha256(content.encode('utf-8', errors='replace')).hexdigest()
+
+
+def build_audit_drift_reminders(
+    relative_path: str,
+    blocking: Dict[str, int],
+) -> Tuple[Dict[str, str], ...]:
+    """
+    Pure: The audit_drift reminder for a file with blocking tracking drift,
+    or () when the file is clean (which clears an earlier reminder).
+    """
+    if not blocking:
+        return ()
+    counts = ', '.join(f"{category}={count}" for category, count in sorted(blocking.items()))
+    return (create_reminder(
+        REMINDER_AUDIT_DRIFT,
+        SEVERITY_WARNING,
+        relative_path,
+        f"Tracking drift after this change: {counts}. audit_tracking(paths=['{relative_path}']) "
+        f"lists it with IDs; fix with apply_audit_fixes(report=..., apply=[...]) or reconcile_paths.",
+    ),)
+
+
 def generate_delete_reminders(
     relative_path: str,
     is_registered: bool,
@@ -200,6 +227,24 @@ def generate_delete_reminders(
 # ============================================================================
 # Effect Functions
 # ============================================================================
+
+def _effect_file_audit_blocking(project_root: str, relative_path: str) -> Optional[Dict[str, int]]:
+    """
+    Effect: Blocking tracking-drift counts for one file (functions and
+    interactions, full fidelity), or None when the audit cannot run.
+    """
+    try:
+        from ..helpers.audit.code_index import build_code_index, build_scope_request
+        from ..helpers.audit.tracking_audit import tracking_audit_result
+        index, _ = build_code_index(project_root, build_scope_request(paths=[relative_path]))
+        if index is None or not index.files:
+            return None
+        result = tracking_audit_result(
+            project_root, index, ('functions', 'interactions'), 'watchdog_audit', (), write_report=False)
+        return {category: result.counts[category] for category in result.blocking}
+    except Exception:
+        return None
+
 
 def _effect_get_file_by_path(
     project_db_path: str,

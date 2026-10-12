@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 
 # Import global utilities
-from ..utils import get_return_statements
+from ..utils import get_return_statements, encode_json_field
 from .note_refs import NoteRef, query_note_refs, note_ref_return_statements
 from ..shared.slugs import mint_slug
 from ..shared.fts_query import (
@@ -163,35 +163,29 @@ def validate_type_id_in_name(name: str, type_id: int) -> bool:
 
 def serialize_definition(definition: Dict[str, Any]) -> str:
     """
-    Serialize ADT definition to JSON string.
+    Pure: Serialize an ADT definition for types.definition_json.
 
-    Pure function - deterministic serialization.
+    Delegates to encode_json_field, so pre-encoded JSON text is stored once.
 
     Args:
-        definition: ADT definition object
+        definition: ADT definition object, or pre-encoded JSON text
 
     Returns:
         JSON string
     """
-    return json.dumps(definition)
-
+    return encode_json_field(definition)
 
 def serialize_links(links: Optional[Dict[str, Any]]) -> Optional[str]:
     """
-    Serialize links to JSON string.
-
-    Pure function - deterministic serialization.
+    Pure: Serialize type links for types.links (see serialize_definition).
 
     Args:
-        links: Links object
+        links: Links object, pre-encoded JSON text, or None
 
     Returns:
         JSON string or None
     """
-    if links is None:
-        return None
-    return json.dumps(links)
-
+    return encode_json_field(links)
 
 def build_update_query(
     type_id: int,

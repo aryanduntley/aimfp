@@ -57,7 +57,7 @@ _PLAIN_COLS: Dict[str, Dict[str, str]] = {
               "confidence_score": "confidence_score"},
     "completion_path": {"order_index": "order_index", "status": "status", "description": "description"},
     "functions": {"name": "name", "purpose": "purpose", "parameters": "parameters",
-                  "returns": "returns", "id_in_name": "id_in_name"},
+                  "returns": "returns", "id_in_name": "id_in_name", "source_hash": "source_hash"},
     "types": {"name": "name", "definition_json": "definition_json", "description": "description",
               "links": "links", "id_in_name": "id_in_name"},
     "milestones": {"name": "name", "status": "status", "description": "description"},
@@ -177,9 +177,9 @@ def _insert_entity(conn, resolver: _Resolver, kind: str, key: Dict[str, Any],
         if fpath and file_id is None:
             return None, "parent file not found"
         cur = conn.execute(
-            "INSERT INTO functions (entity_key, file_id, name, purpose, parameters, returns, id_in_name) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO functions (entity_key, file_id, name, purpose, parameters, returns, id_in_name, source_hash) VALUES (?,?,?,?,?,?,?,?)",
             (key.get("entity_key"), file_id, a.get("name", key.get("name")), a.get("purpose"),
-             a.get("parameters"), a.get("returns"), a.get("id_in_name", 1)))
+             a.get("parameters"), a.get("returns"), a.get("id_in_name", 1), a.get("source_hash")))
     elif kind == "types":
         fpath = a.get("file", key.get("file"))
         file_id = resolver.get("files", {"path": fpath}) if fpath else None
@@ -350,10 +350,12 @@ def _edge_ids(resolver: _Resolver, ref: Dict[str, Any]):
         t = resolver.get("functions", ref.get("to"))
         if s is None or t is None:
             return None, "interaction endpoint function not found"
+        attributes = ref.get("attributes") or {}
         return ("interactions",
                 {"source_function_id": s, "target_function_id": t,
                  "interaction_type": ref["interaction_type"]},
-                (ref.get("attributes") or {}).get("description"))
+                {"description": attributes.get("description"),
+                 "is_indirect": attributes.get("is_indirect") or 0})
     if k == "type_usage":
         ty = resolver.get("types", ref.get("type"))
         fn = resolver.get("functions", ref.get("function"))
@@ -407,7 +409,7 @@ def _apply_reference(conn, resolver, ref):
     resolved = _edge_ids(resolver, ref)
     if resolved[0] is None:
         return "conflict", resolved[1]
-    table, cols, description = resolved
+    table, cols, edge_attributes = resolved
     where = " AND ".join(f"{c} = ?" for c in cols)
     vals = tuple(cols.values())
     exists = conn.execute(f"SELECT 1 FROM {table} WHERE {where} LIMIT 1", vals).fetchone()
@@ -418,8 +420,8 @@ def _apply_reference(conn, resolver, ref):
         columns = list(cols.keys())
         params = list(cols.values())
         if table == "interactions":
-            columns.append("description")
-            params.append(description)
+            columns.extend(edge_attributes.keys())
+            params.extend(edge_attributes.values())
         placeholders = ", ".join("?" for _ in columns)
         conn.execute(f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})", params)
         return "applied", None

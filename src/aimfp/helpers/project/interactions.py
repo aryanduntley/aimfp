@@ -22,7 +22,7 @@ from typing import Optional, List, Tuple, Dict, Any
 
 # Import global utilities
 from ..utils import get_return_statements
-from ._common import _check_function_exists, _create_deletion_note, get_cached_project_root, _open_project_connection
+from ._common import _check_function_exists, _create_deletion_note, get_cached_project_root, _open_project_connection, strip_dot_slash
 
 
 # ============================================================================
@@ -82,6 +82,7 @@ class InteractionRecord:
     description: Optional[str]
     created_at: str
     updated_at: str
+    is_indirect: bool = False  # deliberate edge the code makes indirectly; audits never flag it
 
 
 @dataclass(frozen=True)
@@ -127,7 +128,8 @@ def build_update_query(
     source_function_id: Optional[int],
     target_function_id: Optional[int],
     interaction_type: Optional[str],
-    description: Optional[str]
+    description: Optional[str],
+    is_indirect: Optional[bool] = None,
 ) -> Tuple[str, Tuple]:
     """
     Build SQL UPDATE query with only non-NULL fields.
@@ -140,6 +142,7 @@ def build_update_query(
         target_function_id: New target function ID (None = don't update)
         interaction_type: New interaction type (None = don't update)
         description: New description (None = don't update)
+        is_indirect: New indirect flag (None = don't update)
 
     Returns:
         Tuple of (sql_query, parameters)
@@ -162,6 +165,10 @@ def build_update_query(
     if description is not None:
         updates.append("description = ?")
         params_list.append(description)
+
+    if is_indirect is not None:
+        updates.append("is_indirect = ?")
+        params_list.append(1 if is_indirect else 0)
 
     # Build query
     sql = f"UPDATE interactions SET {', '.join(updates)} WHERE id = ?"
@@ -196,7 +203,22 @@ def row_to_interaction_record(row: sqlite3.Row) -> InteractionRecord:
         description=row["description"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        is_indirect=bool(row["is_indirect"]) if "is_indirect" in row.keys() else False,
     )
+
+
+def normalize_interaction_tuple(entry: Any) -> Tuple[int, int, str, Optional[str], bool]:
+    """
+    Pure: (source, target, type, description, is_indirect) from a 4- or
+    5-element add_interactions entry; the optional fifth is is_indirect.
+    """
+    values = tuple(entry)
+    if len(values) not in (4, 5):
+        raise ValueError(
+            f"Each interaction needs 4 or 5 elements (source_id, target_id, type, description[, is_indirect]); got {len(values)}"
+        )
+    source_id, target_id, interaction_type, description = values[:4]
+    return (source_id, target_id, interaction_type, description, bool(values[4]) if len(values) == 5 else False)
 
 
 # ============================================================================
@@ -284,13 +306,15 @@ def _insert_interaction_if_new(
     target_function_id: int,
     interaction_type: str,
     description: Optional[str],
+    is_indirect: bool = False,
 ) -> Tuple[int, bool]:
     """
     Effect: Insert an edge unless the same (source, target, type) already exists.
 
     The interactions table has no UNIQUE constraint, and scan_call_graph re-emits
     the whole graph on every run, so a blind insert doubled the call graph each
-    time. Does not commit.
+    time. The is_indirect column is written only when set, so callers on a
+    database not yet migrated to 1.15 keep working. Does not commit.
 
     Returns:
         (interaction ID, True when newly inserted)
@@ -298,12 +322,14 @@ def _insert_interaction_if_new(
     existing = _find_interaction_id(conn, source_function_id, target_function_id, interaction_type)
     if existing is not None:
         return (existing, False)
+    columns = "source_function_id, target_function_id, interaction_type, description"
+    values: Tuple[Any, ...] = (source_function_id, target_function_id, interaction_type, description)
+    if is_indirect:
+        columns += ", is_indirect"
+        values += (1,)
     cursor = conn.execute(
-        """
-        INSERT INTO interactions (source_function_id, target_function_id, interaction_type, description)
-        VALUES (?, ?, ?, ?)
-        """,
-        (source_function_id, target_function_id, interaction_type, description)
+        f"INSERT INTO interactions ({columns}) VALUES ({', '.join('?' * len(values))})",
+        values,
     )
     return (cursor.lastrowid, True)
 
@@ -313,7 +339,8 @@ def _add_interaction_effect(
     source_function_id: int,
     target_function_id: int,
     interaction_type: str,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    is_indirect: bool = False,
 ) -> Tuple[int, bool]:
     """
     Effect: Insert a single interaction unless it is already tracked, and commit.
@@ -324,12 +351,13 @@ def _add_interaction_effect(
         target_function_id: Target function ID
         interaction_type: Interaction type
         description: Optional description
+        is_indirect: Mark the edge as deliberate-indirect
 
     Returns:
         (interaction ID, True when newly inserted)
     """
     result = _insert_interaction_if_new(
-        conn, source_function_id, target_function_id, interaction_type, description
+        conn, source_function_id, target_function_id, interaction_type, description, is_indirect
     )
     conn.commit()
     return result
@@ -337,7 +365,7 @@ def _add_interaction_effect(
 
 def _add_interactions_batch_effect(
     conn: sqlite3.Connection,
-    interactions: List[Tuple[int, int, str, Optional[str]]]
+    interactions: List[Tuple[int, int, str, Optional[str], bool]]
 ) -> Tuple[Tuple[int, ...], int]:
     """
     Effect: Insert multiple interactions in one transaction, skipping edges
@@ -345,7 +373,8 @@ def _add_interactions_batch_effect(
 
     Args:
         conn: Database connection
-        interactions: List of (source_function_id, target_function_id, interaction_type, description) tuples
+        interactions: List of normalized (source_function_id, target_function_id,
+            interaction_type, description, is_indirect) tuples
 
     Returns:
         (interaction IDs in input order — existing IDs for skipped edges,
@@ -353,8 +382,8 @@ def _add_interactions_batch_effect(
     """
     try:
         results = tuple(
-            _insert_interaction_if_new(conn, source_id, target_id, interaction_type, description)
-            for source_id, target_id, interaction_type, description in interactions
+            _insert_interaction_if_new(conn, source_id, target_id, interaction_type, description, is_indirect)
+            for source_id, target_id, interaction_type, description, is_indirect in interactions
         )
         conn.commit()
         return (
@@ -397,8 +426,7 @@ def _delete_interaction_effect(
 
 _INTERACTION_QUERY_BASE: str = """
     SELECT
-        i.id, i.source_function_id, i.target_function_id,
-        i.interaction_type, i.description, i.created_at, i.updated_at,
+        i.*,
         sf.name AS source_function_name,
         sfi.name AS source_file_name,
         sfi.path AS source_file_path,
@@ -415,46 +443,61 @@ _INTERACTION_QUERY_BASE: str = """
 
 def _get_interactions_by_function_effect(
     conn: sqlite3.Connection,
-    function_name: str,
+    function_name: Optional[str],
+    function_id: Optional[int] = None,
+    file_path: Optional[str] = None,
 ) -> List[sqlite3.Row]:
     """
-    Effect: Query all interactions where function appears as source or target.
+    Effect: Query all interactions where a function appears as source or target.
+
+    The function is named by id, or by name (optionally narrowed to the file
+    that defines it, since names are not unique across files).
 
     Args:
         conn: Database connection
-        function_name: Function name to look up
+        function_name: Function name to look up (ignored when function_id is given)
+        function_id: Exact function ID
+        file_path: With function_name, only the function in this file
 
     Returns:
         List of Row objects with full interaction + function/file data
     """
-    sql = _INTERACTION_QUERY_BASE + """
-    WHERE sf.name = ? OR tf.name = ?
+    if function_id is not None:
+        where, params = "sf.id = ? OR tf.id = ?", (function_id, function_id)
+    elif file_path:
+        path = strip_dot_slash(file_path)
+        where = "(sf.name = ? AND sfi.path = ?) OR (tf.name = ? AND tfi.path = ?)"
+        params = (function_name, path, function_name, path)
+    else:
+        where, params = "sf.name = ? OR tf.name = ?", (function_name, function_name)
+    sql = _INTERACTION_QUERY_BASE + f"""
+    WHERE {where}
     ORDER BY i.created_at
     """
-    cursor = conn.execute(sql, (function_name, function_name))
-    return cursor.fetchall()
+    return conn.execute(sql, params).fetchall()
 
 
 def _get_interactions_by_file_effect(
     conn: sqlite3.Connection,
-    file_id: int,
+    file_ids: Tuple[int, ...],
 ) -> List[sqlite3.Row]:
     """
-    Effect: Query all interactions involving functions in a specific file.
+    Effect: Query all interactions involving functions in any of the given files.
 
     Args:
         conn: Database connection
-        file_id: File ID to look up interactions for
+        file_ids: File IDs to look up interactions for
 
     Returns:
-        List of Row objects with full interaction + function/file data
+        List of Row objects with full interaction + function/file data, each
+        edge once even when both ends are in the set
     """
-    sql = _INTERACTION_QUERY_BASE + """
-    WHERE sf.file_id = ? OR tf.file_id = ?
+    marks = ', '.join('?' * len(file_ids))
+    sql = _INTERACTION_QUERY_BASE + f"""
+    WHERE sf.file_id IN ({marks}) OR tf.file_id IN ({marks})
     ORDER BY i.created_at
     """
-    cursor = conn.execute(sql, (file_id, file_id))
-    return cursor.fetchall()
+    return conn.execute(sql, tuple(file_ids) * 2).fetchall()
 
 
 # ============================================================================
@@ -465,6 +508,8 @@ def add_interaction(
     source: str,
     target: str,
     interaction_type: str,
+    description: Optional[str] = None,
+    is_indirect: bool = False,
     project_root: Optional[str] = None
 ) -> AddInteractionResult:
     """
@@ -477,6 +522,10 @@ def add_interaction(
         source: Source function name (the function making the call/reference)
         target: Target function name (the function being called/referenced)
         interaction_type: Interaction type ('call', 'chain', 'borrow', 'compose', 'pipe')
+        description: What the dependency is (optional)
+        is_indirect: True for a deliberate edge the code makes indirectly (dispatch
+            through a tuple/table of functions, a chain data-flow link), so audits
+            never report it as stale
 
     Returns:
         AddInteractionResult with success status and the interaction ID.
@@ -546,7 +595,9 @@ def add_interaction(
             conn,
             source_function_id,
             target_function_id,
-            interaction_type
+            interaction_type,
+            description,
+            is_indirect,
         )
 
         # Success - fetch return statements from core database
@@ -570,7 +621,7 @@ def add_interaction(
 
 
 def add_interactions(
-    interactions: List[Tuple[int, int, str, Optional[str]]],
+    interactions: List[Tuple[Any, ...]],
     project_root: Optional[str] = None
 ) -> AddInteractionsResult:
     """
@@ -580,8 +631,10 @@ def add_interactions(
     directly instead of names for better performance.
 
     Args:
-        interactions: List of (source_function_id, target_function_id, interaction_type, description) tuples
-            Interaction types: 'call', 'chain', 'borrow', 'compose', 'pipe'
+        interactions: List of (source_function_id, target_function_id, interaction_type,
+            description[, is_indirect]) tuples. Interaction types: 'call', 'chain',
+            'borrow', 'compose', 'pipe'. The optional fifth element marks a deliberate
+            indirect edge that audits never report as stale.
 
     Returns:
         AddInteractionsResult with IDs in input order, added_count and
@@ -609,8 +662,13 @@ def add_interactions(
             error="Interactions list cannot be empty"
         )
 
+    try:
+        normalized = tuple(normalize_interaction_tuple(entry) for entry in interactions)
+    except (TypeError, ValueError) as exc:
+        return AddInteractionsResult(success=False, error=str(exc))
+
     # Validate all interaction types
-    for source_id, target_id, interaction_type, description in interactions:
+    for source_id, target_id, interaction_type, description, _indirect in normalized:
         if not validate_interaction_type(interaction_type):
             return AddInteractionsResult(
                 success=False,
@@ -623,7 +681,7 @@ def add_interactions(
 
     try:
         # Validate all function IDs exist
-        for source_id, target_id, interaction_type, description in interactions:
+        for source_id, target_id, interaction_type, description, _indirect in normalized:
             if not _check_function_exists(conn, source_id):
                 return AddInteractionsResult(
                     success=False,
@@ -637,7 +695,7 @@ def add_interactions(
                 )
 
         # Effect: add all interactions in transaction, skipping tracked edges
-        interaction_ids, skipped = _add_interactions_batch_effect(conn, interactions)
+        interaction_ids, skipped = _add_interactions_batch_effect(conn, list(normalized))
 
         # Success - fetch return statements from core database
         return_statements = get_return_statements("add_interactions")
@@ -666,6 +724,7 @@ def update_interaction(
     target_function_id: Optional[int] = None,
     interaction_type: Optional[str] = None,
     description: Optional[str] = None,
+    is_indirect: Optional[bool] = None,
     project_root: Optional[str] = None
 ) -> UpdateInteractionResult:
     """
@@ -679,6 +738,7 @@ def update_interaction(
         target_function_id: New target function ID (None = don't update)
         interaction_type: New interaction type (None = don't update)
         description: New description (None = don't update)
+        is_indirect: Mark (True) or clear (False) the deliberate-indirect flag (None = don't update)
 
     Returns:
         UpdateInteractionResult with success status
@@ -698,7 +758,7 @@ def update_interaction(
         True
     """
     # Validate at least one parameter is provided
-    if all(v is None for v in [source_function_id, target_function_id, interaction_type, description]):
+    if all(v is None for v in [source_function_id, target_function_id, interaction_type, description, is_indirect]):
         return UpdateInteractionResult(
             success=False,
             error="At least one parameter must be provided for update"
@@ -737,7 +797,9 @@ def update_interaction(
             )
 
         # Pure: build update query
-        sql, params = build_update_query(interaction_id, source_function_id, target_function_id, interaction_type, description)
+        sql, params = build_update_query(
+            interaction_id, source_function_id, target_function_id, interaction_type, description, is_indirect
+        )
 
         # Effect: execute update
         _update_interaction_effect(conn, sql, params)
@@ -838,18 +900,23 @@ def delete_interaction(
 
 
 def get_interactions_by_function(
-    function_name: str,
+    function_name: Optional[str] = None,
+    function_id: Optional[int] = None,
+    file_path: Optional[str] = None,
     project_root: Optional[str] = None
 ) -> InteractionQueryResult:
     """
     Get all interactions for a function (both as source and target).
 
-    Returns interactions where the named function is the caller (source) or
-    the callee (target). Use to trace dependency graphs — what does this
-    function call, and what calls it?
+    Returns interactions where the function is the caller (source) or the
+    callee (target). Use to trace dependency graphs — what does this function
+    call, and what calls it? Names are not unique across files: pass
+    function_id, or function_name with file_path, to mean exactly one.
 
     Args:
         function_name: Function name to look up (e.g., 'validate_input_id_15')
+        function_id: Exact function ID (takes precedence over the name)
+        file_path: With function_name, only the function defined in this file
 
     Returns:
         InteractionQueryResult with tuple of InteractionRecord objects including
@@ -864,11 +931,14 @@ def get_interactions_by_function(
         process_data_id_42 --call--> validate_input_id_15
         validate_input_id_15 --chain--> format_output_id_23
     """
+    if function_id is None and not function_name:
+        return InteractionQueryResult(success=False, error="Pass function_name or function_id")
+
     project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
-        rows = _get_interactions_by_function_effect(conn, function_name)
+        rows = _get_interactions_by_function_effect(conn, function_name, function_id, file_path)
         records = tuple(row_to_interaction_record(row) for row in rows)
 
         return InteractionQueryResult(
@@ -888,18 +958,21 @@ def get_interactions_by_function(
 
 
 def get_interactions_by_file(
-    file_id: int,
+    file_id: Optional[int] = None,
+    file_ids: Optional[List[int]] = None,
     project_root: Optional[str] = None
 ) -> InteractionQueryResult:
     """
-    Get all interactions for functions in a file.
+    Get all interactions for functions in a file, or in a set of files.
 
-    Returns all interactions where any function belonging to the given file
-    is the source or target. Use to understand a file's role in the broader
-    dependency graph.
+    Returns all interactions where any function belonging to the given files
+    is the source or target — each with source and target function names and
+    file paths. Use to understand a file's (or a feature's) role in the
+    broader dependency graph in one call.
 
     Args:
         file_id: File ID to look up interactions for
+        file_ids: Several file IDs at once (combined with file_id)
 
     Returns:
         InteractionQueryResult with tuple of InteractionRecord objects including
@@ -912,11 +985,15 @@ def get_interactions_by_file(
         >>> len(result.interactions)
         7
     """
+    wanted = tuple(dict.fromkeys(([file_id] if file_id is not None else []) + list(file_ids or ())))
+    if not wanted:
+        return InteractionQueryResult(success=False, error="Pass file_id or file_ids")
+
     project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
-        rows = _get_interactions_by_file_effect(conn, file_id)
+        rows = _get_interactions_by_file_effect(conn, wanted)
         records = tuple(row_to_interaction_record(row) for row in rows)
 
         return InteractionQueryResult(

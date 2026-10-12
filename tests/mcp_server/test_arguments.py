@@ -49,8 +49,9 @@ class TestPublishedSchemas:
 
     def test_tuple_shape(self, schemas):
         items = schemas["add_interactions"]["properties"]["interactions"]["items"]
-        assert items["minItems"] == items["maxItems"] == 4
+        assert items["minItems"] == 4 and items["maxItems"] == 5   # 5th: optional is_indirect
         assert items["prefixItems"][2]["enum"] == ["call", "chain", "borrow", "compose", "pipe"]
+        assert items["prefixItems"][4] == {"type": "boolean"}
 
     def test_any_of_param_has_no_type(self, schemas):
         prop = schemas["find_directives_by_intent_keyword"]["properties"]["keywords"]

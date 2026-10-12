@@ -346,7 +346,15 @@ def test_call_through_untracked_helpers_is_not_stale(root):
     _write(root, "src/calc.py", CALC)
     _write(root, "src/runner.py", RUNNER)
     reconcile_paths(["src/calc.py", "src/runner.py"], include_private=False, project_root=root)
-    _edge(root, "run", "add")   # recorded on run, made inside _inner
+    # The call made inside _inner is credited to run by the call graph itself
+    conn = sqlite3.connect(os.path.join(root, ".aimfp-project", "project.db"))
+    recorded = conn.execute(
+        "SELECT s.name, t.name, i.description FROM interactions i "
+        "JOIN functions s ON s.id = i.source_function_id "
+        "JOIN functions t ON t.id = i.target_function_id WHERE s.name = 'run'").fetchall()
+    conn.close()
+    assert [(s, t) for s, t, _ in recorded] == [("run", "add")]
+    assert recorded[0][2].endswith("via _inner")
     assert reconcile_paths(["src/runner.py"], include_private=False,
                            project_root=root).stale_interactions == ()
     _write(root, "src/runner.py", RUNNER.replace("add(values[0], values[1])", "values[0] + values[1]"))

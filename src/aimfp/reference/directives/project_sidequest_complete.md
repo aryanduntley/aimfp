@@ -294,6 +294,10 @@ Primary execution path for sidequest completion and outcome capture.
 **Issue**: User completed sidequest but forgot original context
 **Resolution**: Show paused task details, offer to review before resuming
 
+### Roadblock 4: tracking_audit_blocked
+**Issue**: Completion refused: the tracking audit of the sidequest's linked files found blocking drift (missing/stale functions, types or interactions, repoints, parameter drift, incomplete or malformed records, unfinished reservations). The error carries the counts and a report path.
+**Resolution**: The refusal names the exact fix calls (reconcile_paths, apply_audit_fixes(report=..., apply=[...]), prose updates) — run them and complete again. Avoid the refusal altogether by running audit_tracking(task_id=..., task_type=...) as a pre-flight before marking complete. Pass audit_override_reason only for drift that is understood and scheduled; it is recorded as a warning note. Warnings never block. The user setting audit_gate (block | warn | off, default block) relaxes the gate for a project mid-adoption: with warn, completion succeeds and the result lists would_block findings.
+
 ---
 
 ## Intent Keywords

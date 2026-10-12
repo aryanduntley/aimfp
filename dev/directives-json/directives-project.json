@@ -2460,8 +2460,8 @@
           "details": {
             "error_structure": "{success: false, error: 'dependencies_exist', functions: [...], types: [...], file_flows: [...]}",
             "cleanup_steps": [
-              "1. For each function: call delete_function() - may error if types_functions exist",
-              "2. If delete_function errors: unlink types_functions entries first, then retry",
+              "1. For each function: call delete_function(). A function with interactions is refused (interactions_exist) until you choose: repoint_to=<successor id> when another function took over its job, or confirm_cascade=true when the dependencies are gone — the deletion note records every moved or removed edge",
+              "2. If delete_function errors with types_functions_exist: unlink types_functions entries first, then retry",
               "3. Remove file_flows entries manually",
               "4. Retry delete_file() - should now succeed"
             ]
@@ -2487,6 +2487,10 @@
       {
         "issue": "types_functions_exist_when_deleting_function",
         "resolution": "Unlink types_functions entries before deleting function"
+      },
+      {
+        "issue": "interactions_exist_when_deleting_function",
+        "resolution": "delete_function lists the edges: pass repoint_to=<successor> (split/move) or confirm_cascade=true (dependencies gone); both are recorded in the deletion note"
       }
     ],
     "intent_keywords_json": [
@@ -2845,11 +2849,14 @@
             "verify_task_files": "get_task_context(task_id) — files[] must list every file worked on for this task; link any missing (e.g. work done before the task was in_progress) via link_files_to_task(task_id, file_ids)",
             "use_helpers": [
               "get_task_context",
-              "link_files_to_task"
+              "link_files_to_task",
+              "audit_tracking",
+              "apply_audit_fixes"
             ],
             "update_task_status": "completed",
             "mark_all_items_complete": true,
-            "log_completion_time": true
+            "log_completion_time": true,
+            "preflight_audit": "audit_tracking(task_id=<id>, task_type='task') BEFORE marking complete: it runs the same audit the completion gate runs over the linked files. Clear blocking findings with the fix calls its result names (reconcile_paths, apply_audit_fixes(report=..., apply=[...]), prose updates). Completion is refused on blocking drift when audit_gate='block' (default); audit_override_reason completes anyway with a warning note."
           }
         },
         {
@@ -2926,6 +2933,10 @@
       {
         "issue": "user_unavailable",
         "resolution": "Log completion and defer next-step planning to next session"
+      },
+      {
+        "issue": "tracking_audit_blocked",
+        "resolution": "Completion refused: the tracking audit of the task's linked files found blocking drift. The error lists the categories, the report path and the exact fix calls — run them and complete again. audit_override_reason only for understood, scheduled drift (recorded as a warning note); warnings never block; the user may set audit_gate='warn' during legacy cleanup."
       }
     ],
     "intent_keywords_json": [
@@ -2955,7 +2966,12 @@
           "then": "mark_complete",
           "details": {
             "update_subtask_status": "completed",
-            "log_completion_time": true
+            "log_completion_time": true,
+            "preflight_audit": "audit_tracking(task_id=<id>, task_type='subtask') BEFORE marking complete: it runs the same audit the completion gate runs over the linked files. Clear blocking findings with the fix calls its result names (reconcile_paths, apply_audit_fixes(report=..., apply=[...]), prose updates). Completion is refused on blocking drift when audit_gate='block' (default); audit_override_reason completes anyway with a warning note.",
+            "use_helpers": [
+              "audit_tracking",
+              "apply_audit_fixes"
+            ]
           }
         },
         {
@@ -3006,6 +3022,10 @@
       {
         "issue": "parent_task_completed",
         "resolution": "Cannot resume completed parent - this is a data integrity issue"
+      },
+      {
+        "issue": "tracking_audit_blocked",
+        "resolution": "Completion refused: the tracking audit of the subtask's linked files found blocking drift. The error lists the categories, the report path and the exact fix calls — run them and complete again. audit_override_reason only for understood, scheduled drift (recorded as a warning note); warnings never block; the user may set audit_gate='warn' during legacy cleanup."
       }
     ],
     "intent_keywords_json": [
@@ -3036,7 +3056,12 @@
           "details": {
             "update_sidequest_status": "completed",
             "log_completion_time": true,
-            "prompt_for_outcome": true
+            "prompt_for_outcome": true,
+            "preflight_audit": "audit_tracking(task_id=<id>, task_type='sidequest') BEFORE marking complete: it runs the same audit the completion gate runs over the linked files. Clear blocking findings with the fix calls its result names (reconcile_paths, apply_audit_fixes(report=..., apply=[...]), prose updates). Completion is refused on blocking drift when audit_gate='block' (default); audit_override_reason completes anyway with a warning note.",
+            "use_helpers": [
+              "audit_tracking",
+              "apply_audit_fixes"
+            ]
           }
         },
         {
@@ -3100,6 +3125,10 @@
       {
         "issue": "paused_task_no_longer_relevant",
         "resolution": "Offer to cancel paused task instead of resuming"
+      },
+      {
+        "issue": "tracking_audit_blocked",
+        "resolution": "Completion refused: the tracking audit of the sidequest's linked files found blocking drift. The error lists the categories, the report path and the exact fix calls — run them and complete again. audit_override_reason only for understood, scheduled drift (recorded as a warning note); warnings never block; the user may set audit_gate='warn' during legacy cleanup."
       }
     ],
     "intent_keywords_json": [
@@ -3621,7 +3650,8 @@
               "Call catalog_functions(functions=[{name, file_id, purpose, parameters, returns}, ...]).",
               "Call catalog_types(types=[{name, file_id, definition, description}, ...]) for the extracted type definitions.",
               "Do NOT use reserve_function/finalize_function or reserve_type/finalize_type for existing code — same reasoning as catalog_files.",
-              "The 'is_effect' flag on each extracted function is a HINT read from declared intent (the _effect_ naming convention and the 'Effect:' docstring marker), not a purity verdict. Treat impurity as informational, never a blocker."
+              "The 'is_effect' flag on each extracted function is a HINT read from declared intent (the _effect_ naming convention and the 'Effect:' docstring marker), not a purity verdict. Treat impurity as informational, never a blocker.",
+              "After catalog_functions: audit_functions(file_ids=[...]) flags empty fields, malformed JSON and parameter drift in what was just registered."
             ],
             "purity_assessment": {
               "pure": "No side effects detected, deterministic based on visible logic",
@@ -3630,7 +3660,8 @@
             },
             "use_helpers": [
               "catalog_functions",
-              "catalog_types"
+              "catalog_types",
+              "audit_functions"
             ]
           }
         },
@@ -3645,13 +3676,15 @@
               "Identify external library dependencies per file",
               "Record dependencies via add_interactions (batch) — pass tuples of (source_function_id, target_function_id, interaction_type, description)",
               "Link types to the functions that consume or produce them via add_types_functions",
-              "Assign files to modules via add_files_to_module and to flows via add_file_flows — a cataloged file with no flow is architecturally disconnected"
+              "Assign files to modules via add_files_to_module and to flows via add_file_flows — a cataloged file with no flow is architecturally disconnected",
+              "VERIFY: audit_interactions(module_path=<cataloged subtree>) — missing_interactions / stale_interactions should be empty; apply its mechanical findings with apply_audit_fixes(report=..., apply=[...]). Deliberate indirect links (dispatch tables, data-flow): is_indirect."
             ],
             "use_helpers": [
               "add_interactions",
               "add_types_functions",
               "add_files_to_module",
-              "add_file_flows"
+              "add_file_flows",
+              "audit_interactions"
             ]
           }
         },
@@ -3682,8 +3715,13 @@
               "Suggested themes and flows (pending user confirmation in discovery)"
             ],
             "steps": [
+              "VERIFY the catalog: audit_tracking(module_path=<cataloged subtree>) — files, functions, parameters, types, interactions and descriptions against the code in one report. Apply the mechanical categories with apply_audit_fixes(report=..., apply=[...]); catalog what is missing with reconcile_paths(paths=<report.reconcile_paths>); fill incomplete prose. Report remaining counts in the summary.",
               "Log catalog completion in notes (source=directive, directive_name=project_catalog)",
               "Return to project_discovery flow to continue with blueprint discussion"
+            ],
+            "use_helpers": [
+              "audit_tracking",
+              "apply_audit_fixes"
             ]
           }
         },
@@ -3917,10 +3955,8 @@
               "Check for .aimfp-project/watchdog/watchdog.pid",
               "If PID file exists and process is alive: read final reminders.json",
               "Process any outstanding reminders (unregistered files, missing functions, stale timestamps)",
-              "Kill watchdog process",
-              "If watchdog not implemented yet: skip gracefully (check PID file existence, if absent log 'watchdog not active' and continue)"
-            ],
-            "watchdog_note": "Watchdog implementation is pending. aimfp_end handles both states: watchdog present (stop it) and watchdog absent (skip gracefully)."
+              "Kill watchdog process"
+            ]
           }
         },
         {
@@ -3929,10 +3965,10 @@
           "details": {
             "action": "Audit file tracking completeness",
             "steps": [
-              "Identify files written or modified during this session",
-              "Cross-reference with files table in project.db",
-              "If any file missing from DB: register it using reserve_file + finalize_file",
-              "If any file has stale updated_at: correct the timestamp",
+              "Start from data.audit: the tracking audit of this session's uncommitted changes (or the in-progress work item's files without git) — counts per category, block/warn verdict, full findings in data.audit.report_path",
+              "untracked_files / missing_functions / missing_types: reconcile_paths(paths=<report.reconcile_paths>)",
+              "missing_files / reserved_files: delete or restore; finalize reservations whose code exists",
+              "Cover what the audit could not: files in unchecked_files, and work committed mid-session (audit_tracking(since_commit=<session start commit>))",
               "Report discrepancies found and actions taken"
             ]
           }
@@ -3943,11 +3979,15 @@
           "details": {
             "action": "Audit function tracking completeness",
             "steps": [
-              "For each file modified during session, scan for function definitions",
-              "Cross-reference with functions table in project.db",
-              "If any function missing from DB: register it using reserve_function + finalize_function",
-              "If any DB function missing from actual file: flag for user review (may have been removed/renamed)",
+              "data.audit covers function, parameter, type, interaction and description drift for the session's changed files (Python at full fidelity)",
+              "Mechanical categories (missing/stale/repoint interactions, stale functions/types, param_mismatch, malformed_json): apply_audit_fixes(reason=..., report=<data.audit.report_path>, apply=[...]) — mark deliberate indirect links first (mark_indirect_ids)",
+              "Stale functions you are unsure about (removed or renamed?): flag for user review; renamed -> update_function(name=...) keeps the prose",
+              "stale_descriptions / dangling_mentions: rewrite the prose this session made wrong (update_function records the new code hash)",
               "Report discrepancies found and actions taken"
+            ],
+            "use_helpers": [
+              "audit_tracking",
+              "apply_audit_fixes"
             ]
           }
         },

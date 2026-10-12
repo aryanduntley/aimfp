@@ -44,7 +44,8 @@ from ._common import (
     _validate_status,
     _validate_priority,
     VALID_TASK_STATUSES,
-    VALID_PRIORITY_LEVELS
+    VALID_PRIORITY_LEVELS,
+    audit_completion_gate,
 )
 
 
@@ -106,6 +107,7 @@ class UpdateResult:
     success: bool
     error: Optional[str] = None
     return_statements: Tuple[str, ...] = ()
+    audit: Optional[Dict[str, Any]] = None  # completion audit warnings / override, when any
 
 
 @dataclass(frozen=True)
@@ -959,10 +961,14 @@ def update_subtask(
     status: Optional[str] = None,
     description: Optional[str] = None,
     priority: Optional[str] = None,
+    audit_override_reason: Optional[str] = None,
     project_root: Optional[str] = None
 ) -> UpdateResult:
     """
     Update subtask metadata.
+
+    Completing a subtask runs the tracking-audit gate over its linked files:
+    blocking drift refuses completion unless audit_override_reason is given.
 
     Args:
         id: Subtask ID
@@ -971,9 +977,10 @@ def update_subtask(
         status: New status (None = don't update)
         description: New description (None = don't update)
         priority: New priority (None = don't update)
+        audit_override_reason: Complete despite blocking audit findings (recorded as a note)
 
     Returns:
-        UpdateResult with success status
+        UpdateResult with success status (and audit warnings when any)
     """
     # Validate status if provided
     if status is not None and not _validate_status(status, VALID_TASK_STATUSES):
@@ -1009,6 +1016,12 @@ def update_subtask(
                 error=f"Task ID {task_id} not found"
             )
 
+        # Completion gate: refuse if the subtask's files have blocking tracking drift
+        gate_error, audit = audit_completion_gate(project_root, "subtasks", id, status, conn, audit_override_reason)
+        if gate_error:
+            conn.close()
+            return UpdateResult(success=False, error=gate_error)
+
         # Update subtask
         _update_subtask_fields(conn, id, name, task_id, status, description, priority)
         conn.close()
@@ -1018,7 +1031,8 @@ def update_subtask(
 
         return UpdateResult(
             success=True,
-            return_statements=return_stmts
+            return_statements=return_stmts,
+            audit=audit,
         )
 
     except Exception as e:
@@ -1377,10 +1391,14 @@ def update_sidequest(
     description: Optional[str] = None,
     flow_ids: Optional[List[int]] = None,
     priority: Optional[str] = None,
+    audit_override_reason: Optional[str] = None,
     project_root: Optional[str] = None
 ) -> UpdateResult:
     """
     Update sidequest metadata.
+
+    Completing a sidequest runs the tracking-audit gate over its linked files:
+    blocking drift refuses completion unless audit_override_reason is given.
 
     Args:
         id: Sidequest ID
@@ -1391,9 +1409,10 @@ def update_sidequest(
         description: New description (None = don't update)
         flow_ids: New flow IDs array (None = don't update)
         priority: New priority (None = don't update)
+        audit_override_reason: Complete despite blocking audit findings (recorded as a note)
 
     Returns:
-        UpdateResult with success status
+        UpdateResult with success status (and audit warnings when any)
     """
     # Validate status if provided
     if status is not None and not _validate_status(status, VALID_TASK_STATUSES):
@@ -1437,6 +1456,12 @@ def update_sidequest(
                 error=f"Subtask ID {paused_subtask_id} not found"
             )
 
+        # Completion gate: refuse if the sidequest's files have blocking tracking drift
+        gate_error, audit = audit_completion_gate(project_root, "sidequests", id, status, conn, audit_override_reason)
+        if gate_error:
+            conn.close()
+            return UpdateResult(success=False, error=gate_error)
+
         # Update sidequest
         _update_sidequest_fields(
             conn, id, name, paused_task_id, paused_subtask_id, status, description, flow_ids, priority
@@ -1448,7 +1473,8 @@ def update_sidequest(
 
         return UpdateResult(
             success=True,
-            return_statements=return_stmts
+            return_statements=return_stmts,
+            audit=audit,
         )
 
     except Exception as e:

@@ -60,5 +60,16 @@ Load via: get_supportive_context(variant='coding')
 
   Finalize rejects null purpose/parameters/returns (functions) and null description (types).
   Populate at reserve time or pass to finalize — either works, but finalize enforces completeness.
+  Finalize warns (PARAM CHECK) when recorded parameters disagree with the signature.
+
+6. AUDITS (database vs code)
+
+  audit_tracking(task_id | since_commit | paths | module_path) runs every check over one index:
+  missing/stale functions+types, param drift, malformed JSON, missing/stale/repoint edges,
+  stale descriptions (code changed after the prose), dangling name mentions.
+  Full findings go to <project folder>/audit/*.json; the result is counts + samples + report_path.
+  Fix: apply_audit_fixes(reason, report=<path>, apply=[categories]) — one transaction, restore manifest.
+  Deliberate indirect edges (dispatch tables, chain links): mark_indirect_ids, never flagged again.
+  Deleting a function with edges: delete_function(repoint_to=<successor>) or confirm_cascade=true.
 
 END CODING CONTEXT

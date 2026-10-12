@@ -54,6 +54,8 @@ LIFECYCLE & TRACKING GATE
     → finalize functions+types (purpose, parameters, returns populated) → add interactions → add types_functions
   Applies to ALL work: features, bug fixes, refactors. Any function added, params changed, types modified — track it.
   Before reporting to user: get_task_context(task_id) — unfinalized files must be finalized FIRST.
+  Completing a task audits its linked files against the code: blocking drift refuses completion.
+  Check drift anytime with audit_tracking; fix it in bulk with apply_audit_fixes (report-driven, restore manifest).
 
   Gate enforcement:
   - Finalize files with public functions reserved+finalized — DO NOT finalize without them

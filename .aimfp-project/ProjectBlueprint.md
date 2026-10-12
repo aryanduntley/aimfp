@@ -139,6 +139,7 @@ and the **tracked source directory**):
 6. **Tool & Directive Build Pipeline** — see §5; getting the order wrong breaks tools
 7. **Release & Publish Flow** — version sync → build → tagged PyPI publish → local install
 8. **Changeset Merge Flow** — export → detect conflicts → apply, keyed on slug + entity_key
+9. **Tracking Audit Flow** — one code index → audit functions / interactions / descriptions → report file in `audit/` → `apply_audit_fixes` with a restore manifest; gates task completion, `aimfp_end`, the watchdog and the `aimfp audit` CLI
 
 ### Modules (mapped to real directory seams)
 
@@ -158,6 +159,7 @@ and the **tracked source directory**):
 | `wrappers` | `src/aimfp/wrappers/` | `_effect_*` I/O boundary (3) |
 | `database` | `src/aimfp/database/` | SQLite connection/query + schemas (3) |
 | `catalog` | `src/aimfp/helpers/catalog/` | Adopting an existing FP codebase (5) |
+| `helpers_audit` | `src/aimfp/helpers/audit/` | Verifying project.db against the source, bulk repair (10) |
 | `state` | `src/aimfp/.state/` | DB-backed variable state (2) |
 
 `helpers_shared` is the highest-reuse module — check it before writing any new
@@ -508,6 +510,32 @@ project.
 ---
 
 ## 12. Evolution History
+
+### Tracking audit — 2026-10-12 (unreleased, for 1.63.0)
+
+User request plus CIAMStack feedback after it had to audit with raw SQL. Milestone 8.
+- **Audit tools** (`helpers/audit/`): `audit_functions`, `audit_interactions`,
+  `audit_descriptions`, and the combined `audit_tracking`. They build one code index
+  (scope: file_ids | paths | since_commit | task_id | module_path) and write the full
+  report to `<project folder>/audit/` (git-ignored, excluded from backups). The tools
+  return counts, samples and `report_path`. `apply_audit_fixes` applies whole report
+  categories in one transaction and writes a restore-manifest note itself.
+- **Fidelity tiers:** Python is full (ast). Other languages are names-only: they warn,
+  never block, and never report anything as stale.
+- **Repoint detection:** a stale edge paired with a missing one that is the same
+  dependency moved is reported as one change.
+- **Gate:** completing a task, subtask or sidequest audits its linked files. This covers
+  all five completion paths. Blocking drift refuses completion; `audit_override_reason`
+  records a note instead. `aimfp_end` audits uncommitted work. The watchdog re-audits
+  changed Python files.
+- **Schema 1.15:** `interactions.is_indirect` (deliberate indirect edges, never flagged)
+  and `functions.source_hash` (code hash recorded at every prose write).
+- **Fixes:** JSON double-encoding at the source (one `encode_json_field`). Call graph:
+  value references, untracked-helper crediting, aliases and submodules, and no guessed
+  project function for a method call on a value. `delete_function` uses repoint_to /
+  confirm_cascade. Lookups narrow by file. Batch interaction reads. Checkpoint file
+  linking. Byte-identical rewrites are ignored. `update_functions_for_file` no longer
+  checks the `_id_N` pattern on cataloged rows.
 
 ### svamanas scope split, deletion trail, root discovery — 2026-09-22 (current, 1.56.0)
 
