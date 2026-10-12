@@ -597,14 +597,12 @@ def test_schema_1_2_database_migrates_with_rows_intact():
     assert entry['new_version'] == '1.4'
     assert all(v['match'] for v in entry['verification'].values())
 
-    conn = sqlite3.connect(entry['new_db_temp_path'])
+    conn = sqlite3.connect(entry['original_db_path'])
     conn.row_factory = sqlite3.Row
     row = dict(conn.execute(
         "SELECT * FROM directive_executions WHERE directive_id = ?",
         (directive_id,)).fetchone())
     conn.close()
-    for path in (entry['new_db_temp_path'], entry['backup_temp_path']):
-        os.remove(path)
     assert row['total_executions'] == 4
     assert row['next_scheduled_time'] == '2026-09-17T17:00:00'
     assert row['skip_count'] == 0

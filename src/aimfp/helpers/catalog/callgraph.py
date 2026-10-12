@@ -426,6 +426,41 @@ def extract_string_literals(
     return strings
 
 
+def extract_lookup_strings(
+    tree: ast.Module,
+    assigned: FrozenSet[str] = frozenset(),
+) -> Dict[str, FrozenSet[str]]:
+    """
+    Pure: Map each top-level function to the identifier strings it uses where
+    a name can be looked up: a call argument (``getattr(mod, 'fn')``,
+    ``registry.get('fn')``, ``dispatch('fn')``), a subscript key
+    (``HANDLERS['fn']``), or an element of a list/tuple/set literal (names
+    iterated into getattr). A dict-literal key (``{'fn': 1}``), a comparison
+    or an assigned constant is data, not a lookup.
+    """
+    def identifier(node: ast.AST) -> Optional[str]:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.isidentifier():
+            return node.value
+        return None
+
+    def positions(node: ast.AST) -> Tuple[ast.AST, ...]:
+        if isinstance(node, ast.Call):
+            return (*node.args, *(k.value for k in node.keywords))
+        if isinstance(node, ast.Subscript):
+            return (node.slice,)
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            return tuple(node.elts)
+        return ()
+
+    return {
+        name: frozenset(
+            found for inner in ast.walk(node) for candidate in positions(inner)
+            for found in (identifier(candidate),) if found
+        )
+        for name, node in top_level_callables(tree, assigned)
+    }
+
+
 def extract_bound_calls(
     tree: ast.Module,
     assigned: FrozenSet[str] = frozenset(),

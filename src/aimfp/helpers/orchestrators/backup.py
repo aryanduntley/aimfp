@@ -14,8 +14,9 @@ Functions:
 import os
 import zipfile
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
+from ..shared.return_gates import gate_return_statements
 from ._common import (
     _open_project_connection,
     _open_preferences_connection,
@@ -104,7 +105,9 @@ def create_project_backup(project_root: Optional[str] = None) -> Result:
             cached/discovered session root
 
     Returns:
-        Result with data={created, backup_path, backup_name, rotated_count}
+        Result with data={created, backup_path, backup_name, rotated,
+        rotated_count, warning?}: rotated names the older archives deleted to
+        keep backup_count, and warning says so in a sentence
     """
     try:
         root = project_root or resolve_project_root()
@@ -117,7 +120,7 @@ def create_project_backup(project_root: Optional[str] = None) -> Result:
         return Result(
             success=True,
             data=outcome,
-            return_statements=get_return_statements("create_project_backup"),
+            return_statements=gate_return_statements(get_return_statements("create_project_backup"), outcome),
         )
     except Exception as e:
         return Result(success=False, error=f"Backup failed: {str(e)}")
@@ -469,7 +472,9 @@ def _create_project_backup(project_root: str) -> Dict[str, Any]:
         dict with {
             created: bool,
             backup_path: str or None,
+            rotated: [archive names deleted by rotation],
             rotated_count: int,
+            warning: str (only when archives were deleted),
             error: str or None
         }
     """
@@ -521,13 +526,15 @@ def _create_project_backup(project_root: str) -> Dict[str, Any]:
             zf.writestr("backup_summary.md", summary_content)
 
         # Rotate old backups: keep only backup_count most recent
-        rotated_count = _rotate_backups(backups_dir, backup_count)
+        rotated = _rotate_backups(backups_dir, backup_count)
 
         return {
             'created': True,
             'backup_path': backup_path,
             'backup_name': backup_name,
-            'rotated_count': rotated_count,
+            'rotated': list(rotated),
+            'rotated_count': len(rotated),
+            **({'warning': rotation_warning(rotated, backup_count)} if rotated else {}),
             'error': None,
         }
 
@@ -536,37 +543,43 @@ def _create_project_backup(project_root: str) -> Dict[str, Any]:
             'created': False,
             'backup_path': None,
             'backup_name': None,
+            'rotated': [],
             'rotated_count': 0,
             'error': str(e),
         }
 
 
-def _rotate_backups(backups_dir: str, max_count: int) -> int:
+def rotation_victims(names: Tuple[str, ...], max_count: int) -> Tuple[str, ...]:
+    """
+    Pure: The backup archives rotation deletes: every aimfp-backup-*.zip
+    beyond the max_count newest (names sort by date).
+    """
+    archives = sorted((n for n in names if n.startswith("aimfp-backup-") and n.endswith(".zip")), reverse=True)
+    return tuple(archives[max(max_count, 0):])
+
+
+def rotation_warning(rotated: Tuple[str, ...], max_count: int) -> str:
+    """Pure: The sentence a backup result carries when rotation deleted archives."""
+    return (f"Deleted {len(rotated)} older backup archive(s) to keep backup_count={max_count}: "
+            f"{', '.join(rotated)}. Raise backup_count (update_user_setting) to keep more.")
+
+
+def _rotate_backups(backups_dir: str, max_count: int) -> Tuple[str, ...]:
     """
     Effect: Remove oldest backup zip files, keeping only max_count most recent.
 
-    Returns the number of backups deleted.
+    Returns the names of the archives actually deleted.
     """
     try:
-        backup_files = sorted(
-            (
-                f for f in os.listdir(backups_dir)
-                if f.startswith("aimfp-backup-") and f.endswith(".zip")
-            ),
-            reverse=True,  # Newest first (YYYY-MM-DD sorts correctly)
-        )
+        victims = rotation_victims(tuple(os.listdir(backups_dir)), max_count)
+    except OSError:
+        return ()
 
-        if len(backup_files) <= max_count:
-            return 0
+    def removed(name: str) -> bool:
+        try:
+            os.remove(os.path.join(backups_dir, name))
+            return True
+        except OSError:
+            return False
 
-        to_delete = backup_files[max_count:]
-        deleted = 0
-        for filename in to_delete:
-            try:
-                os.remove(os.path.join(backups_dir, filename))
-                deleted += 1
-            except OSError:
-                pass
-        return deleted
-    except Exception:
-        return 0
+    return tuple(name for name in victims if removed(name))

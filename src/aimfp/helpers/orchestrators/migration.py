@@ -6,8 +6,8 @@ user_directives.db). Core DB is read-only and ships with updated schemas — no
 migrations needed.
 
 Migration approach: no migration files. Creates fresh DBs from new schema SQL,
-transfers data from old DBs via ATTACH, returns temp paths for AI to verify
-and place.
+transfers data from old DBs via ATTACH, verifies row counts, and swaps each
+rebuilt DB in place, keeping a pre-migration copy in <project folder>/backups/.
 
 Functions:
 - _check_pending_migrations: Internal checker (not a tool)
@@ -15,11 +15,10 @@ Functions:
 """
 
 import os
-import shutil
 import sqlite3
-import tempfile
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, FrozenSet, List, Optional
 
 from ._common import (
     DEFAULT_BUSY_TIMEOUT,
@@ -34,6 +33,7 @@ from ._common import (
     AIMFP_PROJECT_DIR,
     resolve_project_relative,
 )
+from ..shared.return_gates import gate_return_statements
 
 
 # ============================================================================
@@ -360,25 +360,199 @@ def _get_old_table_names(conn: sqlite3.Connection, old_db_alias: str) -> List[st
     return [row[0] for row in cursor.fetchall()]
 
 
+def pre_migration_backup_name(db_name: str, old_version: str, stamp: str, taken: FrozenSet[str]) -> str:
+    """
+    Pure: File name for a database's pre-migration copy in backups/:
+    <db>_pre_migration_v<old>_<YYYYMMDD>.db, suffixed -2, -3 ... when a copy
+    of that name is already there (never overwrites an earlier copy).
+    """
+    base = f"{db_name}_pre_migration_v{old_version}_{stamp}"
+    candidates = (f"{base}.db",) + tuple(f"{base}-{n}.db" for n in range(2, len(taken) + 3))
+    return next(name for name in candidates if name not in taken)
+
+
+def verification_mismatches(verification: Dict[str, Dict[str, Any]]) -> List[str]:
+    """Pure: Tables whose row count changed in the rebuild (old -> new)."""
+    return [
+        f"{table}: {counts['old_rows']} -> {counts['new_rows']}"
+        for table, counts in sorted(verification.items()) if not counts['match']
+    ]
+
+
+def _effect_rebuild_into(new_path: str, old_db_path: str, schema_sql: str) -> Dict[str, Any]:
+    """
+    Effect: Create a database at new_path from schema_sql and copy every shared
+    column of every old table into it via ATTACH.
+
+    Returns:
+        {verification: {table: {old_rows, new_rows, match}}, warnings: [..]}
+    """
+    # DELIBERATELY NOT _open_connection. This is a freshly created,
+    # exclusively-owned file that ATTACHes the old database and sets
+    # PRAGMA foreign_keys = OFF two lines below — an opener that forces
+    # foreign_keys = ON would conflict with the rebuild. It stays in rollback
+    # journal mode, so swapping it in leaves no WAL sidecars behind.
+    new_conn = sqlite3.connect(new_path)
+    try:
+        new_conn.row_factory = sqlite3.Row
+        new_conn.executescript(schema_sql)
+        new_conn.execute("ATTACH DATABASE ? AS old_db", (old_db_path,))
+        new_conn.execute("PRAGMA foreign_keys = OFF")
+
+        old_tables = _get_old_table_names(new_conn, 'old_db')
+        new_tables = set(_get_table_names(new_conn))
+        verification: Dict[str, Dict[str, Any]] = {}
+        warnings: List[str] = []
+
+        for table in old_tables:
+            if table == 'schema_version' or '_fts' in table:
+                # New DB already has the right version; FTS5 tables are
+                # repopulated by triggers
+                continue
+            if table not in new_tables:
+                warnings.append(f"Table '{table}' exists in old DB but not in new schema — skipped")
+                continue
+            shared_cols = _get_shared_columns(new_conn, table, 'old_db')
+            if not shared_cols:
+                warnings.append(f"Table '{table}' has no shared columns — skipped")
+                continue
+            cols_str = ", ".join(shared_cols)
+            old_count = new_conn.execute(f"SELECT COUNT(*) FROM old_db.{table}").fetchone()[0]
+            new_conn.execute(
+                f"INSERT OR IGNORE INTO {table} ({cols_str}) SELECT {cols_str} FROM old_db.{table}"
+            )
+            new_count = new_conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            verification[table] = {'old_rows': old_count, 'new_rows': new_count, 'match': old_count == new_count}
+
+        new_conn.commit()
+        new_conn.execute("DETACH DATABASE old_db")
+        return {'verification': verification, 'warnings': warnings}
+    finally:
+        new_conn.close()
+
+
+def _effect_remove_quietly(path: Optional[str]) -> None:
+    """Effect: Delete a file if it exists, ignoring errors."""
+    try:
+        if path and os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def _effect_migrate_one(db_info: Dict[str, Any], stamp: str) -> Dict[str, Any]:
+    """
+    Effect: Migrate one database in place.
+
+    1. Take the database out of WAL mode (journal_mode=DELETE). That needs
+       exclusive access, so it proves no other connection has the file open,
+       and it folds the WAL into the main file and removes the -wal/-shm
+       sidecars a swapped-in file must never inherit.
+    2. Hold a write lock (BEGIN IMMEDIATE) from here until the swap: other
+       writers wait, so nothing commits to a file about to be replaced.
+    3. Copy it to backups/<db>_pre_migration_v<old>_<date>.db (SQLite backup
+       API through a separate read connection: a consistent copy).
+    4. Rebuild into a temp file in the same folder and verify row counts.
+    5. Counts match: os.replace the temp file over the original (atomic on one
+       filesystem). Mismatch: remove the temp file, leave the original alone.
+
+    Returns:
+        The migrated[] entry (placed, backup_path, verification, ...)
+    """
+    db_name = db_info['db_name']
+    old_db_path = db_info['db_path']
+    old_version = db_info['current_version']
+    entry: Dict[str, Any] = {
+        'db_name': db_name, 'old_version': old_version, 'new_version': None,
+        'placed': False, 'backup_path': None, 'original_db_path': old_db_path,
+        'verification': {}, 'warnings': [],
+    }
+    folder = os.path.dirname(old_db_path)
+    backups_dir = os.path.join(folder, 'backups')
+    new_path = os.path.join(folder, f".{os.path.basename(old_db_path)}.migrating")
+    _effect_remove_quietly(new_path)
+
+    guard = sqlite3.connect(old_db_path, timeout=DEFAULT_BUSY_TIMEOUT, isolation_level=None)
+    try:
+        try:
+            mode = guard.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
+        except sqlite3.OperationalError:
+            mode = 'locked'
+        if str(mode).lower() != 'delete':
+            return {**entry, 'error': (
+                f"{db_name}.db is open in another connection (journal mode stayed '{mode}'): "
+                "close other AIMFP sessions and stop the watchdog, then run migrate_databases again. "
+                "Nothing was changed.")}
+        guard.execute("BEGIN IMMEDIATE")
+
+        os.makedirs(backups_dir, exist_ok=True)
+        backup_path = os.path.join(backups_dir, pre_migration_backup_name(
+            db_name, old_version, stamp, frozenset(os.listdir(backups_dir))))
+        # The backup reads through its own connection: a read lock coexists
+        # with the guard's write lock, while backing up from the guard itself
+        # would wait on its own open transaction forever.
+        reader = sqlite3.connect(old_db_path, timeout=DEFAULT_BUSY_TIMEOUT)
+        backup_conn = sqlite3.connect(backup_path)
+        try:
+            reader.backup(backup_conn)
+        finally:
+            backup_conn.close()
+            reader.close()
+        entry = {**entry, 'backup_path': backup_path}
+
+        with open(_get_schema_path(_DB_CONFIG[db_name]['schema_file']), 'r') as f:
+            rebuilt = _effect_rebuild_into(new_path, old_db_path, f.read())
+        entry = {**entry, **rebuilt, 'new_version': _get_db_version(new_path)}
+
+        mismatches = verification_mismatches(rebuilt['verification'])
+        if mismatches:
+            _effect_remove_quietly(new_path)
+            return {**entry, 'new_version': None, 'error': (
+                "Row counts changed in the rebuild, so the new database was NOT placed and the "
+                f"original is untouched: {'; '.join(mismatches)}. The pre-migration copy is at backup_path.")}
+
+        try:
+            os.replace(new_path, old_db_path)
+        except PermissionError:
+            # Windows refuses to replace a file that is open: release the
+            # guard (the lock window closes for an instant) and swap.
+            guard.execute("ROLLBACK")
+            guard.close()
+            os.replace(new_path, old_db_path)
+        return {**entry, 'placed': True}
+    except Exception as e:
+        _effect_remove_quietly(new_path)
+        return {**entry, 'new_version': None, 'placed': False,
+                'error': f"{e} — the original database is untouched"}
+    finally:
+        try:
+            guard.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        guard.close()
+
+
 def migrate_databases(
     aimfp_folder: str = ".aimfp-project"
 ) -> Result:
     """
-    Migrate all pending project databases to current schema versions.
+    Migrate all pending project databases to current schema versions, in place.
 
-    For each pending DB:
-    1. Backs up old DB to temp file
-    2. Creates new DB from current schema SQL
-    3. Transfers data via ATTACH (shared columns only)
-    4. Verifies row counts
-    5. Returns temp paths for AI to verify and place
+    For each pending DB (_effect_migrate_one): checks nothing else has it open,
+    write-locks it, copies it to <project folder>/backups/
+    <db>_pre_migration_v<old>_<YYYYMMDD>.db, rebuilds it from the current
+    schema SQL (shared columns via ATTACH), verifies row counts and atomically
+    swaps the rebuilt file in. A count mismatch or any error leaves the
+    original untouched. Nothing is left in temp folders.
 
     Args:
         aimfp_folder: AIMFP project directory name (default '.aimfp-project',
             which resolves to the project-dir override when one is set)
 
     Returns:
-        Result with migrated DB temp paths and verification data
+        Result with data={migrated: [{db_name, old_version, new_version,
+        placed, backup_path, original_db_path, verification, warnings,
+        error?}], not_placed: [db_name], skipped, already_current}
     """
     try:
         project_root = resolve_project_root()
@@ -396,161 +570,41 @@ def migrate_databases(
     pending = migration_check['pending']
 
     if not pending:
-        return Result(
-            success=True,
-            data={
-                'migrated': [],
-                'skipped': migration_check['skipped'],
-                'already_current': migration_check['up_to_date'],
-                'message': 'All databases up to date',
-            },
-            return_statements=get_return_statements("migrate_databases"),
-        )
-
-    migrated = []
-
-    for db_info in pending:
-        db_name = db_info['db_name']
-        old_db_path = db_info['db_path']
-        old_version = db_info['current_version']
-        expected_version = db_info['expected_version']
-
-        # Last gate before a destructive rebuild: a database reporting '0.0'
-        # must actually look un-versioned, not merely unreadable.
-        if old_version == PRE_VERSIONING_VERSION:
-            refusal = _impossible_version_reason(old_db_path)
-            if refusal:
-                migration_check['skipped'].append({
-                    'db_name': db_name,
-                    'reason': refusal,
-                })
-                continue
-
-        config = _DB_CONFIG[db_name]
-        schema_file = config['schema_file']
-
-        try:
-            # Step 1: Backup old DB to temp file
-            backup_fd, backup_temp_path = tempfile.mkstemp(
-                suffix='.db', prefix=f'aimfp_backup_{db_name}_'
-            )
-            os.close(backup_fd)
-            shutil.copy2(old_db_path, backup_temp_path)
-
-            # Step 2: Create new DB from schema SQL
-            new_fd, new_temp_path = tempfile.mkstemp(
-                suffix='.db', prefix=f'aimfp_new_{db_name}_'
-            )
-            os.close(new_fd)
-
-            schema_path = _get_schema_path(schema_file)
-            with open(schema_path, 'r') as f:
-                schema_sql = f.read()
-
-            # DELIBERATELY NOT _open_connection. This is a freshly created,
-            # exclusively-owned temp file that ATTACHes the old database and
-            # sets PRAGMA foreign_keys = OFF two lines below — an opener that
-            # forces foreign_keys = ON would conflict with the rebuild. WAL and
-            # a busy timeout buy nothing on a throwaway nothing else can see.
-            new_conn = sqlite3.connect(new_temp_path)
-            new_conn.row_factory = sqlite3.Row
-            new_conn.executescript(schema_sql)
-
-            # Step 3: Transfer data via ATTACH
-            new_conn.execute(f"ATTACH DATABASE '{old_db_path}' AS old_db")
-            new_conn.execute("PRAGMA foreign_keys = OFF")
-
-            old_tables = _get_old_table_names(new_conn, 'old_db')
-            new_tables = set(_get_table_names(new_conn))
-
-            verification = {}
-            warnings = []
-
-            for table in old_tables:
-                if table == 'schema_version':
-                    # Skip — new DB already has correct version
-                    continue
-
-                if '_fts' in table:
-                    # Skip FTS5 virtual tables and their internal tables — auto-populated by triggers
-                    continue
-
-                if table not in new_tables:
-                    warnings.append(f"Table '{table}' exists in old DB but not in new schema — skipped")
-                    continue
-
-                shared_cols = _get_shared_columns(new_conn, table, 'old_db')
-                if not shared_cols:
-                    warnings.append(f"Table '{table}' has no shared columns — skipped")
-                    continue
-
-                cols_str = ", ".join(shared_cols)
-
-                # Count old rows
-                cursor = new_conn.execute(f"SELECT COUNT(*) FROM old_db.{table}")
-                old_count = cursor.fetchone()[0]
-
-                # Transfer data
-                new_conn.execute(
-                    f"INSERT OR IGNORE INTO {table} ({cols_str}) "
-                    f"SELECT {cols_str} FROM old_db.{table}"
-                )
-
-                # Count new rows
-                cursor = new_conn.execute(f"SELECT COUNT(*) FROM {table}")
-                new_count = cursor.fetchone()[0]
-
-                verification[table] = {
-                    'old_rows': old_count,
-                    'new_rows': new_count,
-                    'match': old_count == new_count,
-                }
-
-            new_conn.commit()
-            new_conn.execute("DETACH DATABASE old_db")
-            new_conn.close()
-
-            # Step 4: Read new version
-            new_version = _get_db_version(new_temp_path)
-
-            migrated.append({
-                'db_name': db_name,
-                'old_version': old_version,
-                'new_version': new_version,
-                'backup_temp_path': backup_temp_path,
-                'new_db_temp_path': new_temp_path,
-                'original_db_path': old_db_path,
-                'verification': verification,
-                'warnings': warnings,
-            })
-
-        except Exception as e:
-            # Clean up temp files on failure for this DB
-            for path in [backup_temp_path, new_temp_path]:
-                try:
-                    if os.path.isfile(path):
-                        os.remove(path)
-                except OSError:
-                    pass
-
-            migrated.append({
-                'db_name': db_name,
-                'old_version': old_version,
-                'new_version': None,
-                'error': str(e),
-                'backup_temp_path': None,
-                'new_db_temp_path': None,
-                'original_db_path': old_db_path,
-                'verification': {},
-                'warnings': [],
-            })
-
-    return Result(
-        success=True,
-        data={
-            'migrated': migrated,
+        current = {
+            'migrated': [],
+            'not_placed': [],
             'skipped': migration_check['skipped'],
             'already_current': migration_check['up_to_date'],
-        },
-        return_statements=get_return_statements("migrate_databases"),
+            'message': 'All databases up to date',
+        }
+        return Result(
+            success=True,
+            data=current,
+            return_statements=gate_return_statements(get_return_statements("migrate_databases"), current),
+        )
+
+    stamp = datetime.now().strftime('%Y%m%d')
+    migrated = []
+    skipped = list(migration_check['skipped'])
+
+    for db_info in pending:
+        # Last gate before a destructive rebuild: a database reporting '0.0'
+        # must actually look un-versioned, not merely unreadable.
+        if db_info['current_version'] == PRE_VERSIONING_VERSION:
+            refusal = _impossible_version_reason(db_info['db_path'])
+            if refusal:
+                skipped.append({'db_name': db_info['db_name'], 'reason': refusal})
+                continue
+        migrated.append(_effect_migrate_one(db_info, stamp))
+
+    data = {
+        'migrated': migrated,
+        'not_placed': [m['db_name'] for m in migrated if not m['placed']],
+        'skipped': skipped,
+        'already_current': migration_check['up_to_date'],
+    }
+    return Result(
+        success=True,
+        data=data,
+        return_statements=gate_return_statements(get_return_statements("migrate_databases"), data),
     )

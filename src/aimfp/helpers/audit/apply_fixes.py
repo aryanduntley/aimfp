@@ -25,6 +25,10 @@ Category -> change:
     malformed_json           re-encode the column exactly once
     missing_type_links       add the types_functions link
     unbaselined_descriptions record the current code hash (after reviewing prose)
+    unbaselined_needs_review record the current code hash: the triaged prose was
+                             reviewed and is right (exclude the ones being rewritten)
+    stale_descriptions       record the current code hash: the prose still
+                             describes the changed code (exclude the ones that don't)
 
 Explicit only: exempt / unexempt_ids write and remove audit_exemptions (schema
 1.16), reviewed findings audits list under 'exempted' instead of reporting.
@@ -76,6 +80,8 @@ CATEGORY_OPERATIONS: Dict[str, str] = {
     'malformed_json': 'normalize_json',
     'missing_type_links': 'add_type_links',
     'unbaselined_descriptions': 'baseline_hashes',
+    'unbaselined_needs_review': 'baseline_hashes',
+    'stale_descriptions': 'baseline_hashes',
 }
 
 # Report category -> the finding fields that name one finding in `exclude`
@@ -90,6 +96,8 @@ FINDING_KEYS: Dict[str, Tuple[str, ...]] = {
     'malformed_json': ('id',),
     'missing_type_links': ('type_id', 'function_id'),
     'unbaselined_descriptions': ('function_id',),
+    'unbaselined_needs_review': ('function_id',),
+    'stale_descriptions': ('function_id',),
 }
 
 

@@ -4,12 +4,13 @@
       "name": "create_project_backup",
       "file_path": "helpers/orchestrators/backup.py",
       "parameters": [],
-      "purpose": "Create a backup of .aimfp-project/ right now, ignoring any threshold. Zips everything except backups/ and watchdog/, adds a generated backup_summary.md, and rotates old archives per the backup_count setting. The on-demand counterpart to the automatic inactivity check — call this when aimfp_run reports a scheduled backup due, or before any risky operation.",
+      "purpose": "Create a backup of .aimfp-project/ right now, ignoring any threshold. Zips everything except backups/ and watchdog/, adds a generated backup_summary.md, and rotates old archives per the backup_count setting, naming every archive it deletes (rotated, plus a warning sentence). The on-demand counterpart to the automatic inactivity check — call this when aimfp_run reports a scheduled backup due, or before any risky operation.",
       "error_handling": "Returns error if the zip cannot be written (permissions, disk space). Rotation failures are reported but do not fail the backup itself.",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
         "Backup created. Report the backup_name and where it was written so the user knows a restore point exists.",
+        "[when:warning] Rotation deleted older archives (data.rotated names them): tell the user which ones, in the same message as the new backup. If they wanted them, they can raise backup_count with update_user_setting before the next backup.",
         "Rotation is automatic: only backup_count archives are kept (default 3), oldest deleted first. If this backup matters long-term, tell the user to copy it out of .aimfp-project/backups/ before it rotates away.",
         "Backups exclude backups/ and watchdog/ by design, and capture project.db, user_preferences.db, user_directives.db (Case 2), and ProjectBlueprint.md — not your source code, which git covers."
       ],

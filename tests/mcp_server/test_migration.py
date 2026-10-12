@@ -409,14 +409,11 @@ def test_migrate_databases_upgrades_project():
         assert migrated['db_name'] == 'project'
         assert migrated['old_version'] == '1.6'
         assert migrated['new_version'] == _expected_version('project')
-        assert migrated['backup_temp_path'] is not None
-        assert migrated['new_db_temp_path'] is not None
-        assert os.path.isfile(migrated['backup_temp_path'])
-        assert os.path.isfile(migrated['new_db_temp_path'])
+        assert migrated['backup_path'] is not None
+        assert migrated['original_db_path'] is not None
+        assert os.path.isfile(migrated['backup_path'])
+        assert os.path.isfile(migrated['original_db_path'])
 
-        # Cleanup temp files
-        os.remove(migrated['backup_temp_path'])
-        os.remove(migrated['new_db_temp_path'])
     finally:
         clear_project_root_cache()
         shutil.rmtree(tmp)
@@ -434,7 +431,7 @@ def test_migrate_databases_preserves_data():
         migrated = result.data['migrated'][0]
 
         # Verify data in new DB
-        new_conn = sqlite3.connect(migrated['new_db_temp_path'])
+        new_conn = sqlite3.connect(migrated['original_db_path'])
         new_conn.row_factory = sqlite3.Row
 
         # Check project row
@@ -467,8 +464,6 @@ def test_migrate_databases_preserves_data():
         new_conn.close()
 
         # Cleanup
-        os.remove(migrated['backup_temp_path'])
-        os.remove(migrated['new_db_temp_path'])
     finally:
         clear_project_root_cache()
         shutil.rmtree(tmp)
@@ -496,7 +491,7 @@ def test_migrate_databases_preserves_timestamps():
         migrated = result.data['migrated'][0]
 
         # Verify timestamps preserved in new DB
-        new_conn = sqlite3.connect(migrated['new_db_temp_path'])
+        new_conn = sqlite3.connect(migrated['original_db_path'])
         new_conn.row_factory = sqlite3.Row
         cursor = new_conn.execute("SELECT created_at, updated_at FROM project LIMIT 1")
         new_row = cursor.fetchone()
@@ -505,8 +500,6 @@ def test_migrate_databases_preserves_timestamps():
         new_conn.close()
 
         # Cleanup
-        os.remove(migrated['backup_temp_path'])
-        os.remove(migrated['new_db_temp_path'])
     finally:
         clear_project_root_cache()
         shutil.rmtree(tmp)
@@ -535,8 +528,6 @@ def test_migrate_databases_verification_match():
         assert verification['files']['old_rows'] == 1
 
         # Cleanup
-        os.remove(migrated['backup_temp_path'])
-        os.remove(migrated['new_db_temp_path'])
     finally:
         clear_project_root_cache()
         shutil.rmtree(tmp)
@@ -554,12 +545,10 @@ def test_migrate_databases_backup_is_valid():
         migrated = result.data['migrated'][0]
 
         # Backup should be a valid SQLite DB with old version
-        backup_version = _get_db_version(migrated['backup_temp_path'])
+        backup_version = _get_db_version(migrated['backup_path'])
         assert backup_version == "1.6"
 
         # Cleanup
-        os.remove(migrated['backup_temp_path'])
-        os.remove(migrated['new_db_temp_path'])
     finally:
         clear_project_root_cache()
         shutil.rmtree(tmp)
@@ -579,10 +568,115 @@ def test_migrate_databases_custom_aimfp_folder():
 
         # Cleanup
         for m in result.data['migrated']:
-            if m.get('backup_temp_path'):
-                os.remove(m['backup_temp_path'])
-            if m.get('new_db_temp_path'):
-                os.remove(m['new_db_temp_path'])
+            assert m['placed']
+    finally:
+        clear_project_root_cache()
+        shutil.rmtree(tmp)
+
+
+# -- In-place placement (CIAMstack feedback: no temp files left to move) ------
+
+def test_pre_migration_backup_name_never_overwrites():
+    from aimfp.helpers.orchestrators.migration import pre_migration_backup_name
+    assert pre_migration_backup_name("project", "1.15", "20261012", frozenset()) == \
+        "project_pre_migration_v1.15_20261012.db"
+    taken = frozenset({"project_pre_migration_v1.15_20261012.db", "project_pre_migration_v1.15_20261012-2.db"})
+    assert pre_migration_backup_name("project", "1.15", "20261012", taken) == \
+        "project_pre_migration_v1.15_20261012-3.db"
+
+
+def test_migration_swaps_in_place_and_keeps_a_copy_in_backups():
+    tmp = tempfile.mkdtemp()
+    try:
+        set_project_root(tmp)
+        aimfp_dir = _setup_project(tmp)
+        _create_old_project_db(aimfp_dir, "1.6")
+        db_path = os.path.join(aimfp_dir, "project.db")
+
+        first = migrate_databases().data['migrated'][0]
+        assert first['placed'] and 'error' not in first
+        assert first['original_db_path'] == db_path
+        assert _get_db_version(db_path) == _expected_version('project')
+        assert os.path.dirname(first['backup_path']) == os.path.join(aimfp_dir, "backups")
+        assert os.path.basename(first['backup_path']).startswith("project_pre_migration_v1.6_")
+        assert _get_db_version(first['backup_path']) == "1.6"
+        # nothing left beside the database: no temp file, no WAL sidecars
+        assert sorted(f for f in os.listdir(aimfp_dir) if f.startswith(("project", ".project"))) == ["project.db"]
+
+        # a second migration the same day keeps the first copy
+        conn = sqlite3.connect(db_path)
+        conn.execute("UPDATE schema_version SET version = '1.6'")
+        conn.commit()
+        conn.close()
+        second = migrate_databases().data['migrated'][0]
+        assert second['placed'] and second['backup_path'] != first['backup_path']
+        assert os.path.isfile(first['backup_path'])
+    finally:
+        clear_project_root_cache()
+        shutil.rmtree(tmp)
+
+
+def test_migration_refuses_while_another_connection_has_the_database_open():
+    tmp = tempfile.mkdtemp()
+    try:
+        set_project_root(tmp)
+        aimfp_dir = _setup_project(tmp)
+        _create_old_project_db(aimfp_dir, "1.6")
+        db_path = os.path.join(aimfp_dir, "project.db")
+        holder = sqlite3.connect(db_path)
+        holder.execute("PRAGMA journal_mode=WAL")
+        holder.execute("SELECT 1 FROM schema_version").fetchone()
+        try:
+            entry = migrate_databases().data['migrated'][0]
+        finally:
+            holder.close()
+        assert not entry['placed'] and "open in another connection" in entry['error']
+        assert entry['backup_path'] is None
+        assert _get_db_version(db_path) == "1.6"
+        assert not [f for f in os.listdir(aimfp_dir) if f.endswith(".migrating")]
+    finally:
+        clear_project_root_cache()
+        shutil.rmtree(tmp)
+
+
+def test_migration_does_not_place_a_rebuild_whose_counts_changed(monkeypatch):
+    from aimfp.helpers.orchestrators import migration
+    real = migration._effect_rebuild_into
+
+    def lossy(new_path, old_db_path, schema_sql):
+        found = real(new_path, old_db_path, schema_sql)
+        return {**found, 'verification': {**found['verification'],
+                                          'files': {'old_rows': 3, 'new_rows': 2, 'match': False}}}
+
+    monkeypatch.setattr(migration, "_effect_rebuild_into", lossy)
+    tmp = tempfile.mkdtemp()
+    try:
+        set_project_root(tmp)
+        aimfp_dir = _setup_project(tmp)
+        _create_old_project_db(aimfp_dir, "1.6")
+        db_path = os.path.join(aimfp_dir, "project.db")
+        entry = migrate_databases().data['migrated'][0]
+        assert not entry['placed'] and "files: 3 -> 2" in entry['error']
+        assert _get_db_version(db_path) == "1.6"
+        assert os.path.isfile(entry['backup_path'])
+        assert not [f for f in os.listdir(aimfp_dir) if f.endswith(".migrating")]
+    finally:
+        clear_project_root_cache()
+        shutil.rmtree(tmp)
+
+
+def test_migration_statements_are_gated():
+    tmp = tempfile.mkdtemp()
+    try:
+        set_project_root(tmp)
+        aimfp_dir = _setup_project(tmp)
+        _create_old_project_db(aimfp_dir, "1.6")
+        result = migrate_databases()
+        assert not any(s.lstrip().startswith("[when:") for s in result.return_statements)
+        assert any("placed=true" in s for s in result.return_statements)
+        assert not any("placed=false" in s for s in result.return_statements)
+        again = migrate_databases()
+        assert not any("placed=true" in s for s in again.return_statements)
     finally:
         clear_project_root_cache()
         shutil.rmtree(tmp)

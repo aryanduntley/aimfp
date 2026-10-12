@@ -408,13 +408,15 @@ Certain files and functions follow the reserve → finalize pattern but **skip t
    - These ARE tracked in database with `id_in_name=0`
    - Use `skip_id_naming=True` when reserving and finalizing
 
-### Functions That Skip Tracking Entirely
+### Functions Whose Tracking Is Optional
 
 1. **Private/internal functions (underscore prefix)** - Functions starting with `_` are implementation details
    - Examples: `_open_connection`, `_reserve_file_effect`, `_validate_input`
    - These are internal helpers, not part of the public API
-   - **Do NOT reserve or track** - only their parent file is tracked
-   - Public functions that call them are tracked normally
+   - **Tracking is not required, and allowed** - reserve one when it is worth looking up by name
+     (a shared effect, a helper other files call); catalog_functions includes them by default
+   - Untracked ones are invisible to audits: the call graph credits their calls to the tracked
+     functions that use them, so the edges stay right either way
 
 ### User-Defined Exclusions
 
@@ -447,9 +449,9 @@ func_id = reserve_function(name='reserve_file', file_id=55, purpose='Reserve fil
 finalize_function(88, skip_id_naming=True)
 # Database: name='reserve_file', is_reserved=0, id_in_name=0
 
-# For private functions - DON'T track at all:
-# ✗ Skip: _open_connection, _reserve_file_effect, _get_file_by_path_effect
-# These are not reserved, not finalized, not in database
+# For private functions - tracking optional:
+# Usually skipped: _open_connection, _reserve_file_effect, _get_file_by_path_effect
+# Reserve/finalize one like any function when it is worth a lookup; audits accept either
 ```
 
 ---

@@ -749,7 +749,7 @@
         },
         {
           "if": "function_is_private",
-          "then": "skip_function_tracking",
+          "then": "tracking_optional",
           "details": {
             "pattern": "Functions starting with underscore (_)",
             "examples": [
@@ -758,8 +758,8 @@
               "_validate_input"
             ],
             "reason": "Private/internal functions are implementation details, not public API",
-            "action": "Do NOT reserve or track - only parent file is tracked",
-            "track_instead": "Public functions (no underscore prefix) get full reserve/finalize treatment"
+            "action": "Tracking not required, and allowed: reserve/finalize one when it is worth looking up by name; catalog_functions includes them by default. Audits accept either (untracked helpers' calls are credited to the tracked functions using them)",
+            "track_instead": "Public functions (no underscore prefix) always get full reserve/finalize treatment"
           }
         },
         {

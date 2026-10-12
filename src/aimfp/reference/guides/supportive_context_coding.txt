@@ -14,7 +14,7 @@ Load via: get_supportive_context(variant='coding')
   Task files: tracking a file (or its functions/types) links it to the in_progress sidequest > subtask > task.
   Work done before the item was in_progress → link_files_to_task(task_id, file_ids, task_type).
   Skip ID naming for: __init__.py, .db, pyproject.toml, setup.py, conftest.py.
-  Private functions (_underscore): do NOT reserve or track.
+  Private functions (_underscore): tracking not required, allowed (catalog includes them by default).
 
   EXISTING code (adoption, not authoring) → single-phase, NOT reserve/finalize:
   scan_source_tree → catalog_files → catalog_functions/catalog_types → same linking tools.
@@ -69,8 +69,10 @@ Load via: get_supportive_context(variant='coding')
   stale descriptions (code changed after the prose), dangling name mentions.
   Full findings go to <project folder>/audit/*.json; the result is counts + samples + report_path.
   Fix: apply_audit_fixes(reason, report=<path>, apply=[categories], exclude={category: [ids]}) — one
-  transaction, restore manifest. Recursion, dispatch tables and SQL-string calls are confirmed; record
-  fields, callbacks and string lookups are unconfirmed (warn). Conceptual edges: mark_indirect_ids.
+  transaction, restore manifest. Recursion, dispatch tables, SQL-string calls and record fields only one
+  function is stored under are confirmed; shared record fields, callbacks and names passed as strings
+  (getattr, registry keys) are unconfirmed (warn). Conceptual edges: mark_indirect_ids.
+  Reviewed prose lists (unbaselined_needs_review, stale_descriptions) apply as baselines; exclude rewrites.
   Reviewed function/type finding that is not drift: exempt=[{category, function_id|type_id}] (lapses on code change).
   Deleting a function with edges: delete_function(repoint_to=<successor>) or confirm_cascade=true.
 

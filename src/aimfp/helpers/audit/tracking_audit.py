@@ -17,7 +17,7 @@ from ..project.structure_health import collect_structure_health
 from ..project.task_files import query_current_focus_row
 from ...watchdog.config import STRUCTURE_GAP_LABELS
 from .code_index import CodeIndex, ScopeRequest, build_code_index, build_scope_request, scope_summary
-from .descriptions_audit import description_findings
+from .descriptions_audit import run_description_audit
 from .functions_audit import audit_function_findings, reconcile_targets
 from .interactions_audit import run_interaction_audit
 from .reports import AuditResult, finish_audit
@@ -97,7 +97,7 @@ def run_tracking_audit(index: CodeIndex, audits: Tuple[str, ...]) -> Dict[str, T
     return merge_findings(
         audit_function_findings(index) if 'functions' in audits else {},
         run_interaction_audit(index) if 'interactions' in audits else {},
-        description_findings(index) if 'descriptions' in audits else {},
+        run_description_audit(index) if 'descriptions' in audits else {},
         {'structure_gaps': structure_gap_findings(_effect_structure_health(index.project_root))}
         if 'structure' in audits else {},
     )

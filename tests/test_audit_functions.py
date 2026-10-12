@@ -159,11 +159,13 @@ def test_missing_stale_and_private(project):
     assert {"missing_functions", "stale_functions"} <= set(r.blocking)
 
 
-def test_private_tracked_is_informational(project):
+def test_tracked_private_function_is_allowed_and_not_listed(project):
     _write(project, "src/geo.py", MOD)
     reconcile_paths(["src/geo.py"], include_private=True, project_root=project)
     r = audit_functions(paths=["src/geo.py"], project_root=project)
-    assert r.counts["private_tracked"] == 1 and "private_tracked" not in r.blocking + r.warnings
+    assert "private_tracked" not in r.counts
+    # a tracked private function gets every check a public one gets
+    assert [i["name"] for i in _report(project, r)["findings"]["incomplete_functions"]] == ["_helper"]
 
 
 def test_incomplete_malformed_reserved_param(project):

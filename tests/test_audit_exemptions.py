@@ -91,7 +91,7 @@ def test_migration_from_1_15_adds_the_table_and_keeps_rows(root):
     assert result.success, result.error
     migrated = next(m for m in result.data["migrated"] if m["db_name"] == "project")
     assert migrated["old_version"] == "1.15" and migrated["new_version"] == "1.16"
-    conn = sqlite3.connect(migrated["new_db_temp_path"])
+    conn = sqlite3.connect(migrated["original_db_path"])
     try:
         assert conn.execute("SELECT COUNT(*) FROM audit_exemptions").fetchone() == (0,)
         assert conn.execute("SELECT COUNT(*) FROM functions WHERE name = 'compat'").fetchone() == (1,)

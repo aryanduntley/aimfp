@@ -634,16 +634,15 @@
           "description": "AIMFP project directory name"
         }
       ],
-      "purpose": "Migrate all pending project databases to current schema versions. Creates fresh DBs from new schema SQL, transfers data via ATTACH, returns temp paths for AI to verify and place.",
+      "purpose": "Migrate all pending project databases to current schema versions, in place. Per database: refuses if another connection has it open, write-locks it, keeps a pre-migration copy at <project folder>/backups/<db>_pre_migration_v<old>_<YYYYMMDD>.db (never overwriting an earlier copy), rebuilds it from the new schema SQL (shared columns via ATTACH), verifies row counts and atomically swaps the rebuilt file in. A count mismatch or any error leaves the original untouched (placed=false, error). Nothing is left in temp folders.",
       "error_handling": "Returns per-DB results with verification data. Never throws — errors are captured per-DB.",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
         "REFUSALS: report every data.skipped[] entry whose reason says migration was REFUSED. A refusal means the database contradicted itself — it reported version 0.0 while carrying tables, or while carrying a schema_version table whose row is unreadable — which indicates damage or a concurrent writer, NOT an old schema. NEVER present a refused database as 'up to date' or 'nothing to migrate'. Tell the user which database was refused and why, and leave it alone: it is untouched on disk and safe to inspect.",
-        "Verify all tables in each migrated DB show match=true in verification data",
-        "Move each backup from temp path to {project_root}/{aimfp_folder}/backups/{db_name}_pre_migration_v{old_version}_{YYYYMMDD}.db",
-        "Replace each old DB with new: move new_db_temp_path to original_db_path",
-        "Ask user about backup retention (delete old backups, keep, or cycle)"
+        "[when:migrated] Report each data.migrated[] entry: placed=true means the database is already on the new version and its pre-migration copy is at backup_path — tell the user where that copy is. Nothing needs moving.",
+        "[when:not_placed] Entries with placed=false: the original database is untouched. 'open in another connection' -> another AIMFP session or the watchdog holds it: ask the user to close other sessions, then call migrate_databases again. Row counts changed -> do NOT retry blindly; show the user the tables named and keep the copy at backup_path.",
+        "[when:migrated] Pre-migration copies are not rotated with the zip backups: ask the user whether to keep or delete older *_pre_migration_* files in backups/."
       ],
       "implementation_notes": [
         "Reads expected_schema_versions from aimfp_core.db to determine which DBs need migration",

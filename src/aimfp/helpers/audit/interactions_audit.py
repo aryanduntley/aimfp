@@ -21,9 +21,11 @@ in scope then lands in one category:
   add, which is what a split or move really is.
 - unconfirmed_interactions: the code may still make the edge but the audit
   cannot prove it: the name resolves ambiguously, the caller calls through a
-  record field the target is stored under elsewhere, the target is named in
-  a string, or the target lives in a non-Python file. A warning: mark it
-  indirect if it is deliberate, delete it if not.
+  record field the target is stored under elsewhere, the target's name is a
+  string in a lookup position (a call argument such as getattr's, a
+  subscript key, a list/tuple/set element — never a dict-literal key), or
+  the target lives in a non-Python file. A warning: mark it indirect if it
+  is deliberate, delete it if not.
 - indirect_interactions: edges marked is_indirect (deliberate, never flagged)
 - non_call_interactions: chain / compose / pipe / borrow edges, which describe
   data flow rather than a call and are never compared with the code. Both are
@@ -31,7 +33,9 @@ in scope then lands in one category:
 
 Confirmed without being expected (never reported, never asked to be added):
 self-recursion, an edge to a function held in a module-level table the
-caller reads (dispatch), and a call to a non-Python function written as
+caller reads (dispatch), a ``.field()`` call on a value when the target is
+the only tracked function stored under that field anywhere (a record built
+with ``Rec(field=target)``), and a call to a non-Python function written as
 ``name(`` in one of the caller's string literals (SQL).
 
 Only full-fidelity (Python) callers are compared. Everything else in scope is
@@ -47,7 +51,7 @@ from ..utils import get_cached_project_root, get_return_statements
 from ...watchdog.config import detect_language
 from ..catalog.callgraph import (
     CallEdges, DispatchEvidence, build_call_edges, dispatch_evidence, extract_bound_calls,
-    extract_referenced_names, extract_string_literals, fold_untracked_helpers,
+    extract_lookup_strings, extract_referenced_names, extract_string_literals, fold_untracked_helpers,
     reachable_untracked_helpers, resolution_context,
 )
 from .code_index import (
@@ -115,7 +119,7 @@ def folded_per_function(
 
     Args:
         extract: (tree, tracked names) -> {function name -> items}, e.g.
-            extract_string_literals or extract_bound_calls
+            extract_string_literals, extract_lookup_strings or extract_bound_calls
     """
     tracked = tracked_names_by_path(index, paths)
     folded: Dict[str, Dict[str, FrozenSet[str]]] = {}
@@ -141,21 +145,54 @@ def is_python_path(path: Optional[str]) -> bool:
     return detect_language(path or '') == 'python'
 
 
+def field_holders(dispatch: DispatchEvidence) -> Dict[str, FrozenSet[int]]:
+    """Pure: record field name -> ids of every tracked function stored under it anywhere."""
+    holders: Dict[str, set] = {}
+    for target_id, fields in dispatch.value_fields.items():
+        for name in fields:
+            holders.setdefault(name, set()).add(target_id)
+    return {name: frozenset(ids) for name, ids in holders.items()}
+
+
+def unique_field_call(
+    pair: Tuple[int, int],
+    expected: CallEdges,
+    dispatch: DispatchEvidence,
+    holders: Dict[str, FrozenSet[int]],
+) -> bool:
+    """
+    Pure: Whether the caller calls .field() on a value and the target is the
+    only tracked function stored under that field anywhere in the project
+    (``Services(secret_command=secret_command)`` ... ``services.secret_command()``).
+    A field several functions are stored under stays unconfirmed: the call
+    does not say which one runs.
+    """
+    called = dispatch.value_fields.get(pair[1], frozenset()) & expected.value_calls.get(pair[0], frozenset())
+    return any(holders.get(name) == frozenset({pair[1]}) for name in called)
+
+
 def confirmed_without_call(
     pair: Tuple[int, int],
     target: Optional[Dict[str, Any]],
     expected: CallEdges,
     dispatch: DispatchEvidence,
     strings: FrozenSet[str],
+    holders: Optional[Dict[str, FrozenSet[int]]] = None,
 ) -> bool:
     """
     Pure: Whether the code makes a tracked edge that is not an expected edge:
-    recursion, a dispatch table the caller reads, or a non-Python function
-    the caller calls in a string literal (SQL).
+    recursion, a dispatch table the caller reads, a call through a record
+    field only the target is stored under, or a non-Python function the
+    caller calls in a string literal (SQL).
+
+    Args:
+        holders: field_holders(dispatch); computed when not given
     """
     if pair[0] == pair[1]:
         return pair[0] in expected.self_edges
     if pair in dispatch.table_edges:
+        return True
+    if unique_field_call(pair, expected, dispatch, field_holders(dispatch) if holders is None else holders):
         return True
     return target is not None and not is_python_path(target['path']) and calls_in_strings(target['name'], strings)
 
@@ -165,16 +202,17 @@ def unproven_reason(
     target: Dict[str, Any],
     expected: CallEdges,
     dispatch: DispatchEvidence,
-    strings: FrozenSet[str],
     bound_calls: FrozenSet[str] = frozenset(),
+    lookups: FrozenSet[str] = frozenset(),
 ) -> Optional[str]:
     """
     Pure: Why a tracked edge the resolver did not find may still be real, or
     None when it provably is not (stale).
 
     Args:
-        strings: String literals of the caller (and its untracked helpers)
         bound_calls: Names the caller calls that it binds itself (callbacks)
+        lookups: Identifier strings the caller uses in lookup positions
+            (extract_lookup_strings); a name merely present in a string is not one
     """
     name = target['name']
     if name in expected.loose_names.get(source_id, ()):
@@ -189,9 +227,10 @@ def unproven_reason(
     fields = dispatch.value_fields.get(target['id'], frozenset()) & expected.value_calls.get(source_id, frozenset())
     if fields:
         return (f"the caller calls {', '.join('.' + f + '()' for f in sorted(fields))} on a value, and the "
-                "target is stored under that field elsewhere; mark is_indirect if deliberate")
-    if name in strings:
-        return (f"the caller names '{name}' in a string (getattr / registry lookup); "
+                "target is one of several functions stored under that field; mark is_indirect if deliberate")
+    if name in lookups:
+        return (f"the caller passes '{name}' as a string where a name is looked up "
+                "(call argument, subscript key or name list: getattr / registry lookup); "
                 "mark is_indirect if deliberate, delete if not")
     return None
 
@@ -223,6 +262,8 @@ def classify_interactions(
     references = folded_references(index, callers)
     strings = folded_per_function(index, callers, extract_string_literals)
     bound_calls = folded_per_function(index, callers, extract_bound_calls)
+    lookups = folded_per_function(index, callers, extract_lookup_strings)
+    holders = field_holders(dispatch)
 
     expected_map = {
         (src, tgt): (desc, via)
@@ -270,10 +311,11 @@ def classify_interactions(
             orphaned.append(finding)
             continue
         said = strings.get(source['path'], {}).get(source['name'], frozenset())
-        if confirmed_without_call(pair, target, expected, dispatch, said):
+        if confirmed_without_call(pair, target, expected, dispatch, said, holders):
             continue
         callbacks = bound_calls.get(source['path'], {}).get(source['name'], frozenset())
-        reason = unproven_reason(pair[0], target, expected, dispatch, said, callbacks) if target else None
+        looked_up = lookups.get(source['path'], {}).get(source['name'], frozenset())
+        reason = unproven_reason(pair[0], target, expected, dispatch, callbacks, looked_up) if target else None
         if reason is None:
             stale.append(finding)
         else:

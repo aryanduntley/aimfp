@@ -59,7 +59,6 @@ CATEGORY_LEVELS: Dict[str, str] = {
     'untracked_files': 'block',
     'missing_type_links': 'warn',
     'names_only_missing': 'warn',
-    'private_tracked': 'info',
     'files_without_functions': 'info',
     # descriptions
     'stale_descriptions': 'warn',

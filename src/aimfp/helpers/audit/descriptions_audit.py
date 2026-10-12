@@ -32,18 +32,23 @@ it records the hash) or baseline the ones that are fine
 excerpt. Triage flags: recorded parameter names that differ from the code, a
 recorded return type that differs from the annotation, a purpose of under
 three words, and code-shaped names in the prose (snake_case, `backticked`)
-the function never uses.
+that neither the function nor the rest of its file uses (names, imports,
+string words; a plural or singular of one counts). Such a name found nowhere
+in the repo (every file under the project root the exclusion stack keeps, any
+language) is the strongest signal: those findings carry priority 'high' with
+parameter and return mismatches, and every review list is sorted high first.
 """
 
 import ast
 import builtins
+import functools
 import keyword
 import re
-from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 from ..utils import decode_json_layers, get_cached_project_root, get_return_statements
 from .code_index import (
-    CodeIndex, build_code_index, build_scope_request, scope_summary, unchecked_files,
+    CodeIndex, _effect_repo_texts, build_code_index, build_scope_request, scope_summary, unchecked_files,
 )
 from .exemptions import exempt_index_findings
 from .reports import AuditResult, finish_audit
@@ -52,7 +57,10 @@ from .reports import AuditResult, finish_audit
 _MENTION = re.compile(r'(?<![\w.])([A-Za-z_][A-Za-z0-9_]*)\((\)|s\)|es\))?')
 _CODE_SHAPED = re.compile(r'`([A-Za-z_][A-Za-z0-9_]*)`|(?<![\w.])([a-z][a-z0-9]*_[a-z0-9_]*[a-z0-9])(?![\w(])')
 EXCERPT_LINES = 12
+NOWHERE = 'found nowhere in the repo'
 _CALL_IN_STRING = re.compile(r'(?<![\w.])([A-Za-z_][A-Za-z0-9_]*)\s*\(')
+_WORD = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
+STRUCTURAL_REASONS = ('parameters recorded as', 'returns recorded as')
 
 
 # ============================================================================
@@ -169,8 +177,12 @@ def function_node(tree: Optional[ast.Module], name: str) -> Optional[ast.AST]:
                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name), None)
 
 
-def code_tokens(node: ast.AST) -> FrozenSet[str]:
-    """Pure: Every name a function's code uses: names, attributes, arguments and the words of its strings."""
+def code_tokens(node: ast.AST, prose: FrozenSet[int] = frozenset()) -> FrozenSet[str]:
+    """
+    Pure: Every name a function's (or module's) code uses: names, attributes,
+    arguments, imports and the words of its strings, except the strings whose
+    ids are in `prose` (docstrings).
+    """
     tokens: set = set()
     for inner in ast.walk(node):
         if isinstance(inner, ast.Name):
@@ -181,14 +193,50 @@ def code_tokens(node: ast.AST) -> FrozenSet[str]:
             tokens.add(inner.arg)
         elif isinstance(inner, ast.keyword) and inner.arg:
             tokens.add(inner.arg)
-        elif isinstance(inner, ast.Constant) and isinstance(inner.value, str):
-            tokens.update(re.findall(r'[A-Za-z_][A-Za-z0-9_]*', inner.value))
+        elif isinstance(inner, ast.alias):
+            tokens.update(part for part in (*inner.name.split('.'), inner.asname) if part)
+        elif isinstance(inner, ast.Constant) and isinstance(inner.value, str) and id(inner) not in prose:
+            tokens.update(_WORD.findall(inner.value))
     return frozenset(tokens)
 
 
 def prose_identifiers(text: str) -> Tuple[str, ...]:
     """Pure: Code-shaped words in prose: `backticked` names and snake_case words."""
     return tuple(dict.fromkeys(a or b for a, b in _CODE_SHAPED.findall(text or '')))
+
+
+def word_forms(word: str) -> Tuple[str, ...]:
+    """Pure: A word with its plural and singular forms (connectors -> connector, entry -> entries)."""
+    forms = [word, word + 's', word + 'es']
+    if word.endswith('ies'):
+        forms.append(word[:-3] + 'y')
+    if word.endswith('es'):
+        forms.append(word[:-2])
+    if word.endswith('s'):
+        forms.append(word[:-1])
+    if word.endswith('y'):
+        forms.append(word[:-1] + 'ies')
+    return tuple(forms)
+
+
+def is_known_word(word: str, words: FrozenSet[str]) -> bool:
+    """Pure: Whether `words` holds the word, its plural or its singular."""
+    return any(form in words for form in word_forms(word))
+
+
+def text_words(texts: Iterable[str]) -> FrozenSet[str]:
+    """Pure: Every identifier-shaped word in raw text (any language)."""
+    return frozenset(word for text in texts for word in _WORD.findall(text))
+
+
+def triage_priority(triage: Tuple[str, ...]) -> str:
+    """Pure: 'high' when the prose names something found nowhere or the signature disagrees, else 'low'."""
+    return 'high' if any(r.startswith(STRUCTURAL_REASONS) or r.endswith(NOWHERE) for r in triage) else 'low'
+
+
+def by_priority(entries: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], ...]:
+    """Pure: Review entries, 'high' priority first (stable within a priority)."""
+    return tuple(sorted(entries, key=lambda e: e.get('priority') != 'high'))
 
 
 def _normalized(annotation: Optional[str]) -> str:
@@ -200,6 +248,8 @@ def description_triage(
     code: Any,
     node: Optional[ast.AST],
     known: FrozenSet[str],
+    file_words: FrozenSet[str] = frozenset(),
+    repo_words: Callable[[], FrozenSet[str]] = frozenset,
 ) -> Tuple[str, ...]:
     """
     Pure: Reasons a function's recorded prose may not describe its code (empty
@@ -210,6 +260,10 @@ def description_triage(
         code: Its ExtractedFunction
         node: Its def node (for the names the code uses)
         known: Project-wide known names (tracked functions and types)
+        file_words: Every name the function's file uses (code_tokens of the
+            module, docstrings excluded)
+        repo_words: () -> every word in the repo; called only when a prose name
+            is unknown to the function and its file
     """
     reasons: List[str] = []
     params = decode_json_layers(row.get('parameters'))
@@ -227,12 +281,17 @@ def description_triage(
         reasons.append(f"returns recorded as {recorded_type}, annotated {actual_type}")
     if len((row.get('purpose') or '').split()) < 3:
         reasons.append('purpose under three words')
-    used = (code_tokens(node) if node is not None else frozenset()) | known | {row['name']}
-    unused = tuple(
-        name for _, text in description_texts(row) for name in prose_identifiers(text) if name not in used
-    )
-    if unused:
-        reasons.append(f"prose names {', '.join(dict.fromkeys(unused))}, which the code never uses")
+    used = (code_tokens(node) if node is not None else frozenset()) | known | file_words | {row['name']}
+    unused = tuple(dict.fromkeys(
+        name for _, text in description_texts(row) for name in prose_identifiers(text)
+        if not is_known_word(name, used)
+    ))
+    nowhere = tuple(name for name in unused if not is_known_word(name, repo_words())) if unused else ()
+    elsewhere = tuple(name for name in unused if name not in nowhere)
+    if nowhere:
+        reasons.append(f"prose names {', '.join(nowhere)}, {NOWHERE}")
+    if elsewhere:
+        reasons.append(f"prose names {', '.join(elsewhere)}, which this file never uses (found elsewhere in the repo)")
     return tuple(reasons)
 
 
@@ -255,15 +314,29 @@ def review_entry(row: Dict[str, Any], ident: Dict[str, Any], triage: Tuple[str, 
     params = decode_json_layers(row.get('parameters'))
     return {
         **ident,
+        'priority': triage_priority(triage),
         'triage': list(triage),
         'recorded': {'purpose': row.get('purpose'), 'parameters': params, 'returns': decode_json_layers(row.get('returns'))},
         'code': code_excerpt(node),
     }
 
 
-def description_findings(index: CodeIndex) -> Dict[str, Tuple[Any, ...]]:
-    """Pure: stale / unbaselined / dangling findings for the in-scope files."""
+def description_findings(
+    index: CodeIndex,
+    repo_texts: Callable[[], Iterable[str]] = tuple,
+) -> Dict[str, Tuple[Any, ...]]:
+    """
+    Pure: stale / unbaselined / dangling findings for the in-scope files.
+
+    Args:
+        index: The audit's code index
+        repo_texts: () -> the text of the repo's files outside index.trees
+            (_effect_repo_texts); read at most once, and only when a prose name
+            is unknown to its function and file
+    """
     known = known_names(index)
+    repo_words = functools.cache(lambda: frozenset().union(
+        *(code_tokens(tree) for tree in index.trees.values())) | text_words(repo_texts()))
     in_scope = {f.file_id: f for f in index.files if f.fidelity == 'full' and f.file_id is not None}
     stale: List[Dict[str, Any]] = []
     unbaselined: List[Dict[str, Any]] = []
@@ -271,6 +344,8 @@ def description_findings(index: CodeIndex) -> Dict[str, Tuple[Any, ...]]:
     dangling: List[Dict[str, Any]] = []
     tracked_names = frozenset(fn['name'] for fn in index.snapshot.functions) | frozenset(
         ty['name'] for ty in index.snapshot.types)
+    file_tokens = functools.cache(
+        lambda path, tree: code_tokens(tree, docstring_ids(tree)) if tree is not None else frozenset())
 
     for row in index.snapshot.functions:
         facts = in_scope.get(row['file_id'])
@@ -283,8 +358,10 @@ def description_findings(index: CodeIndex) -> Dict[str, Tuple[Any, ...]]:
         if (row['purpose'] or '').strip():
             unhashed = row['source_hash'] is None
             if (unhashed and index.snapshot.has_source_hash) or (not unhashed and row['source_hash'] != code.body_hash):
-                node = function_node(index.trees.get(facts.path), row['name'])
-                triage = description_triage(row, code, node, tracked_names)
+                tree = index.trees.get(facts.path)
+                node = function_node(tree, row['name'])
+                triage = description_triage(row, code, node, tracked_names,
+                                            file_tokens(facts.path, tree), repo_words)
                 if not unhashed:
                     stale.append({**review_entry(row, ident, triage, node),
                                   'recorded_hash': row['source_hash'], 'current_hash': code.body_hash})
@@ -305,10 +382,10 @@ def description_findings(index: CodeIndex) -> Dict[str, Tuple[Any, ...]]:
         )
 
     return exempt_index_findings(index, {
-        'stale_descriptions': tuple(stale),
+        'stale_descriptions': by_priority(stale),
         'dangling_mentions': tuple(dangling),
         'unbaselined_descriptions': tuple(unbaselined),
-        'unbaselined_needs_review': tuple(needs_review),
+        'unbaselined_needs_review': by_priority(needs_review),
         'unchecked_files': tuple(u for u in unchecked_files(index) if u['file_id'] is not None),
         'skipped_paths': index.scope.skipped,
     })
@@ -319,8 +396,9 @@ def description_findings(index: CodeIndex) -> Dict[str, Tuple[Any, ...]]:
 # ============================================================================
 
 def run_description_audit(index: CodeIndex) -> Dict[str, Tuple[Any, ...]]:
-    """Effect-free wrapper for audit_tracking: description findings for a built index."""
-    return description_findings(index)
+    """Effect: Description findings for a built index, reading repo text only if triage needs it."""
+    return description_findings(
+        index, lambda: _effect_repo_texts(index.project_root, frozenset(index.trees)))
 
 
 def audit_descriptions(
@@ -356,7 +434,7 @@ def audit_descriptions(
         if index is None:
             return AuditResult(success=False, error=error)
         return finish_audit(
-            root, 'audit_descriptions', scope_summary(index), description_findings(index),
+            root, 'audit_descriptions', scope_summary(index), run_description_audit(index),
             statements=get_return_statements("audit_descriptions"),
         )
     except Exception as exc:

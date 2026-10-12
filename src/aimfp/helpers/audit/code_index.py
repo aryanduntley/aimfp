@@ -48,6 +48,9 @@ TASK_TYPE_TABLES: Dict[str, str] = {
     'sidequest': 'sidequests', 'sidequests': 'sidequests',
 }
 
+# Larger files (data dumps, lockfiles) are not read for repo-wide vocabulary.
+REPO_TEXT_LIMIT = 512 * 1024
+
 
 # ============================================================================
 # Immutable Records
@@ -380,6 +383,25 @@ def _effect_source_paths(conn: sqlite3.Connection, project_root: str, module_pat
         return ()
     excluded_dirs, excluded_exts, ignore_patterns = exclusions
     return _effect_walk_source_files(scan_root, project_root, excluded_dirs, excluded_exts, ignore_patterns)
+
+
+def _effect_repo_texts(project_root: str, skip: FrozenSet[str] = frozenset()) -> Tuple[str, ...]:
+    """
+    Effect: The text of every file under the project root that survives the
+    exclusion stack (the project folder included in it), any language, minus
+    the `skip` paths. Files over REPO_TEXT_LIMIT bytes are left out.
+    """
+    excluded_dirs, excluded_exts, ignore_patterns = _effect_exclusions(project_root)
+    paths = _effect_walk_source_files(project_root, project_root, excluded_dirs, excluded_exts, ignore_patterns)
+
+    def small(path: str) -> bool:
+        try:
+            return os.path.getsize(os.path.join(project_root, path)) <= REPO_TEXT_LIMIT
+        except OSError:
+            return False
+
+    texts = (_effect_read_source(os.path.join(project_root, p)) for p in paths if p not in skip and small(p))
+    return tuple(text for text in texts if text)
 
 
 def _effect_exclusions(project_root: str) -> Tuple[frozenset, frozenset, Tuple[str, ...]]:

@@ -158,7 +158,7 @@ def test_value_fields_keyword_positional_wrapped_and_factory():
         ("fn", "f"), ("touches", "g"), ("fn", "h"), ("fn", "make"), ("fn", "k")}
 
 
-def test_call_through_record_field_is_unconfirmed_not_stale(root):
+def test_call_through_record_field_confirmed_when_unique_else_unconfirmed(root):
     _write(root, "src/records.py", RECORDS)
     _write(root, "src/versions.py", (
         "from .records import Change, Codec\n\n\ndef removed(d):\n    return d\n\n\n"
@@ -175,10 +175,13 @@ def test_call_through_record_field_is_unconfirmed_not_stale(root):
     by_codec = _edge(root, capture, _fn(root, "src/versions.py", "split"))
     unrelated = _edge(root, capture, _fn(root, "src/versions.py", "removed"))
     found, report = _verdicts(root, ["src/upgrades.py"])
-    assert found[by_record] == found[by_factory] == found[by_codec] == "unconfirmed_interactions"
+    # 'touches' holds two functions (removed, touching): the call does not say which runs
+    assert found[by_record] == found[by_factory] == "unconfirmed_interactions"
+    # 'split' holds only split: capture's fmt.codec.split() can only reach it
+    assert by_codec not in found
     assert found[unrelated] == "stale_interactions"
     reasons = {i["interaction_id"]: i["reason"] for i in report["findings"]["unconfirmed_interactions"]}
-    assert ".touches()" in reasons[by_record] and ".split()" in reasons[by_codec]
+    assert ".touches()" in reasons[by_record] and "one of several" in reasons[by_record]
 
 
 def test_callback_parameter_of_the_target_name_is_unconfirmed(root):
@@ -188,6 +191,32 @@ def test_callback_parameter_of_the_target_name_is_unconfirmed(root):
     edge = _edge(root, _fn(root, "src/importer.py", "read"), _fn(root, "src/env.py", "environment_at"))
     found, _ = _verdicts(root, ["src/importer.py"])
     assert found[edge] == "unconfirmed_interactions"
+
+
+def test_name_in_a_string_counts_only_in_lookup_positions(root):
+    _write(root, "src/target.py", "def comment(x):\n    return x\n")
+    _write(root, "src/callers.py", (
+        "def as_key(x):\n    return {'comment': x}\n\n\n"
+        "def compared(kind):\n    return kind == 'comment'\n\n\n"
+        "def by_getattr(mod, x):\n    return getattr(mod, 'comment')(x)\n\n\n"
+        "def by_registry(reg, x):\n    return reg['comment'](x)\n\n\n"
+        "def by_names(mod):\n    return [getattr(mod, n) for n in ('comment', 'other')]\n"))
+    reconcile_paths(["src/target.py", "src/callers.py"], project_root=root)
+    target = _fn(root, "src/target.py", "comment")
+    edges = {n: _edge(root, _fn(root, "src/callers.py", n), target)
+             for n in ("as_key", "compared", "by_getattr", "by_registry", "by_names")}
+    found, _ = _verdicts(root, ["src/callers.py"])
+    assert {n: found.get(e) for n, e in edges.items()} == {
+        "as_key": "stale_interactions", "compared": "stale_interactions",
+        "by_getattr": "unconfirmed_interactions", "by_registry": "unconfirmed_interactions",
+        "by_names": "unconfirmed_interactions"}
+
+
+def test_extract_lookup_strings_positions():
+    from aimfp.helpers.catalog.callgraph import extract_lookup_strings
+    tree = ast.parse("def f(m, r):\n    d = {'k': 'v'}\n    s = 'assigned'\n"
+                     "    return getattr(m, 'g'), r.get(key='h'), r['i'], ['j', 'not a name']\n")
+    assert extract_lookup_strings(tree) == {"f": frozenset({"g", "h", "i", "j"})}
 
 
 # -- Finding 3: SQL functions in string literals -----------------------------
@@ -348,8 +377,85 @@ def test_unbaselined_descriptions_are_triaged(root):
     report, _ = _effect_load_report(root, r.report_path)
     assert [i["name"] for i in report["findings"]["unbaselined_descriptions"]] == ["add"]
     review = {i["name"]: i for i in report["findings"]["unbaselined_needs_review"]}
-    assert review["total"]["triage"] == ["prose names drop_nulls, which the code never uses"]
+    assert review["total"]["triage"] == ["prose names drop_nulls, found nowhere in the repo"]
+    assert review["total"]["priority"] == "high" and review["scale"]["priority"] == "high"
     assert set(review["scale"]["triage"]) == {"returns recorded as str, annotated int", "purpose under three words"}
     assert review["total"]["code"] == "def total(xs) -> int:\n    return sum(xs)"
     fixed = apply_audit_fixes("triaged clean", report=r.report_path, apply=["unbaselined_descriptions"], project_root=root)
     assert fixed.applied == {"baseline_hashes": 1}
+
+
+def test_triage_knows_file_names_plurals_and_ranks_repo_words_below_unknown_ones(root):
+    from aimfp.helpers.audit.descriptions_audit import audit_descriptions
+    _write(root, "src/infra.py", (
+        '"""Module prose: mentions doc_only_word, which is not vocabulary."""\n'
+        "from boto3 import client as aws_client\n\n"
+        "BUCKET_KIND = 'aws_s3_bucket'\n\n\n"
+        "def plan(rows) -> list:\n    return [r for r in rows]\n\n\n"
+        "def emit(r) -> str:\n    return str(r)\n"))
+    _write(root, "infra/main.tf", 'resource "azurerm_key_vault" "kv" {}\n')
+    reconcile_paths(["src/infra.py"], project_root=root)
+    _sql(root, "UPDATE functions SET source_hash = NULL")
+    purposes = {
+        # file-level import, string literal word and a plural of one: all pass
+        "plan": "Plans aws_s3_buckets through aws_client for each row",
+        # one word only in a .tf file (elsewhere), one only in a docstring, one nowhere
+        "emit": "Emits azurerm_key_vault rows; see doc_only_word and ghost_helper",
+    }
+    for name, purpose in purposes.items():
+        _sql(root, "UPDATE functions SET purpose = ? WHERE name = ?", (purpose, name))
+    r = audit_descriptions(paths=["src/infra.py"], project_root=root)
+    report, _ = _effect_load_report(root, r.report_path)
+    assert [i["name"] for i in report["findings"]["unbaselined_descriptions"]] == ["plan"]
+    (emit,) = report["findings"]["unbaselined_needs_review"]
+    assert emit["triage"] == [
+        "prose names ghost_helper, found nowhere in the repo",
+        "prose names azurerm_key_vault, doc_only_word, which this file never uses (found elsewhere in the repo)",
+    ]
+    assert emit["priority"] == "high"
+
+
+def test_review_lists_put_high_priority_first(root):
+    from aimfp.helpers.audit.descriptions_audit import audit_descriptions
+    _write(root, "src/two.py", (
+        "def first(x) -> int:\n    return x\n\n\n"
+        "def second(x) -> int:\n    return x\n"))
+    _write(root, "notes.md", "elsewhere_word lives in the docs\n")
+    reconcile_paths(["src/two.py"], project_root=root)
+    _sql(root, "UPDATE functions SET source_hash = NULL")
+    _sql(root, "UPDATE functions SET purpose = 'Returns x, see elsewhere_word' WHERE name = 'first'")
+    _sql(root, "UPDATE functions SET purpose = 'Returns x via missing_word' WHERE name = 'second'")
+    r = audit_descriptions(paths=["src/two.py"], project_root=root)
+    report, _ = _effect_load_report(root, r.report_path)
+    assert [(i["name"], i["priority"]) for i in report["findings"]["unbaselined_needs_review"]] == [
+        ("second", "high"), ("first", "low")]
+
+
+def test_reviewed_triage_and_stale_prose_baseline_by_category_with_exclude(root):
+    from aimfp.helpers.audit.descriptions_audit import audit_descriptions
+    _write(root, "src/rev.py", (
+        "def a(x) -> int:\n    return x\n\n\n"
+        "def b(x) -> int:\n    return x\n\n\n"
+        "def c(x) -> int:\n    return x\n"))
+    reconcile_paths(["src/rev.py"], project_root=root)
+    _sql(root, "UPDATE functions SET source_hash = NULL, purpose = 'Returns x unchanged via odd_word'")
+    r = audit_descriptions(paths=["src/rev.py"], project_root=root)
+    assert r.counts == {"unbaselined_needs_review": 3}
+    keep = _fn(root, "src/rev.py", "c")
+    fixed = apply_audit_fixes("prose reviewed; c is being rewritten", report=r.report_path,
+                              apply=["unbaselined_needs_review"], exclude={"unbaselined_needs_review": [keep]},
+                              project_root=root)
+    assert fixed.applied == {"baseline_hashes": 2}
+    assert audit_descriptions(paths=["src/rev.py"], project_root=root).counts == {"unbaselined_needs_review": 1}
+
+    # code changes after baselining: stale, then baselined by category once reviewed
+    _write(root, "src/rev.py", (
+        "def a(x) -> int:\n    return int(x)\n\n\n"
+        "def b(x) -> int:\n    return x\n\n\n"
+        "def c(x) -> int:\n    return x\n"))
+    r = audit_descriptions(paths=["src/rev.py"], project_root=root)
+    assert r.counts == {"stale_descriptions": 1, "unbaselined_needs_review": 1}
+    fixed = apply_audit_fixes("a's prose still holds", report=r.report_path, apply=["stale_descriptions"],
+                              project_root=root)
+    assert fixed.applied == {"baseline_hashes": 1}
+    assert audit_descriptions(paths=["src/rev.py"], project_root=root).counts == {"unbaselined_needs_review": 1}

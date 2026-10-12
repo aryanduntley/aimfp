@@ -14,7 +14,6 @@ Per file, by fidelity:
     stale_functions        tracked functions the source no longer defines (a
                            module-level `f = partial(...)` / lambda / alias
                            binding of the name counts as a definition)
-    private_tracked        tracked _private functions (informational only)
     incomplete_functions   purpose / parameters / returns not populated
     malformed_json         parameters / returns not stored as one JSON encoding
                            of a list / object (double-encoded is fixable)
@@ -30,7 +29,9 @@ Per file, by fidelity:
 - names_only (regex languages): names_only_missing, a warning, since regex
   extraction misses some forms. Nothing stale is ever claimed from it.
 
-Untracked _private functions are never reported: tracking them is optional.
+Tracking _private functions is optional (not required, allowed): an
+untracked one is never reported missing, and a tracked one gets every check a
+public function gets.
 """
 
 import ast
@@ -163,8 +164,6 @@ def function_findings(
         if row['name'] not in defined and row['name'] not in assigned:
             add('stale_functions', ident)
             continue
-        if row['name'].startswith('_'):
-            add('private_tracked', ident)
         if row['is_reserved']:
             add('reserved_functions', ident)
         empty = tuple(
@@ -353,7 +352,7 @@ def audit_function_findings(index: CodeIndex) -> Dict[str, Tuple[Any, ...]]:
     order = ('missing_files', 'reserved_files', 'untracked_files', 'missing_functions', 'stale_functions',
              'reserved_functions', 'incomplete_functions', 'malformed_json', 'param_mismatch',
              'missing_types', 'stale_types', 'incomplete_types', 'missing_type_links',
-             'names_only_missing', 'private_tracked', 'files_without_functions')
+             'names_only_missing', 'files_without_functions')
     collected['stale_functions'] = list(with_move_targets(index, tuple(collected.get('stale_functions', ()))))
     return exempt_index_findings(index, {
         **{category: tuple(collected.get(category, ())) for category in order},

@@ -301,11 +301,9 @@ def test_schema_1_3_database_migrates_to_1_4_with_notes_intact():
     assert len(migrated) == 1
     entry = migrated[0]
     assert (entry["old_version"], entry["new_version"]) == ("1.3", "1.4")
-    conn = sqlite3.connect(entry["new_db_temp_path"])
+    conn = sqlite3.connect(entry["original_db_path"])
     kept = conn.execute("SELECT content FROM notes").fetchall()
     conn.execute(
         "INSERT INTO notes (content, note_type) VALUES ('trail', 'entry_deletion')")
     conn.close()
-    for path in (entry["new_db_temp_path"], entry["backup_temp_path"]):
-        os.remove(path)
     assert kept == [("kept",)]
