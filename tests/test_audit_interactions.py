@@ -113,10 +113,19 @@ def test_target_moved_files_is_a_target_repoint(project):
     assert "missing_interactions" not in r.counts and "stale_interactions" not in r.counts
 
 
-def test_unconfirmed_when_name_still_referenced(project):
-    # The edge points at lib.add, but run now calls a local add of its own
+def test_stale_when_name_resolves_to_a_local_function(project):
+    # The edge points at lib.add, but run now calls a local add of its own:
+    # every use of the name resolves elsewhere, so the edge is provably gone
     _write(project, "src/app.py", (
         "def run(x):\n    return add(x, 1)\n\n\ndef add(a, b):\n    return a - b\n"))
+    reconcile_paths(["src/app.py"], project_root=project)
+    r = audit_interactions(paths=["src/app.py"], project_root=project)
+    assert r.counts.get("stale_interactions") == 1 and "unconfirmed_interactions" not in r.counts
+
+
+def test_unconfirmed_when_name_only_in_a_string(project):
+    # A registry lookup by name: the call cannot be proven, nor ruled out
+    _write(project, "src/app.py", 'OPS = {}\n\n\ndef run(x):\n    return OPS["add"](x, 1)\n')
     reconcile_paths(["src/app.py"], project_root=project)
     r = audit_interactions(paths=["src/app.py"], project_root=project)
     assert r.counts.get("unconfirmed_interactions") == 1
@@ -129,7 +138,7 @@ def test_indirect_and_non_call_edges_never_flagged(project):
                       (ids["run"], ids["scale"], "chain", "data flows into scale")], project_root=project)
     r = audit_interactions(paths=["src/app.py"], project_root=project)
     assert "stale_interactions" not in r.counts
-    assert r.counts["indirect_interactions"] == 2
+    assert r.counts["indirect_interactions"] == 1 and r.counts["non_call_interactions"] == 1
 
 
 def test_unchecked_and_skipped_files_are_listed(project):

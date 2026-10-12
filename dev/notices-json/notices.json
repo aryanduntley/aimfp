@@ -69,6 +69,16 @@
       "applies_to_db": "project",
       "applies_from_version": "1.15",
       "introduced_in": "1.63.0"
+    },
+    {
+      "notice_key": "audit_exemptions_intro",
+      "title": "Audit verdicts are stricter about what is stale, and reviewed findings can be exempted",
+      "message": "The tracking audit now judges edges by what the code provably does. stale_interactions means every use of the target's name in the caller resolves to something else (another function, a local or loop variable, a method on a value); unconfirmed_interactions carry a reason when an edge may still be real (record field, factory, callback parameter, string lookup, non-Python target, ambiguous module). Recursion, module-level dispatch tables and SQL functions called in string literals are confirmed without any mark. Functions defined as f = partial(...), a lambda or an alias count as defined. A stale function whose file now imports it from elsewhere is reported with moved_to, and applying it hands its edges to the successor. Descriptions without a code hash are triaged: unbaselined_descriptions pass and can be baselined in one call; unbaselined_needs_review list reasons and a code excerpt.\n\nNEW in schema 1.16: audit_exemptions. A function or type finding a person reviewed as not drift (a function defined inside an if at module level, another language's built-in named in prose) is exempted with apply_audit_fixes(reason, exempt=[{category, function_id | type_id}]); audits list it under 'exempted' and it never blocks again. A function exemption lapses when the function's code changes. apply_audit_fixes also takes exclude={category: [ids]} to hold back findings for one call.\n\nTELL THE USER about the stricter verdicts, then OFFER to run audit_tracking() over the whole project: edges that used to be unconfirmed may now be stale (each provably not made by the code) and edges marked is_indirect only to protect dispatch tables can stay marked. If descriptions were never baselined, apply 'unbaselined_descriptions' and review the needs_review list.",
+      "severity": "info",
+      "action_required": true,
+      "applies_to_db": "project",
+      "applies_from_version": "1.16",
+      "introduced_in": "1.64.0"
     }
   ]
 }

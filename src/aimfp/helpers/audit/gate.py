@@ -111,7 +111,9 @@ def gate_refusal(table: str, item_id: int, verdict: GateVerdict) -> str:
         f"linked file(s) found blocking drift: {format_counts(verdict.blocking)}. "
         f"Full report: {verdict.report_path}. Fix: {numbered or 'see the report'}; then complete again. "
         f"Keep deliberate indirect links out of stale deletes with "
-        f"apply_audit_fixes(mark_indirect_ids=[...]) first. To complete anyway, pass "
+        f"apply_audit_fixes(mark_indirect_ids=[...]) first; a reviewed function/type finding that is "
+        f"not drift is exempted for good with apply_audit_fixes(reason, exempt=[{{category, function_id}}]). "
+        f"To complete anyway, pass "
         f"audit_override_reason='<why>' (recorded as a warning note); the user can also set "
         f"{GATE_SETTING}='warn' while legacy drift is cleaned up."
     )

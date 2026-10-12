@@ -42,6 +42,7 @@ CATEGORY_LEVELS: Dict[str, str] = {
     'repoint_interactions': 'block',
     'unconfirmed_interactions': 'warn',
     'indirect_interactions': 'info',
+    'non_call_interactions': 'info',
     'unresolved_calls': 'info',
     # functions, types, files
     'missing_functions': 'block',
@@ -64,9 +65,11 @@ CATEGORY_LEVELS: Dict[str, str] = {
     'stale_descriptions': 'warn',
     'dangling_mentions': 'warn',
     'unbaselined_descriptions': 'info',
+    'unbaselined_needs_review': 'info',
     # modularity layer (audit_tracking)
     'structure_gaps': 'warn',
     # every audit
+    'exempted': 'info',
     'unchecked_files': 'info',
     'skipped_paths': 'info',
 }

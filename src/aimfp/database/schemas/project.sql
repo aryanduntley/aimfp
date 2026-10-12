@@ -1,6 +1,13 @@
 -- project.db Schema
--- Version: 1.15
+-- Version: 1.16
 -- Purpose: Track project-specific data, including files, functions, themes, flows, and completion paths
+-- Changelog v1.16:
+--   - Added audit_exemptions: a reviewed audit finding on a function or type that is NOT drift
+--     (a function defined in a way the audit cannot see, a signature it cannot read), with the
+--     reason. Audits list it under 'exempted' (info) instead of the finding's category, so it
+--     stops blocking task completion. A function exemption records the function's code hash and
+--     lapses when the code changes. Rows cascade with their function or type. Edges have
+--     interactions.is_indirect for the same purpose.
 -- Changelog v1.15:
 --   - Added interactions.is_indirect: marks a deliberate edge the code does not make by direct call
 --     or name reference (dispatch through a tuple/table of functions, chain data-flow links), so
@@ -171,6 +178,28 @@ CREATE TABLE IF NOT EXISTS types_functions (
     FOREIGN KEY (type_id) REFERENCES types(id) ON DELETE CASCADE,
     FOREIGN KEY (function_id) REFERENCES functions(id) ON DELETE CASCADE
 );
+
+-- Audit exemptions (v1.16): reviewed audit findings that are not drift. Exactly one of
+-- function_id / type_id is set; one row per (category, entity).
+CREATE TABLE IF NOT EXISTS audit_exemptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL CHECK (category IN ('stale_functions', 'param_mismatch', 'incomplete_functions',
+                                               'malformed_json', 'dangling_mentions', 'stale_types',
+                                               'incomplete_types')),
+    function_id INTEGER,
+    type_id INTEGER,
+    reason TEXT NOT NULL,                   -- Why the finding is not drift (shown with every exempted finding)
+    code_hash TEXT,                         -- Function code hash when exempted; a code change lapses the exemption
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CHECK ((function_id IS NULL) != (type_id IS NULL)),
+    FOREIGN KEY (function_id) REFERENCES functions(id) ON DELETE CASCADE,
+    FOREIGN KEY (type_id) REFERENCES types(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_exemptions_function
+    ON audit_exemptions(category, function_id) WHERE function_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_exemptions_type
+    ON audit_exemptions(category, type_id) WHERE type_id IS NOT NULL;
 
 -- Interactions Table: For function dependencies and chaining (directive_fp_dependency_tracking, directive_fp_chaining)
 CREATE TABLE IF NOT EXISTS interactions (
@@ -723,4 +752,4 @@ CREATE TABLE IF NOT EXISTS schema_version (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.15');
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.16');

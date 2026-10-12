@@ -225,6 +225,13 @@ def _collect_references(conn, idx: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
              "work_item": idx.get(rt, {}).get("id2key", {}).get(r["reference_id"]),
              "file": fi.get(r["file_id"])})
 
+    # audit_exemptions: one function or type endpoint, absent pre-v1.16
+    for r in _safe_rows(conn, "SELECT * FROM audit_exemptions"):
+        put({"kind": "audit_exemption", "category": r["category"],
+             "function": fn.get(r["function_id"]) if r["function_id"] is not None else None,
+             "type": ty.get(r["type_id"]) if r["type_id"] is not None else None,
+             "attributes": {"reason": r["reason"], "code_hash": r["code_hash"]}})
+
     return refs
 
 

@@ -587,3 +587,36 @@ def test_v113_structure_edges_and_no_flow_reason_round_trip(repo):
     assert c.execute("SELECT COUNT(*) FROM milestone_flows").fetchone()[0] == 1
     assert c.execute("SELECT no_flow_reason FROM files WHERE path='pyproject.toml'").fetchone()[0] == "build config"
     c.close()
+
+
+def test_v116_audit_exemptions_round_trip(repo):
+    """A worker's exemptions merge onto main keyed by the function, and a removed one is removed."""
+    root, db = repo
+    _seed_base(db)
+    c = _conn(db)
+    foo = c.execute("SELECT id FROM functions WHERE name='foo'").fetchone()[0]
+    c.execute("INSERT INTO audit_exemptions (category, function_id, reason) VALUES ('param_mismatch', ?, 'old')", (foo,))
+    c.commit(); c.close()
+    base = _commit(root, "base")
+
+    _git(root, "checkout", "-qb", "work")
+    c = _conn(db)
+    c.execute("INSERT INTO functions (file_id,name,purpose) VALUES (1,'bar','bar')")
+    bar = c.execute("SELECT id FROM functions WHERE name='bar'").fetchone()[0]
+    c.execute("INSERT INTO audit_exemptions (category, function_id, reason, code_hash) "
+              "VALUES ('stale_functions', ?, 'generated at import', 'h1')", (bar,))
+    c.execute("DELETE FROM audit_exemptions WHERE function_id = ?", (foo,))
+    c.commit(); c.close()
+    _commit(root, "work")
+
+    cs = export_state_changeset(base, "work", worker_id="w1").data
+    _git(root, "checkout", "-q", _main_branch(root))
+    res = apply_state_changeset(cs)
+    assert res.success, res.error
+    assert res.data["conflicts"] == []
+
+    c = _conn(db)
+    rows = c.execute("SELECT e.category, f.name, e.reason, e.code_hash FROM audit_exemptions e "
+                     "JOIN functions f ON f.id = e.function_id").fetchall()
+    c.close()
+    assert [tuple(r) for r in rows] == [("stale_functions", "bar", "generated at import", "h1")]

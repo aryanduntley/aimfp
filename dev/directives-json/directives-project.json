@@ -2856,7 +2856,7 @@
             "update_task_status": "completed",
             "mark_all_items_complete": true,
             "log_completion_time": true,
-            "preflight_audit": "audit_tracking(task_id=<id>, task_type='task') BEFORE marking complete: it runs the same audit the completion gate runs over the linked files. Clear blocking findings with the fix calls its result names (reconcile_paths, apply_audit_fixes(report=..., apply=[...]), prose updates). Completion is refused on blocking drift when audit_gate='block' (default); audit_override_reason completes anyway with a warning note."
+            "preflight_audit": "audit_tracking(task_id=<id>, task_type='task') BEFORE marking complete: it runs the same audit the completion gate runs over the linked files. Clear blocking findings with the fix calls its result names (reconcile_paths, apply_audit_fixes(report=..., apply=[...]), prose updates). Completion is refused on blocking drift when audit_gate='block' (default); audit_override_reason completes anyway with a warning note. A finding a person reviewed as NOT drift (a function or type the audit cannot see, a signature it cannot read) is exempted for good with apply_audit_fixes(reason=..., exempt=[{category, function_id | type_id}]) instead of overriding every completion; the exemption lapses when the function's code changes."
           }
         },
         {
@@ -2936,7 +2936,7 @@
       },
       {
         "issue": "tracking_audit_blocked",
-        "resolution": "Completion refused: the tracking audit of the task's linked files found blocking drift. The error lists the categories, the report path and the exact fix calls — run them and complete again. audit_override_reason only for understood, scheduled drift (recorded as a warning note); warnings never block; the user may set audit_gate='warn' during legacy cleanup."
+        "resolution": "Completion refused: the tracking audit of the task's linked files found blocking drift. The error lists the categories, the report path and the exact fix calls — run them and complete again. audit_override_reason only for understood, scheduled drift (recorded as a warning note); a reviewed false positive is exempted once with apply_audit_fixes(exempt=[{category, function_id | type_id}]) rather than overridden each time; warnings never block; the user may set audit_gate='warn' during legacy cleanup."
       }
     ],
     "intent_keywords_json": [
@@ -2967,7 +2967,7 @@
           "details": {
             "update_subtask_status": "completed",
             "log_completion_time": true,
-            "preflight_audit": "audit_tracking(task_id=<id>, task_type='subtask') BEFORE marking complete: it runs the same audit the completion gate runs over the linked files. Clear blocking findings with the fix calls its result names (reconcile_paths, apply_audit_fixes(report=..., apply=[...]), prose updates). Completion is refused on blocking drift when audit_gate='block' (default); audit_override_reason completes anyway with a warning note.",
+            "preflight_audit": "audit_tracking(task_id=<id>, task_type='subtask') BEFORE marking complete: it runs the same audit the completion gate runs over the linked files. Clear blocking findings with the fix calls its result names (reconcile_paths, apply_audit_fixes(report=..., apply=[...]), prose updates). Completion is refused on blocking drift when audit_gate='block' (default); audit_override_reason completes anyway with a warning note. A finding a person reviewed as NOT drift (a function or type the audit cannot see, a signature it cannot read) is exempted for good with apply_audit_fixes(reason=..., exempt=[{category, function_id | type_id}]) instead of overriding every completion; the exemption lapses when the function's code changes.",
             "use_helpers": [
               "audit_tracking",
               "apply_audit_fixes"
@@ -3025,7 +3025,7 @@
       },
       {
         "issue": "tracking_audit_blocked",
-        "resolution": "Completion refused: the tracking audit of the subtask's linked files found blocking drift. The error lists the categories, the report path and the exact fix calls — run them and complete again. audit_override_reason only for understood, scheduled drift (recorded as a warning note); warnings never block; the user may set audit_gate='warn' during legacy cleanup."
+        "resolution": "Completion refused: the tracking audit of the subtask's linked files found blocking drift. The error lists the categories, the report path and the exact fix calls — run them and complete again. audit_override_reason only for understood, scheduled drift (recorded as a warning note); a reviewed false positive is exempted once with apply_audit_fixes(exempt=[{category, function_id | type_id}]) rather than overridden each time; warnings never block; the user may set audit_gate='warn' during legacy cleanup."
       }
     ],
     "intent_keywords_json": [
@@ -3057,7 +3057,7 @@
             "update_sidequest_status": "completed",
             "log_completion_time": true,
             "prompt_for_outcome": true,
-            "preflight_audit": "audit_tracking(task_id=<id>, task_type='sidequest') BEFORE marking complete: it runs the same audit the completion gate runs over the linked files. Clear blocking findings with the fix calls its result names (reconcile_paths, apply_audit_fixes(report=..., apply=[...]), prose updates). Completion is refused on blocking drift when audit_gate='block' (default); audit_override_reason completes anyway with a warning note.",
+            "preflight_audit": "audit_tracking(task_id=<id>, task_type='sidequest') BEFORE marking complete: it runs the same audit the completion gate runs over the linked files. Clear blocking findings with the fix calls its result names (reconcile_paths, apply_audit_fixes(report=..., apply=[...]), prose updates). Completion is refused on blocking drift when audit_gate='block' (default); audit_override_reason completes anyway with a warning note. A finding a person reviewed as NOT drift (a function or type the audit cannot see, a signature it cannot read) is exempted for good with apply_audit_fixes(reason=..., exempt=[{category, function_id | type_id}]) instead of overriding every completion; the exemption lapses when the function's code changes.",
             "use_helpers": [
               "audit_tracking",
               "apply_audit_fixes"
@@ -3128,7 +3128,7 @@
       },
       {
         "issue": "tracking_audit_blocked",
-        "resolution": "Completion refused: the tracking audit of the sidequest's linked files found blocking drift. The error lists the categories, the report path and the exact fix calls — run them and complete again. audit_override_reason only for understood, scheduled drift (recorded as a warning note); warnings never block; the user may set audit_gate='warn' during legacy cleanup."
+        "resolution": "Completion refused: the tracking audit of the sidequest's linked files found blocking drift. The error lists the categories, the report path and the exact fix calls — run them and complete again. audit_override_reason only for understood, scheduled drift (recorded as a warning note); a reviewed false positive is exempted once with apply_audit_fixes(exempt=[{category, function_id | type_id}]) rather than overridden each time; warnings never block; the user may set audit_gate='warn' during legacy cleanup."
       }
     ],
     "intent_keywords_json": [
@@ -3677,7 +3677,7 @@
               "Record dependencies via add_interactions (batch) — pass tuples of (source_function_id, target_function_id, interaction_type, description)",
               "Link types to the functions that consume or produce them via add_types_functions",
               "Assign files to modules via add_files_to_module and to flows via add_file_flows — a cataloged file with no flow is architecturally disconnected",
-              "VERIFY: audit_interactions(module_path=<cataloged subtree>) — missing_interactions / stale_interactions should be empty; apply its mechanical findings with apply_audit_fixes(report=..., apply=[...]). Deliberate indirect links (dispatch tables, data-flow): is_indirect."
+              "VERIFY: audit_interactions(module_path=<cataloged subtree>) — missing_interactions / stale_interactions should be empty; apply its mechanical findings with apply_audit_fixes(report=..., apply=[...]). Dispatch tables, recursion and SQL calls in strings are confirmed automatically; unconfirmed_interactions carry a reason. Purely conceptual links (data flow) the code never makes: is_indirect (apply_audit_fixes(mark_indirect_ids=[...]))."
             ],
             "use_helpers": [
               "add_interactions",

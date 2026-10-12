@@ -68,8 +68,10 @@ Load via: get_supportive_context(variant='coding')
   missing/stale functions+types, param drift, malformed JSON, missing/stale/repoint edges,
   stale descriptions (code changed after the prose), dangling name mentions.
   Full findings go to <project folder>/audit/*.json; the result is counts + samples + report_path.
-  Fix: apply_audit_fixes(reason, report=<path>, apply=[categories]) — one transaction, restore manifest.
-  Deliberate indirect edges (dispatch tables, chain links): mark_indirect_ids, never flagged again.
+  Fix: apply_audit_fixes(reason, report=<path>, apply=[categories], exclude={category: [ids]}) — one
+  transaction, restore manifest. Recursion, dispatch tables and SQL-string calls are confirmed; record
+  fields, callbacks and string lookups are unconfirmed (warn). Conceptual edges: mark_indirect_ids.
+  Reviewed function/type finding that is not drift: exempt=[{category, function_id|type_id}] (lapses on code change).
   Deleting a function with edges: delete_function(repoint_to=<successor>) or confirm_cascade=true.
 
 END CODING CONTEXT

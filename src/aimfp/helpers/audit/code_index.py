@@ -78,7 +78,8 @@ class DbSnapshot:
     """Read-only copy of the tracking tables an audit compares against.
 
     has_source_hash / has_is_indirect are False on a database not yet migrated
-    to schema 1.15; the columns then read as None / 0.
+    to schema 1.15; the columns then read as None / 0. has_exemptions is False
+    before schema 1.16 (audit_exemptions absent: no exemptions).
     """
     files: Tuple[Dict[str, Any], ...]
     functions: Tuple[Dict[str, Any], ...]
@@ -87,6 +88,8 @@ class DbSnapshot:
     types_functions: Tuple[Dict[str, Any], ...]
     has_source_hash: bool = False
     has_is_indirect: bool = False
+    exemptions: Tuple[Dict[str, Any], ...] = ()
+    has_exemptions: bool = False
 
 
 @dataclass(frozen=True)
@@ -253,6 +256,7 @@ def scope_summary(index: CodeIndex) -> Dict[str, Any]:
         'fidelity': fidelity,
         'skipped': len(index.scope.skipped),
         'schema_1_15': index.snapshot.has_source_hash and index.snapshot.has_is_indirect,
+        'schema_1_16': index.snapshot.has_exemptions,
     }
 
 
@@ -284,13 +288,14 @@ def query_snapshot(conn: sqlite3.Connection) -> DbSnapshot:
     """
     Effect: Read the tracking tables into an immutable snapshot (SELECT only).
 
-    Tolerates a pre-1.15 database: source_hash and is_indirect read as
-    None / 0 when the columns do not exist yet.
+    Tolerates older databases: source_hash and is_indirect read as None / 0
+    before schema 1.15, and there are no exemptions before 1.16.
     """
     function_cols = _table_columns(conn, 'functions')
     interaction_cols = _table_columns(conn, 'interactions')
     has_hash = 'source_hash' in function_cols
     has_indirect = 'is_indirect' in interaction_cols
+    has_exemptions = bool(_table_columns(conn, 'audit_exemptions'))
 
     def rows(sql: str) -> Tuple[Dict[str, Any], ...]:
         return tuple(dict(row) for row in conn.execute(sql).fetchall())
@@ -314,6 +319,10 @@ def query_snapshot(conn: sqlite3.Connection) -> DbSnapshot:
         types_functions=rows("SELECT id, type_id, function_id, role FROM types_functions ORDER BY id"),
         has_source_hash=has_hash,
         has_is_indirect=has_indirect,
+        exemptions=rows(
+            "SELECT id, category, function_id, type_id, reason, code_hash FROM audit_exemptions ORDER BY id"
+        ) if has_exemptions else (),
+        has_exemptions=has_exemptions,
     )
 
 

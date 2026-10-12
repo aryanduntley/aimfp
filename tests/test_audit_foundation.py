@@ -98,7 +98,7 @@ def test_reconcile_and_catalog_write_single_encoded_json(root):
 # ============================================================================
 
 def test_fresh_project_db_has_1_15_columns(root):
-    assert _q(root, "SELECT version FROM schema_version") == [("1.15",)]
+    assert _q(root, "SELECT version FROM schema_version") == [("1.16",)]
     function_cols = {r[1] for r in _q(root, "PRAGMA table_info(functions)")}
     interaction_cols = {r[1] for r in _q(root, "PRAGMA table_info(interactions)")}
     assert "source_hash" in function_cols

@@ -10,28 +10,45 @@ imports (aliases and re-exports included). Each tracked edge whose caller is
 in scope then lands in one category:
 
 - missing_interactions: the code makes it, the database lacks it
-- stale_interactions: a 'call' edge whose target name the caller no longer
-  references at all, directly or through its untracked helpers — certain
+- stale_interactions: a 'call' edge the code provably no longer makes — every
+  use of the target's name in the caller (and its untracked helpers)
+  resolves to something else: another function, a local, a method on a
+  value, or nothing at all
 - repoint_interactions: a stale edge paired with a missing one that is the
   same dependency moved — the call moved to another function in the same
   file (repoint the source), or the target moved files under the same name
   (repoint the target). Reported as one change instead of a delete plus an
   add, which is what a split or move really is.
-- unconfirmed_interactions: the target name still appears in the caller but
-  the resolver cannot confirm this target (ambiguous name, dynamic dispatch).
-  A warning: mark it indirect if it is deliberate, delete it if not.
-- indirect_interactions: edges marked is_indirect and every non-'call' type
-  (chain, compose, pipe, borrow). Never flagged; listed for completeness.
+- unconfirmed_interactions: the code may still make the edge but the audit
+  cannot prove it: the name resolves ambiguously, the caller calls through a
+  record field the target is stored under elsewhere, the target is named in
+  a string, or the target lives in a non-Python file. A warning: mark it
+  indirect if it is deliberate, delete it if not.
+- indirect_interactions: edges marked is_indirect (deliberate, never flagged)
+- non_call_interactions: chain / compose / pipe / borrow edges, which describe
+  data flow rather than a call and are never compared with the code. Both are
+  informational, not findings.
+
+Confirmed without being expected (never reported, never asked to be added):
+self-recursion, an edge to a function held in a module-level table the
+caller reads (dispatch), and a call to a non-Python function written as
+``name(`` in one of the caller's string literals (SQL).
 
 Only full-fidelity (Python) callers are compared. Everything else in scope is
 listed in unchecked_files.
 """
 
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+import ast
+import re
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 from ..utils import get_cached_project_root, get_return_statements
+from ...watchdog.config import detect_language
 from ..catalog.callgraph import (
-    CallEdges, build_call_edges, extract_referenced_names, fold_untracked_helpers,
+    CallEdges, DispatchEvidence, build_call_edges, dispatch_evidence, extract_bound_calls,
+    extract_referenced_names, extract_string_literals, fold_untracked_helpers,
+    reachable_untracked_helpers, resolution_context,
 )
 from .code_index import (
     CodeIndex, build_code_index, build_scope_request, scope_summary,
@@ -62,22 +79,121 @@ def function_lookup(index: CodeIndex) -> Dict[int, Dict[str, Any]]:
     }
 
 
-def folded_references(index: CodeIndex, paths: FrozenSet[str]) -> Dict[str, Dict[str, FrozenSet[str]]]:
-    """
-    Pure: path -> {function name -> every name it references, including inside
-    the untracked same-file helpers it uses}. The certainty test for stale edges.
-    """
+def tracked_names_by_path(index: CodeIndex, paths: FrozenSet[str]) -> Dict[str, FrozenSet[str]]:
+    """Pure: path -> names of the file's tracked functions."""
     tracked_by_file: Dict[int, set] = {}
     for fn in index.snapshot.functions:
         tracked_by_file.setdefault(fn['file_id'], set()).add(fn['name'])
     file_ids = {row['path']: row['id'] for row in index.snapshot.files}
+    return {path: frozenset(tracked_by_file.get(file_ids.get(path), ())) for path in paths}
+
+
+def folded_references(index: CodeIndex, paths: FrozenSet[str]) -> Dict[str, Dict[str, FrozenSet[str]]]:
+    """
+    Pure: path -> {function name -> every name it references, including inside
+    the untracked same-file helpers it uses}. A caller missing here is gone
+    from the source (its edges are orphaned, not stale).
+    """
+    tracked = tracked_names_by_path(index, paths)
     return {
-        path: fold_untracked_helpers(
-            extract_referenced_names(index.trees[path]),
-            frozenset(tracked_by_file.get(file_ids.get(path), ())),
-        )
+        path: fold_untracked_helpers(extract_referenced_names(index.trees[path], tracked[path]), tracked[path])
         for path in paths
     }
+
+
+PerFunction = Callable[[ast.Module, FrozenSet[str]], Dict[str, Iterable[str]]]
+
+
+def folded_per_function(
+    index: CodeIndex,
+    paths: FrozenSet[str],
+    extract: PerFunction,
+) -> Dict[str, Dict[str, FrozenSet[str]]]:
+    """
+    Pure: path -> {function name -> what `extract` finds in it and in the
+    untracked same-file helpers it reaches}.
+
+    Args:
+        extract: (tree, tracked names) -> {function name -> items}, e.g.
+            extract_string_literals or extract_bound_calls
+    """
+    tracked = tracked_names_by_path(index, paths)
+    folded: Dict[str, Dict[str, FrozenSet[str]]] = {}
+    for path in paths:
+        tree, names = index.trees[path], tracked[path]
+        found = extract(tree, names)
+        reach = reachable_untracked_helpers(extract_referenced_names(tree, names), names)
+        folded[path] = {
+            name: frozenset(own).union(*(found.get(h, ()) for h in reach.get(name, ())))
+            for name, own in found.items()
+        }
+    return folded
+
+
+def calls_in_strings(name: str, strings: FrozenSet[str]) -> bool:
+    """Pure: Whether any string calls `name` (``name(`` not preceded by a word or '.')."""
+    pattern = re.compile(rf'(?<![\w.]){re.escape(name)}\s*\(')
+    return any(pattern.search(text) for text in strings)
+
+
+def is_python_path(path: Optional[str]) -> bool:
+    """Pure: Whether a tracked file is Python (the only language calls are resolved in)."""
+    return detect_language(path or '') == 'python'
+
+
+def confirmed_without_call(
+    pair: Tuple[int, int],
+    target: Optional[Dict[str, Any]],
+    expected: CallEdges,
+    dispatch: DispatchEvidence,
+    strings: FrozenSet[str],
+) -> bool:
+    """
+    Pure: Whether the code makes a tracked edge that is not an expected edge:
+    recursion, a dispatch table the caller reads, or a non-Python function
+    the caller calls in a string literal (SQL).
+    """
+    if pair[0] == pair[1]:
+        return pair[0] in expected.self_edges
+    if pair in dispatch.table_edges:
+        return True
+    return target is not None and not is_python_path(target['path']) and calls_in_strings(target['name'], strings)
+
+
+def unproven_reason(
+    source_id: int,
+    target: Dict[str, Any],
+    expected: CallEdges,
+    dispatch: DispatchEvidence,
+    strings: FrozenSet[str],
+    bound_calls: FrozenSet[str] = frozenset(),
+) -> Optional[str]:
+    """
+    Pure: Why a tracked edge the resolver did not find may still be real, or
+    None when it provably is not (stale).
+
+    Args:
+        strings: String literals of the caller (and its untracked helpers)
+        bound_calls: Names the caller calls that it binds itself (callbacks)
+    """
+    name = target['name']
+    if name in expected.loose_names.get(source_id, ()):
+        return (f"the caller uses '{name}' but it resolves ambiguously (several modules match); "
+                "mark is_indirect if deliberate, delete if not")
+    if name in bound_calls:
+        return (f"the caller calls a parameter named '{name}' (a callback the target is passed in as); "
+                "mark is_indirect if deliberate, delete if not")
+    if not is_python_path(target['path']):
+        return (f"target is in a non-Python file and no string in the caller calls {name}(...); "
+                "verify by reading, then mark is_indirect or delete")
+    fields = dispatch.value_fields.get(target['id'], frozenset()) & expected.value_calls.get(source_id, frozenset())
+    if fields:
+        return (f"the caller calls {', '.join('.' + f + '()' for f in sorted(fields))} on a value, and the "
+                "target is stored under that field elsewhere; mark is_indirect if deliberate")
+    if name in strings:
+        return (f"the caller names '{name}' in a string (getattr / registry lookup); "
+                "mark is_indirect if deliberate, delete if not")
+    return None
 
 
 def edge_endpoint(fn: Optional[Dict[str, Any]], prefix: str, function_id: int) -> Dict[str, Any]:
@@ -92,18 +208,21 @@ def edge_endpoint(fn: Optional[Dict[str, Any]], prefix: str, function_id: int) -
 def classify_interactions(
     index: CodeIndex,
     expected: CallEdges,
+    dispatch: DispatchEvidence = DispatchEvidence(),
 ) -> Dict[str, Tuple[Dict[str, Any], ...]]:
     """
     Pure: Sort every tracked edge of the in-scope callers, and every expected
     edge, into the audit categories (repoints not yet paired).
 
     Returns:
-        {missing, stale, unconfirmed, indirect, orphaned} finding tuples
+        {missing, stale, unconfirmed, indirect, non_call, orphaned} finding tuples
     """
     callers = caller_paths(index)
     functions = function_lookup(index)
     in_scope = {fid for fid, fn in functions.items() if fn['path'] in callers}
     references = folded_references(index, callers)
+    strings = folded_per_function(index, callers, extract_string_literals)
+    bound_calls = folded_per_function(index, callers, extract_bound_calls)
 
     expected_map = {
         (src, tgt): (desc, via)
@@ -124,6 +243,7 @@ def classify_interactions(
     stale: List[Dict[str, Any]] = []
     unconfirmed: List[Dict[str, Any]] = []
     indirect: List[Dict[str, Any]] = []
+    non_call: List[Dict[str, Any]] = []
     orphaned: List[Dict[str, Any]] = []
     for edge in tracked:
         pair = (edge['source_function_id'], edge['target_function_id'])
@@ -137,9 +257,9 @@ def classify_interactions(
             'description': edge['description'],
         }
         if edge['interaction_type'] != 'call' or edge['is_indirect']:
-            indirect.append({'interaction_id': edge['id'], 'source': finding['source'],
-                             'target': finding['target'], 'interaction_type': edge['interaction_type'],
-                             'is_indirect': bool(edge['is_indirect'])})
+            (indirect if edge['is_indirect'] else non_call).append({
+                'interaction_id': edge['id'], 'source': finding['source'],
+                'target': finding['target'], 'interaction_type': edge['interaction_type']})
             continue
         if pair in expected_map:
             continue
@@ -148,18 +268,23 @@ def classify_interactions(
             # The caller itself is gone from the source: audit_functions reports
             # it as stale, and deleting it removes this edge with it.
             orphaned.append(finding)
-        elif target is None or target['name'] not in body:
+            continue
+        said = strings.get(source['path'], {}).get(source['name'], frozenset())
+        if confirmed_without_call(pair, target, expected, dispatch, said):
+            continue
+        callbacks = bound_calls.get(source['path'], {}).get(source['name'], frozenset())
+        reason = unproven_reason(pair[0], target, expected, dispatch, said, callbacks) if target else None
+        if reason is None:
             stale.append(finding)
         else:
-            unconfirmed.append({**finding, 'reason': (
-                'target name still referenced but resolves elsewhere or ambiguously; '
-                'mark is_indirect if deliberate, delete if not')})
+            unconfirmed.append({**finding, 'reason': reason})
 
     return {
         'missing': missing,
         'stale': tuple(stale),
         'unconfirmed': tuple(unconfirmed),
         'indirect': tuple(indirect),
+        'non_call': tuple(non_call),
         'orphaned': tuple(orphaned),
     }
 
@@ -231,9 +356,13 @@ def pair_repoints(
     return (tuple(repoints), tuple(left_stale), left_missing)
 
 
-def interaction_findings(index: CodeIndex, expected: CallEdges) -> Dict[str, Tuple[Any, ...]]:
+def interaction_findings(
+    index: CodeIndex,
+    expected: CallEdges,
+    dispatch: DispatchEvidence = DispatchEvidence(),
+) -> Dict[str, Tuple[Any, ...]]:
     """Pure: Every interaction audit category, repoints paired."""
-    found = classify_interactions(index, expected)
+    found = classify_interactions(index, expected, dispatch)
     repoints, stale, missing = pair_repoints(found['stale'], found['missing'])
     # A target that moved files keeps its name in the caller, so its old edge
     # is unconfirmed rather than stale: pair those as target moves too
@@ -244,6 +373,7 @@ def interaction_findings(index: CodeIndex, expected: CallEdges) -> Dict[str, Tup
         'stale_interactions': stale,
         'unconfirmed_interactions': unconfirmed,
         'indirect_interactions': found['indirect'],
+        'non_call_interactions': found['non_call'],
         'unresolved_calls': tuple({'call': c} for c in expected.unresolved),
         'unchecked_files': unchecked_files(index),
         'skipped_paths': index.scope.skipped,
@@ -254,20 +384,37 @@ def interaction_findings(index: CodeIndex, expected: CallEdges) -> Dict[str, Tup
 # Effects
 # ============================================================================
 
-def expected_edges(index: CodeIndex) -> CallEdges:
+@dataclass(frozen=True)
+class CodeGraph:
+    """The code's graph for the in-scope callers: resolved edges plus dispatch evidence."""
+    edges: CallEdges
+    dispatch: DispatchEvidence
+
+
+def code_graph(index: CodeIndex) -> CodeGraph:
     """Effect (reads no files: trees are already parsed): the code's graph for in-scope callers."""
     callers = caller_paths(index)
-    return build_call_edges(
-        index.project_root,
-        tracked_index_from_snapshot(index.snapshot),
-        lambda path: path in callers,
-        trees=index.trees,
+    tracked = tracked_index_from_snapshot(index.snapshot)
+    context = resolution_context(tracked, index.trees)
+
+    def include(path: str) -> bool:
+        return path in callers
+
+    return CodeGraph(
+        edges=build_call_edges(index.project_root, tracked, include, trees=index.trees, context=context),
+        dispatch=dispatch_evidence(context, index.trees, include),
     )
+
+
+def expected_edges(index: CodeIndex) -> CallEdges:
+    """Effect (reads no files): the resolved edges of code_graph alone."""
+    return code_graph(index).edges
 
 
 def run_interaction_audit(index: CodeIndex) -> Dict[str, Tuple[Any, ...]]:
     """Effect: Interaction findings for an already-built index (used by audit_tracking)."""
-    return interaction_findings(index, expected_edges(index))
+    graph = code_graph(index)
+    return interaction_findings(index, graph.edges, graph.dispatch)
 
 
 # ============================================================================
@@ -307,12 +454,12 @@ def audit_interactions(
             file_ids, paths, since_commit, task_id, task_type, module_path))
         if index is None:
             return AuditResult(success=False, error=error)
-        expected = expected_edges(index)
+        graph = code_graph(index)
         return finish_audit(
             root, 'audit_interactions', scope_summary(index),
-            interaction_findings(index, expected),
+            interaction_findings(index, graph.edges, graph.dispatch),
             statements=get_return_statements("audit_interactions"),
-            extra={'resolved_by': expected.resolved_by},
+            extra={'resolved_by': graph.edges.resolved_by},
         )
     except Exception as exc:
         return AuditResult(success=False, error=f"Interaction audit failed: {exc}")

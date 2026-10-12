@@ -7,7 +7,9 @@ undone.
 
 Two ways to say what to change, freely combined:
 - report + apply: a report written by an audit tool and the finding
-  categories to apply from it — nothing large passes through the conversation
+  categories to apply from it — nothing large passes through the conversation;
+  exclude holds back named findings of those categories (reviewed false
+  positives) without listing the rest
 - explicit lists: interaction adds/repoints/deletes, indirect marks, function
   and type deletes, signature refreshes, JSON normalization, hash baselines,
   type links
@@ -16,12 +18,16 @@ Category -> change:
     missing_interactions     add the edge
     stale_interactions       delete the edge
     repoint_interactions     move the edge's source or target
-    stale_functions          delete the function (its edges and type links go with it)
+    stale_functions          delete the function (its edges and type links go with it;
+                             one marked moved_to hands them to its successor first)
     stale_types              delete the type (its type links go with it)
     param_mismatch           refresh parameters from the source, keeping prose
     malformed_json           re-encode the column exactly once
     missing_type_links       add the types_functions link
     unbaselined_descriptions record the current code hash (after reviewing prose)
+
+Explicit only: exempt / unexempt_ids write and remove audit_exemptions (schema
+1.16), reviewed findings audits list under 'exempted' instead of reporting.
 
 Safety:
 - Every report finding is re-checked against the row before it is applied:
@@ -46,9 +52,11 @@ from ..utils import (
     _open_project_connection,
 )
 from ..shared.return_gates import gate_return_statements
+from ..project.functions_2 import plan_edge_repoints
 from ..catalog.extract import ExtractedFunction, extract_entities
 from ..catalog.scan import _effect_read_source
 from ...watchdog.config import detect_language
+from .exemptions import EXEMPTABLE
 from .reports import _effect_delete_report, _effect_load_report
 
 
@@ -70,6 +78,20 @@ CATEGORY_OPERATIONS: Dict[str, str] = {
     'unbaselined_descriptions': 'baseline_hashes',
 }
 
+# Report category -> the finding fields that name one finding in `exclude`
+# (one field: an id; two fields: an [a, b] pair).
+FINDING_KEYS: Dict[str, Tuple[str, ...]] = {
+    'missing_interactions': ('source_function_id', 'target_function_id'),
+    'stale_interactions': ('interaction_id',),
+    'repoint_interactions': ('interaction_id',),
+    'stale_functions': ('function_id',),
+    'stale_types': ('type_id',),
+    'param_mismatch': ('function_id',),
+    'malformed_json': ('id',),
+    'missing_type_links': ('type_id', 'function_id'),
+    'unbaselined_descriptions': ('function_id',),
+}
+
 
 # ============================================================================
 # Immutable Records
@@ -88,6 +110,8 @@ class FixPlan:
     normalize_json: Tuple[Dict[str, Any], ...] = ()
     baseline_hashes: Tuple[Dict[str, Any], ...] = ()
     add_type_links: Tuple[Dict[str, Any], ...] = ()
+    add_exemptions: Tuple[Dict[str, Any], ...] = ()
+    delete_exemptions: Tuple[Dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -98,6 +122,7 @@ class ApplyResult:
     applied: Dict[str, int] = field(default_factory=dict)
     skipped_count: int = 0
     skipped: Tuple[Dict[str, Any], ...] = ()
+    excluded_count: int = 0
     manifest_note_id: Optional[int] = None
     report_deleted: bool = False
     error: Optional[str] = None
@@ -139,6 +164,63 @@ def plan_from_report(report: Dict[str, Any], categories: Tuple[str, ...]) -> Tup
     return (FixPlan(**{name: tuple(items) for name, items in fields.items()}), refused)
 
 
+def exemption_problem(item: Dict[str, Any]) -> Optional[str]:
+    """Pure: Why an exempt entry is unusable (category, entity, reason), or None."""
+    kinds = EXEMPTABLE.get(item.get('category'))
+    if kinds is None:
+        return f"category '{item.get('category')}' cannot be exempted; exemptable: {', '.join(sorted(EXEMPTABLE))}"
+    named = tuple(k for k in ('function', 'type') if item.get(f'{k}_id') is not None)
+    if len(named) != 1:
+        return 'name exactly one of function_id / type_id'
+    if named[0] not in kinds:
+        return f"{item['category']} findings are about {' or '.join(sorted(kinds))}s, not {named[0]}s"
+    if not item.get('reason'):
+        return 'reason is required: it is shown with every exempted finding'
+    return None
+
+
+def exclusion_problem(exclude: Dict[str, Any], categories: Tuple[str, ...]) -> Optional[str]:
+    """Pure: Why an exclude map is unusable (unknown category, not applied, bad key shape), or None."""
+    for category, entries in exclude.items():
+        if category not in categories:
+            return f"exclude names '{category}', which is not in apply"
+        width = len(FINDING_KEYS[category])
+        for entry in entries if isinstance(entries, list) else [entries]:
+            ok = (isinstance(entry, int) and width == 1) or (
+                isinstance(entry, list) and len(entry) == width and all(isinstance(i, int) for i in entry))
+            if not ok:
+                shape = 'an id' if width == 1 else f"a [{', '.join(FINDING_KEYS[category])}] pair"
+                return f"exclude['{category}'] entries must each be {shape}; got {entry!r}"
+    return None
+
+
+def exclude_findings(
+    report: Dict[str, Any],
+    exclude: Dict[str, List[Any]],
+) -> Tuple[Dict[str, Any], int]:
+    """
+    Pure: The report without the findings `exclude` names, and how many were removed.
+
+    Args:
+        report: An audit report
+        exclude: {category: [id, ...]} or, for missing_interactions and
+            missing_type_links, {category: [[a, b], ...]} (FINDING_KEYS order)
+    """
+    findings = report.get('findings') or {}
+    kept: Dict[str, Any] = {}
+    removed = 0
+    for category, items in findings.items():
+        if category not in exclude:
+            kept[category] = items
+            continue
+        keys = FINDING_KEYS[category]
+        named = {tuple(e) if isinstance(e, list) else (e,) for e in exclude[category]}
+        survivors = [item for item in items or () if tuple(item.get(k) for k in keys) not in named]
+        removed += len(items or ()) - len(survivors)
+        kept[category] = survivors
+    return ({**report, 'findings': kept}, removed)
+
+
 def plan_from_arguments(
     add_interactions: Optional[List[Dict[str, Any]]] = None,
     repoint_interactions: Optional[List[Dict[str, Any]]] = None,
@@ -150,8 +232,12 @@ def plan_from_arguments(
     refresh_signature_function_ids: Optional[List[int]] = None,
     baseline_hash_function_ids: Optional[List[int]] = None,
     add_type_links: Optional[List[Dict[str, Any]]] = None,
+    exempt: Optional[List[Dict[str, Any]]] = None,
+    unexempt_ids: Optional[List[int]] = None,
+    reason: str = '',
 ) -> FixPlan:
-    """Pure: The changes named explicitly by tool arguments."""
+    """Pure: The changes named explicitly by tool arguments (an exemption
+    without its own reason takes the call's)."""
     return FixPlan(
         add_interactions=tuple(add_interactions or ()),
         repoint_interactions=tuple(repoint_interactions or ()),
@@ -163,6 +249,8 @@ def plan_from_arguments(
         refresh_signatures=tuple({'function_id': i} for i in refresh_signature_function_ids or ()),
         baseline_hashes=tuple({'function_id': i} for i in baseline_hash_function_ids or ()),
         add_type_links=tuple(add_type_links or ()),
+        add_exemptions=tuple({**e, 'reason': (e.get('reason') or reason).strip()} for e in exempt or ()),
+        delete_exemptions=tuple({'exemption_id': i} for i in unexempt_ids or ()),
     )
 
 
@@ -253,6 +341,35 @@ def _function_with_path(conn: sqlite3.Connection, function_id: int) -> Optional[
                       "LEFT JOIN files fi ON fi.id = f.file_id WHERE f.id = ?", (function_id,))
 
 
+def _hand_over(
+    conn: sqlite3.Connection,
+    function_id: int,
+    successor: int,
+    manifest: Dict[str, List[Dict[str, Any]]],
+) -> None:
+    """
+    Effect: Move a moved function's edges and type links to its successor
+    (edges that would become self-edges or duplicates, and duplicate links,
+    stay behind and cascade with the delete). Old values go into the manifest.
+    """
+    edges = tuple(_rows(conn, "SELECT * FROM interactions WHERE source_function_id = ? OR target_function_id = ? "
+                              "ORDER BY id", (function_id, function_id)))
+    existing = frozenset(
+        (r['source_function_id'], r['target_function_id'], r['interaction_type'])
+        for r in _rows(conn, "SELECT source_function_id, target_function_id, interaction_type FROM interactions "
+                             "WHERE source_function_id = ? OR target_function_id = ?", (successor, successor)))
+    moves, _ = plan_edge_repoints(edges, function_id, successor, existing)
+    for move in moves:
+        conn.execute("UPDATE interactions SET source_function_id = ?, target_function_id = ? WHERE id = ?",
+                     (move['source_function_id'], move['target_function_id'], move['id']))
+        manifest['changed_interactions'].append({'id': move['id'], 'old_values': move['old']})
+    for link in _rows(conn, "SELECT * FROM types_functions WHERE function_id = ?", (function_id,)):
+        if _row(conn, "SELECT id FROM types_functions WHERE type_id = ? AND function_id = ? AND role IS ?",
+                (link['type_id'], successor, link['role'])) is None:
+            conn.execute("UPDATE types_functions SET function_id = ? WHERE id = ?", (successor, link['id']))
+            manifest['changed_type_links'].append({'id': link['id'], 'old_values': {'function_id': function_id}})
+
+
 def _apply_plan(
     conn: sqlite3.Connection,
     project_root: str,
@@ -274,8 +391,10 @@ def _apply_plan(
     manifest: Dict[str, List[Dict[str, Any]]] = {
         'deleted_interactions': [], 'changed_interactions': [], 'deleted_functions': [],
         'deleted_types': [], 'deleted_type_links': [], 'changed_functions': [], 'changed_types': [],
+        'deleted_exemptions': [], 'changed_type_links': [],
     }
     has_indirect = _has_column(conn, 'interactions', 'is_indirect')
+    has_exemptions = _has_column(conn, 'audit_exemptions', 'id')
     has_hash = _has_column(conn, 'functions', 'source_hash')
     sources: Dict[str, Any] = {}
 
@@ -455,6 +574,41 @@ def _apply_plan(
         manifest['changed_functions'].append({'id': fn['id'], 'old_values': {'source_hash': fn['source_hash']}})
         done('baseline_hashes')
 
+    # -- audit exemptions ---------------------------------------------------------
+    for item in plan.add_exemptions:
+        if not has_exemptions:
+            skip('add_exemptions', item, 'database predates schema 1.16; run migrate_databases')
+            continue
+        problem = exemption_problem(item)
+        if problem:
+            skip('add_exemptions', item, problem)
+            continue
+        kind = 'function' if item.get('function_id') is not None else 'type'
+        entity_id = item[f'{kind}_id']
+        entity = (_function_with_path(conn, entity_id) if kind == 'function'
+                  else _row(conn, "SELECT id FROM types WHERE id = ?", (entity_id,)))
+        if entity is None:
+            skip('add_exemptions', item, f'{kind} not found')
+            continue
+        if _row(conn, f"SELECT id FROM audit_exemptions WHERE category = ? AND {kind}_id = ?",
+                (item['category'], entity_id)):
+            skip('add_exemptions', item, 'already exempted (unexempt_ids first to change the reason)')
+            continue
+        extracted = (_source_function(project_root, entity['path'] or '', entity['name'], sources)
+                     if kind == 'function' else None)
+        conn.execute(f"INSERT INTO audit_exemptions (category, {kind}_id, reason, code_hash) VALUES (?, ?, ?, ?)",
+                     (item['category'], entity_id, item['reason'], extracted.body_hash if extracted else None))
+        done('add_exemptions')
+
+    for item in plan.delete_exemptions:
+        row = _row(conn, "SELECT * FROM audit_exemptions WHERE id = ?", (item.get('exemption_id'),)) if has_exemptions else None
+        if row is None:
+            skip('delete_exemptions', item, 'exemption not found')
+            continue
+        conn.execute("DELETE FROM audit_exemptions WHERE id = ?", (row['id'],))
+        manifest['deleted_exemptions'].append(row)
+        done('delete_exemptions')
+
     # -- deletes with cascades (last) ------------------------------------------
     for item in plan.delete_types:
         ty = _row(conn, "SELECT * FROM types WHERE id = ?", (item.get('type_id'),))
@@ -465,6 +619,8 @@ def _apply_plan(
             skip('delete_types', item, 'type renamed since the audit')
             continue
         manifest['deleted_type_links'].extend(_rows(conn, "SELECT * FROM types_functions WHERE type_id = ?", (ty['id'],)))
+        if has_exemptions:
+            manifest['deleted_exemptions'].extend(_rows(conn, "SELECT * FROM audit_exemptions WHERE type_id = ?", (ty['id'],)))
         conn.execute("DELETE FROM types WHERE id = ?", (ty['id'],))
         manifest['deleted_types'].append(ty)
         done('delete_types')
@@ -477,10 +633,16 @@ def _apply_plan(
         if item.get('name') and item['name'] != fn['name']:
             skip('delete_functions', item, 'function renamed since the audit')
             continue
+        successor = (item.get('moved_to') or {}).get('function_id')
+        if successor is not None and successor != fn['id'] and function_exists(successor):
+            _hand_over(conn, fn['id'], successor, manifest)
+            done('repoint_to_successor')
         manifest['deleted_interactions'].extend(_rows(
             conn, "SELECT * FROM interactions WHERE source_function_id = ? OR target_function_id = ?",
             (fn['id'], fn['id'])))
         manifest['deleted_type_links'].extend(_rows(conn, "SELECT * FROM types_functions WHERE function_id = ?", (fn['id'],)))
+        if has_exemptions:
+            manifest['deleted_exemptions'].extend(_rows(conn, "SELECT * FROM audit_exemptions WHERE function_id = ?", (fn['id'],)))
         conn.execute("DELETE FROM functions WHERE id = ?", (fn['id'],))
         manifest['deleted_functions'].append(fn)
         done('delete_functions')
@@ -506,6 +668,9 @@ def apply_audit_fixes(
     refresh_signature_function_ids: Optional[List[int]] = None,
     baseline_hash_function_ids: Optional[List[int]] = None,
     add_type_links: Optional[List[Dict[str, Any]]] = None,
+    exclude: Optional[Dict[str, List[Any]]] = None,
+    exempt: Optional[List[Dict[str, Any]]] = None,
+    unexempt_ids: Optional[List[int]] = None,
     dry_run: bool = False,
     cleanup: bool = False,
     project_root: Optional[str] = None,
@@ -527,6 +692,13 @@ def apply_audit_fixes(
         refresh_signature_function_ids: Functions whose parameters are re-read from source
         baseline_hash_function_ids: Functions whose current code hash is recorded as reviewed
         add_type_links: [{type_id, function_id, role?}]
+        exclude: Findings of applied categories to hold back, {category: [id, ...]};
+            missing_interactions takes [source_function_id, target_function_id]
+            pairs and missing_type_links [type_id, function_id] pairs (FINDING_KEYS)
+        exempt: Reviewed findings that are not drift, [{category, function_id | type_id,
+            reason?}] (EXEMPTABLE categories; reason defaults to the call's). Audits list
+            them under 'exempted' from then on; a function exemption lapses when its code changes
+        unexempt_ids: audit_exemptions ids to remove (the finding is reported again)
         dry_run: Do everything, then roll back
         cleanup: Delete the report file after a successful real run
         project_root: Explicit root for embedding hosts (defaults to the session root)
@@ -538,24 +710,32 @@ def apply_audit_fixes(
     if not (reason or '').strip():
         return ApplyResult(success=False, dry_run=dry_run, error="reason is required: it goes into the restore manifest")
 
-    report_plan, refused = FixPlan(), ()
+    report_plan, refused, excluded = FixPlan(), (), 0
+    if exclude and not apply:
+        return ApplyResult(success=False, dry_run=dry_run, error="exclude holds back findings of applied categories; pass report and apply too")
     if apply and not report:
         return ApplyResult(success=False, dry_run=dry_run, error="apply names report categories; pass report=<report_path> too")
     if report:
         loaded, error = _effect_load_report(root, report)
         if loaded is None:
             return ApplyResult(success=False, dry_run=dry_run, error=error)
-        report_plan, refused = plan_from_report(loaded, tuple(apply or ()))
+        categories = tuple(apply or ())
+        refused = tuple(c for c in categories if c not in CATEGORY_OPERATIONS)
         if refused:
             return ApplyResult(success=False, dry_run=dry_run, error=(
                 f"Not appliable from a report: {', '.join(refused)}. Appliable categories: "
                 f"{', '.join(sorted(CATEGORY_OPERATIONS))}. The others need judgement — "
                 "rewrite prose, mark_indirect_ids, or reconcile_paths."))
+        problem = exclusion_problem(exclude or {}, categories)
+        if problem:
+            return ApplyResult(success=False, dry_run=dry_run, error=problem)
+        loaded, excluded = exclude_findings(loaded, exclude or {})
+        report_plan, _ = plan_from_report(loaded, categories)
 
     plan = merge_plans(report_plan, plan_from_arguments(
         add_interactions, repoint_interactions, delete_interaction_ids, mark_indirect_ids,
         unmark_indirect_ids, delete_function_ids, delete_type_ids, refresh_signature_function_ids,
-        baseline_hash_function_ids, add_type_links,
+        baseline_hash_function_ids, add_type_links, exempt, unexempt_ids, reason,
     ))
     if plan_size(plan) == 0:
         return ApplyResult(success=False, dry_run=dry_run, error="Nothing to apply: name report categories or pass explicit changes.")
@@ -581,13 +761,14 @@ def apply_audit_fixes(
         conn.close()
 
     report_deleted = bool(cleanup and report and not dry_run and _effect_delete_report(root, report))
-    payload = {'applied': applied, 'skipped_count': len(skipped), 'dry_run': dry_run}
+    payload = {'applied': applied, 'skipped_count': len(skipped), 'excluded_count': excluded, 'dry_run': dry_run}
     return ApplyResult(
         success=True,
         dry_run=dry_run,
         applied=applied,
         skipped_count=len(skipped),
         skipped=tuple(skipped[:SKIPPED_SAMPLE]),
+        excluded_count=excluded,
         manifest_note_id=None if dry_run else note_id,
         report_deleted=report_deleted,
         return_statements=gate_return_statements(get_return_statements('apply_audit_fixes'), payload),

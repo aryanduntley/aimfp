@@ -73,8 +73,8 @@ _DEPENDENTS: Dict[str, List[Tuple[str, str]]] = {
               ("module_files", "file_id"), ("file_flows", "file_id"),
               ("task_files", "file_id")],
     "functions": [("interactions", "source_function_id"), ("interactions", "target_function_id"),
-                  ("types_functions", "function_id")],
-    "types": [("types_functions", "type_id")],
+                  ("types_functions", "function_id"), ("audit_exemptions", "function_id")],
+    "types": [("types_functions", "type_id"), ("audit_exemptions", "type_id")],
     "modules": [("module_files", "module_id")],
     "themes": [("flow_themes", "theme_id"), ("completion_path_themes", "theme_id")],
     "flows": [("file_flows", "flow_id"), ("flow_themes", "flow_id"), ("milestone_flows", "flow_id")],
@@ -401,6 +401,17 @@ def _edge_ids(resolver: _Resolver, ref: Dict[str, Any]):
         if wi is None or fi is None:
             return None, "task_file endpoint not found"
         return ("task_files", {"reference_table": rt, "reference_id": wi, "file_id": fi}, None)
+    if k == "audit_exemption":
+        function_key, type_key = ref.get("function"), ref.get("type")
+        if (function_key is None) == (type_key is None):
+            return None, "audit_exemption must name exactly one function or type"
+        column, entity = (("function_id", resolver.get("functions", function_key)) if function_key is not None
+                          else ("type_id", resolver.get("types", type_key)))
+        if entity is None:
+            return None, "audit_exemption endpoint not found"
+        attributes = ref.get("attributes") or {}
+        return ("audit_exemptions", {"category": ref.get("category"), column: entity},
+                {"reason": attributes.get("reason") or "", "code_hash": attributes.get("code_hash")})
     return None, f"unknown edge kind: {k}"
 
 
@@ -419,7 +430,7 @@ def _apply_reference(conn, resolver, ref):
             return "skipped", "edge already present"
         columns = list(cols.keys())
         params = list(cols.values())
-        if table == "interactions":
+        if edge_attributes:
             columns.extend(edge_attributes.keys())
             params.extend(edge_attributes.values())
         placeholders = ", ".join("?" for _ in columns)

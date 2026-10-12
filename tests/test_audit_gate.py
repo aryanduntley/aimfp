@@ -147,10 +147,11 @@ def test_fixing_the_drift_unblocks(work):
 
 def test_warnings_never_block(work):
     root = work["root"]
-    _write(root, "src/app.py", 'def run(x) -> int:\n    """Run."""\n    return add(x, 1)\n\n\ndef add(a, b) -> int:\n    """Sub."""\n    return a - b\n')
-    reconcile_paths(["src/app.py"], project_root=root)        # run -> lib.add becomes unconfirmed
+    _write(root, "src/app.py", 'OPS = {}\n\n\ndef run(x) -> int:\n    """Run."""\n    return OPS["add"](x, 1)\n')
+    reconcile_paths(["src/app.py"], project_root=root)        # run -> lib.add: named in a string, unconfirmed
     r = update_task(work["task"], status="completed", project_root=root)
-    assert r.success and r.audit["warnings"] == {"unconfirmed_interactions": 1} and not r.audit["overridden"]
+    assert r.success and not r.audit["overridden"]
+    assert r.audit["warnings"] == {"stale_descriptions": 1, "unconfirmed_interactions": 1}
 
 
 def test_no_linked_files_and_non_completion_changes_pass(root):
@@ -287,8 +288,8 @@ def test_cli_exit_codes(work, capsys):
 
 def test_cli_strict_fails_on_warnings(work):
     root = work["root"]
-    _write(root, "src/app.py", 'def run(x) -> int:\n    """Run."""\n    return add(x, 1)\n\n\ndef add(a, b) -> int:\n    """Sub."""\n    return a - b\n')
-    reconcile_paths(["src/app.py"], project_root=root)
+    _write(root, "src/app.py", 'OPS = {}\n\n\ndef run(x) -> int:\n    """Run."""\n    return OPS["add"](x, 1)\n')
+    reconcile_paths(["src/app.py"], project_root=root)        # run -> lib.add unconfirmed (a warning)
     args = ["--path", "src/app.py", "--only", "interactions", "--no-report"]
     assert main_audit(args, cwd=root) == EXIT_CLEAN
     assert main_audit(args + ["--strict"], cwd=root) == EXIT_BLOCKING

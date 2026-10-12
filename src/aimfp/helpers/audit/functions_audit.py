@@ -11,7 +11,9 @@ Per file, by fidelity:
 - untracked file: untracked_files (reconcile_paths catalogs it)
 - full (Python, ast):
     missing_functions      public functions in the source, not tracked
-    stale_functions        tracked functions the source no longer defines
+    stale_functions        tracked functions the source no longer defines (a
+                           module-level `f = partial(...)` / lambda / alias
+                           binding of the name counts as a definition)
     private_tracked        tracked _private functions (informational only)
     incomplete_functions   purpose / parameters / returns not populated
     malformed_json         parameters / returns not stored as one JSON encoding
@@ -39,12 +41,15 @@ from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from ..utils import decode_json_layers, get_cached_project_root, get_return_statements
 from ..catalog.callgraph import (
-    extract_import_bindings, extract_import_origins, module_suffix_index, resolve_target,
+    assigned_callables, extract_import_bindings, extract_import_origins, module_suffix_index,
+    resolution_context, resolve_in, resolve_target,
 )
 from ..catalog.extract import ExtractedFunction, parameter_mismatches
 from .code_index import (
-    CodeIndex, FileFacts, build_code_index, build_scope_request, scope_summary, unchecked_files,
+    CodeIndex, FileFacts, build_code_index, build_scope_request, scope_summary,
+    tracked_index_from_snapshot, unchecked_files,
 )
+from .exemptions import exempt_index_findings
 from .reports import AuditResult, finish_audit
 
 
@@ -126,13 +131,20 @@ def signature_type_names(fn: ExtractedFunction) -> Tuple[FrozenSet[str], FrozenS
 def function_findings(
     facts: FileFacts,
     rows: Tuple[Dict[str, Any], ...],
+    assigned: FrozenSet[str] = frozenset(),
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
     Pure: Function-level findings for one full-fidelity tracked file.
 
+    A tracked function bound by assignment (``check = partial(_check, kind='a')``,
+    a lambda, an alias) exists: it is never stale. It has no signature of its
+    own to compare, so only its recorded fields are checked.
+
     Args:
         facts: The file as the source defines it
         rows: Tracked function rows of the file
+        assigned: Module-level names the file binds to a callable-shaped value
+            (callgraph.assigned_callables)
     """
     defined = {fn.name: fn for fn in facts.entities.functions}
     tracked = {row['name']: row for row in rows}
@@ -148,7 +160,7 @@ def function_findings(
 
     for row in rows:
         ident = {'function_id': row['id'], 'name': row['name'], **where}
-        if row['name'] not in defined:
+        if row['name'] not in defined and row['name'] not in assigned:
             add('stale_functions', ident)
             continue
         if row['name'].startswith('_'):
@@ -168,7 +180,7 @@ def function_findings(
                 add('malformed_json', {'table': 'functions', 'column': column, 'id': row['id'],
                                        'name': row['name'], 'path': facts.path,
                                        'problem': problem[0], 'fixable': problem[1]})
-        if row['parameters'] is not None:
+        if row['parameters'] is not None and row['name'] in defined:
             problems = parameter_mismatches(decode_json_layers(row['parameters']), defined[row['name']].parameters)
             if problems:
                 add('param_mismatch', {**ident, 'problems': list(problems),
@@ -329,7 +341,9 @@ def audit_function_findings(index: CodeIndex) -> Dict[str, Tuple[Any, ...]]:
             continue
         if facts.fidelity != 'full':
             continue
-        merge(function_findings(facts, function_rows))
+        tree = index.trees.get(facts.path)
+        merge(function_findings(facts, function_rows,
+                                frozenset(assigned_callables(tree)) if tree is not None else frozenset()))
         merge(type_findings(facts, tuple(types_by_file.get(facts.file_id, ())),
                             top_level_names(index.trees.get(facts.path))))
         merge({'missing_type_links': type_link_findings(links, facts, function_rows)})
@@ -340,11 +354,34 @@ def audit_function_findings(index: CodeIndex) -> Dict[str, Tuple[Any, ...]]:
              'reserved_functions', 'incomplete_functions', 'malformed_json', 'param_mismatch',
              'missing_types', 'stale_types', 'incomplete_types', 'missing_type_links',
              'names_only_missing', 'private_tracked', 'files_without_functions')
-    return {
+    collected['stale_functions'] = list(with_move_targets(index, tuple(collected.get('stale_functions', ()))))
+    return exempt_index_findings(index, {
         **{category: tuple(collected.get(category, ())) for category in order},
         'unchecked_files': tuple(u for u in unchecked_files(index) if u['file_id'] is not None),
         'skipped_paths': index.scope.skipped,
-    }
+    })
+
+
+def with_move_targets(index: CodeIndex, stale: Tuple[Dict[str, Any], ...]) -> Tuple[Dict[str, Any], ...]:
+    """
+    Pure: Stale functions, each that moved marked moved_to {function_id, path}:
+    its old file now imports the name from a file where a function of that
+    name is tracked. Applying stale_functions then moves its edges and type
+    links to the successor (delete_function repoint_to) instead of dropping them.
+    """
+    if not stale:
+        return stale
+    context = resolution_context(tracked_index_from_snapshot(index.snapshot), index.trees)
+
+    def successor(item: Dict[str, Any]) -> Optional[int]:
+        found, reason = resolve_in(context, item['path'], item['name'], None)
+        return found if found != item['function_id'] and reason in ('import', 'reexport') else None
+
+    return tuple(
+        {**item, 'moved_to': {'function_id': moved, 'path': context.id_to_path.get(moved)}}
+        if (moved := successor(item)) is not None else item
+        for item in stale
+    )
 
 
 def reconcile_targets(findings: Dict[str, Tuple[Any, ...]]) -> Tuple[str, ...]:

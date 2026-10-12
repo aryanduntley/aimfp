@@ -23,6 +23,16 @@ Anything still ambiguous is dropped and counted in ``unresolved``. A wrong edge 
 worse than a missing one: it sends future refactors chasing dependencies that do
 not exist.
 
+A tracked function may also be bound by assignment (``check = partial(_check,
+kind='a')``, ``run = compose(f, g)``, an alias): when its name is tracked, the
+assigned expression is treated as its body.
+
+Audits need more than the edges, so build_call_edges also records evidence for
+edges the code makes without a direct, resolvable call: self-recursion, names
+that resolve ambiguously in a caller (loose_names), calls made through a value
+(value_calls), and dispatch_evidence adds edges reached through module-level
+tables and the record fields a function is stored in elsewhere.
+
 Writes nothing. It returns tuples shaped for ``add_interactions``, so the existing
 batch tool does the writing — cataloged rows are not special, and the linking
 surface stays the ordinary one.
@@ -32,7 +42,7 @@ import ast
 import builtins
 import os
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple
 
 from ..utils import get_return_statements, get_cached_project_root, _open_project_connection
@@ -46,6 +56,14 @@ NON_NAME_RECEIVER = '<expr>'
 # Python builtins: a bare call to one of these is never a project function
 # unless the file imports or defines that name itself.
 BUILTIN_NAMES = frozenset(dir(builtins))
+
+# Module-level assignment values that can bind a callable: a factory call
+# (partial, compose, a decorator applied by hand), a lambda, or an alias.
+CALLABLE_VALUES = (ast.Call, ast.Lambda, ast.Name, ast.Attribute)
+
+# resolve_target reasons that leave open which function a name means. Any
+# other unresolved reason is definite: the name is not a tracked function.
+LOOSE_REASONS = frozenset({'ambiguous', 'ambiguous_import'})
 
 
 # ============================================================================
@@ -116,7 +134,9 @@ def extract_import_bindings(tree: ast.Module, current_path: str) -> Dict[str, st
     Pure: Map each name bound by an import to the module path it came from.
 
     Covers ``from .mod import fn`` (binding fn), ``from .mod import fn as alias``,
-    and ``import pkg.mod as alias`` (binding the module itself). Relative imports
+    ``import pkg.mod as alias`` (binding the module itself) and ``import pkg.mod``
+    (binding pkg). Each ``from .mod import *`` is recorded under the key
+    '*<module path>', so a lookup can follow star re-exports. Relative imports
     resolve to real project-relative paths; absolute imports are recorded as the
     dotted module path ('pkg/mod') and matched against project files by suffix at
     lookup (module_suffix_index), so any package root works (src/, the project
@@ -141,6 +161,9 @@ def extract_import_bindings(tree: ast.Module, current_path: str) -> Dict[str, st
             else:
                 continue
             for alias in node.names:
+                if alias.name == '*':
+                    bindings['*' + target] = target
+                    continue
                 # 'from . import mod' names a submodule of the package itself
                 bindings[alias.asname or alias.name] = (
                     os.path.join(target, alias.name) if node.module is None else target
@@ -150,6 +173,10 @@ def extract_import_bindings(tree: ast.Module, current_path: str) -> Dict[str, st
             for alias in node.names:
                 if alias.asname:
                     bindings[alias.asname] = os.path.join(*alias.name.split('.'))
+                else:
+                    # 'import pkg.mod' binds pkg; pkg.mod.fn() resolves through it
+                    root = alias.name.split('.')[0]
+                    bindings.setdefault(root, root)
 
     return bindings
 
@@ -214,6 +241,57 @@ def top_level_function_nodes(tree: ast.Module) -> Tuple[ast.AST, ...]:
     )
 
 
+def assigned_callables(tree: ast.Module) -> Dict[str, ast.expr]:
+    """
+    Pure: Module-level names bound by assignment to a callable-shaped value
+    (``check = partial(_check, kind='a')``, ``f = lambda x: x``, ``g = other``),
+    mapped to that value. Whether a name is a function this way is the
+    tracker's call: only names tracked as functions are treated as one.
+    """
+    found: Dict[str, ast.expr] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, CALLABLE_VALUES):
+            found.update((t.id, node.value) for t in node.targets if isinstance(t, ast.Name))
+        elif (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+              and isinstance(node.value, CALLABLE_VALUES)):
+            found[node.target.id] = node.value
+    return found
+
+
+def top_level_callables(
+    tree: ast.Module,
+    assigned: FrozenSet[str] = frozenset(),
+) -> Tuple[Tuple[str, ast.AST], ...]:
+    """
+    Pure: (name, body) for every top-level def, plus each name in `assigned`
+    that the module binds by assignment to a callable (body = the assigned
+    expression). Defs win over a same-named assignment.
+    """
+    defs = tuple((node.name, node) for node in top_level_function_nodes(tree))
+    if not assigned:
+        return defs
+    defined = frozenset(name for name, _ in defs)
+    return defs + tuple(
+        (name, value) for name, value in assigned_callables(tree).items()
+        if name in assigned and name not in defined
+    )
+
+
+def receiver_name(value: ast.expr) -> str:
+    """
+    Pure: The receiver of an attribute as written: 'mod' for ``mod.fn``,
+    'pkg.mod' for ``pkg.mod.fn``, NON_NAME_RECEIVER when the chain does not
+    start at a name (``", ".join``, ``rows[0].get``).
+    """
+    parts: List[str] = []
+    while isinstance(value, ast.Attribute):
+        parts.append(value.attr)
+        value = value.value
+    if isinstance(value, ast.Name):
+        return '.'.join([value.id] + parts[::-1])
+    return NON_NAME_RECEIVER
+
+
 def locally_bound_names(node: ast.AST) -> FrozenSet[str]:
     """
     Pure: Names a function binds itself — parameters, assignment, loop,
@@ -233,7 +311,10 @@ def locally_bound_names(node: ast.AST) -> FrozenSet[str]:
     return frozenset(bound)
 
 
-def extract_function_references(tree: ast.Module) -> Dict[str, Tuple[Tuple[str, Optional[str]], ...]]:
+def extract_function_references(
+    tree: ast.Module,
+    assigned: FrozenSet[str] = frozenset(),
+) -> Dict[str, Tuple[Tuple[str, Optional[str]], ...]]:
     """
     Pure: Map each top-level function to the names it uses as VALUES, not calls.
 
@@ -245,13 +326,15 @@ def extract_function_references(tree: ast.Module) -> Dict[str, Tuple[Tuple[str, 
 
     Args:
         tree: Parsed module AST
+        assigned: Names to treat as functions when bound by assignment
+            (top_level_callables)
 
     Returns:
         Dict of enclosing function name -> tuple of (referenced name, base) pairs
     """
     references: Dict[str, Tuple[Tuple[str, Optional[str]], ...]] = {}
 
-    for node in top_level_function_nodes(tree):
+    for name, node in top_level_callables(tree, assigned):
         called = {
             id(inner.func) for inner in ast.walk(node) if isinstance(inner, ast.Call)
         }
@@ -263,36 +346,40 @@ def extract_function_references(tree: ast.Module) -> Dict[str, Tuple[Tuple[str, 
             if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Load):
                 if inner.id not in bound:
                     found.append((inner.id, None))
-            elif (isinstance(inner, ast.Attribute) and isinstance(inner.ctx, ast.Load)
-                  and isinstance(inner.value, ast.Name)):
-                found.append((inner.attr, inner.value.id))
-        references[node.name] = tuple(dict.fromkeys(found))
+            elif isinstance(inner, ast.Attribute) and isinstance(inner.ctx, ast.Load):
+                base = receiver_name(inner.value)
+                if base != NON_NAME_RECEIVER:
+                    found.append((inner.attr, base))
+        references[name] = tuple(dict.fromkeys(found))
 
     return references
 
 
-def extract_function_calls(tree: ast.Module) -> Dict[str, Tuple[Tuple[str, Optional[str]], ...]]:
+def extract_function_calls(
+    tree: ast.Module,
+    assigned: FrozenSet[str] = frozenset(),
+) -> Dict[str, Tuple[Tuple[str, Optional[str]], ...]]:
     """
     Pure: Map each top-level function to the calls made inside it.
 
     Each call is recorded as (name, base) — ``base`` is the receiver for
-    attribute-style calls (``mod.fn()`` yields ('fn', 'mod')), None for bare
-    calls (``fn()`` yields ('fn', None)), and NON_NAME_RECEIVER for a call on
-    any other expression (``", ".join(x)``, ``rows[0].get()``), which is a
-    call on a value, never on a project module.
+    attribute-style calls as written (``mod.fn()`` yields ('fn', 'mod'),
+    ``pkg.mod.fn()`` yields ('fn', 'pkg.mod')), None for bare calls (``fn()``
+    yields ('fn', None)), and NON_NAME_RECEIVER for a call on any other
+    expression (``", ".join(x)``, ``rows[0].get()``), which is a call on a
+    value, never on a project module.
 
     Args:
         tree: Parsed module AST
+        assigned: Names to treat as functions when bound by assignment
+            (top_level_callables)
 
     Returns:
         Dict of enclosing function name -> tuple of (called name, base) pairs
     """
     calls: Dict[str, Tuple[Tuple[str, Optional[str]], ...]] = {}
 
-    for node in tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-
+    for name, node in top_level_callables(tree, assigned):
         # A parameter or local the function binds itself (callback(), helper = make(); helper())
         # is never a module-level function
         bound = locally_bound_names(node)
@@ -305,15 +392,64 @@ def extract_function_calls(tree: ast.Module) -> Dict[str, Tuple[Tuple[str, Optio
                 if func.id not in bound:
                     found.append((func.id, None))
             elif isinstance(func, ast.Attribute):
-                base = func.value.id if isinstance(func.value, ast.Name) else NON_NAME_RECEIVER
-                found.append((func.attr, base))
+                found.append((func.attr, receiver_name(func.value)))
 
-        calls[node.name] = tuple(dict.fromkeys(found))
+        calls[name] = tuple(dict.fromkeys(found))
 
     return calls
 
 
-def extract_referenced_names(tree: ast.Module) -> Dict[str, FrozenSet[str]]:
+def extract_string_literals(
+    tree: ast.Module,
+    assigned: FrozenSet[str] = frozenset(),
+) -> Dict[str, Tuple[str, ...]]:
+    """
+    Pure: Map each top-level function to the string literals in its body,
+    docstrings excluded (f-string pieces included).
+
+    The evidence for edges no Python call shows: a SQL function called in a
+    query string (``"select * from dependents(%s)"``), a name looked up with
+    ``getattr(mod, "fn")``.
+    """
+    strings: Dict[str, Tuple[str, ...]] = {}
+    for name, node in top_level_callables(tree, assigned):
+        body = getattr(node, 'body', None)
+        first = body[0] if isinstance(body, list) and body else None
+        docstring = (
+            id(first.value) if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str) else None
+        )
+        strings[name] = tuple(dict.fromkeys(
+            inner.value for inner in ast.walk(node)
+            if isinstance(inner, ast.Constant) and isinstance(inner.value, str) and id(inner) != docstring
+        ))
+    return strings
+
+
+def extract_bound_calls(
+    tree: ast.Module,
+    assigned: FrozenSet[str] = frozenset(),
+) -> Dict[str, FrozenSet[str]]:
+    """
+    Pure: Map each top-level function to the names it calls that it binds
+    itself — usually a callback parameter (``def read(d, environment_at):
+    environment_at(d)``). Never a call edge on its own; evidence that a tracked
+    edge to a function of that name is deliberate (the function is passed in).
+    """
+    found: Dict[str, FrozenSet[str]] = {}
+    for name, node in top_level_callables(tree, assigned):
+        bound = locally_bound_names(node)
+        found[name] = frozenset(
+            inner.func.id for inner in ast.walk(node)
+            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id in bound
+        )
+    return found
+
+
+def extract_referenced_names(
+    tree: ast.Module,
+    assigned: FrozenSet[str] = frozenset(),
+) -> Dict[str, FrozenSet[str]]:
     """
     Pure: Map each top-level function to every name it references — bare names,
     attribute names (``mod.fn`` gives 'fn'), and the original name behind any
@@ -322,6 +458,11 @@ def extract_referenced_names(tree: ast.Module) -> Dict[str, FrozenSet[str]]:
     Broader than extract_function_calls on purpose: a function passed as a
     callback (``map(fn, xs)``) is referenced without being called. A tracked
     call edge whose target name is absent from this set cannot still exist.
+
+    Args:
+        tree: Parsed module AST
+        assigned: Names to treat as functions when bound by assignment
+            (top_level_callables)
     """
     aliases: Dict[str, str] = {
         alias.asname: alias.name
@@ -329,15 +470,13 @@ def extract_referenced_names(tree: ast.Module) -> Dict[str, FrozenSet[str]]:
         for alias in node.names if alias.asname
     }
     referenced: Dict[str, FrozenSet[str]] = {}
-    for node in tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
+    for name, node in top_level_callables(tree, assigned):
         names = frozenset(
             inner.id if isinstance(inner, ast.Name) else inner.attr
             for inner in ast.walk(node)
             if isinstance(inner, (ast.Name, ast.Attribute))
         )
-        referenced[node.name] = names | frozenset(aliases[n] for n in names if n in aliases)
+        referenced[name] = names | frozenset(aliases[n] for n in names if n in aliases)
     return referenced
 
 
@@ -443,7 +582,10 @@ def resolve_target(
             absolute import resolves whatever the package root
 
     Returns:
-        (function id or None, reason string)
+        (function id or None, reason string). Unresolved reasons in
+        LOOSE_REASONS ('ambiguous', 'ambiguous_import': the module path matches
+        several project files) leave the meaning open; every other one is
+        definite — the name is not a tracked function.
     """
     index = bindings_index or {}
     origin_tables = origins_index or {}
@@ -459,25 +601,44 @@ def resolve_target(
 
     def lookup(path_prefix: str, symbol: str, hops: int = 0) -> Tuple[Optional[int], bool]:
         """Resolve symbol within a module path, following re-exports (and the
-        aliases they rename through). Returns (id, went_through_reexport)."""
+        aliases they rename through) and star re-exports. Returns (id,
+        went_through_reexport)."""
         for candidate in candidates_for(path_prefix):
             table = by_file.get(candidate)
             if table and symbol in table:
                 return (table[symbol], hops > 0)
             # The module exists but does not define the name — it may re-export it.
             if hops < max_hops and candidate in index:
-                onward = index[candidate].get(symbol)
-                if onward and onward != path_prefix:
-                    onward_symbol = origin_tables.get(candidate, {}).get(symbol, symbol)
-                    found, _ = lookup(onward, onward_symbol, hops + 1)
+                onward_bindings = index[candidate]
+                onward = onward_bindings.get(symbol)
+                routes = (
+                    ((onward, origin_tables.get(candidate, {}).get(symbol, symbol)),)
+                    if onward and onward != path_prefix else ()
+                ) + tuple(
+                    (target, symbol) for key, target in onward_bindings.items()
+                    if key.startswith('*') and target != path_prefix
+                )
+                for route, onward_symbol in routes:
+                    found, _ = lookup(route, onward_symbol, hops + 1)
                     if found is not None:
                         return (found, True)
         return (None, False)
+
+    def miss_reason(paths: Tuple[str, ...]) -> str:
+        """Why an imported name found no tracked function: definite ('external')
+        unless a module path matches several project files."""
+        def ambiguous(path_prefix: str) -> bool:
+            exact = (path_prefix + '.py', os.path.join(path_prefix, '__init__.py'))
+            return not any(c in by_file or c in index for c in exact) and len(modules.get(path_prefix, ())) > 1
+        return 'ambiguous_import' if any(ambiguous(p) for p in paths) else 'external'
 
     if base is None and name in bindings:
         found, via_reexport = lookup(bindings[name], (origins or {}).get(name, name))
         if found is not None:
             return (found, 'reexport' if via_reexport else 'import')
+        # Imported, so never a project-wide guess: a third-party name
+        # (from urllib.parse import quote) or an untracked one
+        return (None, miss_reason((bindings[name],)))
 
     if base is None:
         local = by_file.get(current_path, {})
@@ -489,17 +650,21 @@ def resolve_target(
             return (None, 'external')
 
     if base is not None:
-        if base not in bindings:
+        root, _, rest = base.partition('.')
+        if root not in bindings:
             # A method-style call on a value (a local, a literal, an expression):
             # never a project function, so never a project-wide name guess.
             return (None, 'external')
-        # 'from .pkg import mod' binds mod to pkg; mod may be pkg's submodule
-        module = bindings[base]
-        for candidate in (module, os.path.join(module, (origins or {}).get(base, base))):
+        # 'from .pkg import mod' binds mod to pkg; mod may be pkg's submodule.
+        # pkg.mod.fn() walks the rest of the dotted receiver as submodules.
+        module = bindings[root]
+        heads = (module, os.path.join(module, (origins or {}).get(root, root)))
+        candidates = tuple(os.path.join(h, *rest.split('.')) if rest else h for h in heads)
+        for candidate in candidates:
             found, via_reexport = lookup(candidate, name)
             if found is not None:
                 return (found, 'reexport' if via_reexport else 'module_alias')
-        return (None, 'external')
+        return (None, miss_reason(candidates))
 
     candidates = by_name.get(name, [])
     if allow_unique_name and len(candidates) == 1:
@@ -566,12 +731,69 @@ class CallEdges:
     edge_via is aligned with edges: how each one was found — 'call', 'reference'
     (the target is used as a value), each optionally suffixed with
     ' via <helper>' when it was made inside an untracked same-file helper.
+
+    Evidence for audits, keyed by source function id (never written as edges):
+    self_edges — functions that call themselves (recursion; edges never
+    include a self-edge); loose_names — names the function uses that resolve
+    ambiguously, so a tracked edge to any function of that name is
+    unprovable rather than stale; value_calls — attribute names it calls on
+    a value (``c.touches(...)`` gives 'touches'), not on a module.
     """
     edges: Tuple[Tuple[Any, ...], ...]
     resolved_by: Dict[str, int]
     unresolved: Tuple[str, ...]
     files_analyzed: int
     edge_via: Tuple[str, ...] = ()
+    self_edges: FrozenSet[int] = frozenset()
+    loose_names: Dict[int, FrozenSet[str]] = field(default_factory=dict)
+    value_calls: Dict[int, FrozenSet[str]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ResolutionContext:
+    """The lookup tables every resolution needs, built once from the parsed files."""
+    by_file: Dict[str, Dict[str, int]]
+    by_name: Dict[str, List[int]]
+    id_to_path: Dict[int, str]
+    bindings_index: Dict[str, Dict[str, str]]
+    origins_index: Dict[str, Dict[str, str]]
+    modules: Dict[str, Tuple[str, ...]]
+
+
+def resolution_context(tracked: TrackedIndex, trees: Dict[str, ast.Module]) -> ResolutionContext:
+    """Pure: Index import bindings, aliases and module suffixes of every parsed file."""
+    by_file, by_name, id_to_path, all_paths = tracked
+    return ResolutionContext(
+        by_file=by_file,
+        by_name=by_name,
+        id_to_path=id_to_path,
+        bindings_index={path: extract_import_bindings(tree, path) for path, tree in trees.items()},
+        origins_index={path: extract_import_origins(tree) for path, tree in trees.items()},
+        modules=module_suffix_index(tuple(all_paths)),
+    )
+
+
+def resolve_in(
+    context: ResolutionContext,
+    path: str,
+    name: str,
+    base: Optional[str],
+    defined_here: FrozenSet[str] = frozenset(),
+    allow_unique_name: bool = False,
+) -> Tuple[Optional[int], str]:
+    """Pure: resolve_target for a name used in file `path`, with a built context."""
+    return resolve_target(
+        name, base, path, context.bindings_index.get(path, {}), context.by_file, context.by_name,
+        context.bindings_index, origins=context.origins_index.get(path, {}),
+        origins_index=context.origins_index, defined_here=defined_here,
+        allow_unique_name=allow_unique_name, module_index=context.modules,
+    )
+
+
+def is_value_receiver(base: Optional[str], bindings: Dict[str, str]) -> bool:
+    """Pure: Whether an attribute call's receiver is a value (a local, a
+    parameter, an expression) rather than an imported module."""
+    return base is not None and base.partition('.')[0] not in bindings
 
 
 def credited_dependencies(
@@ -591,9 +813,9 @@ def credited_dependencies(
         tree: Parsed module AST
         tracked: names of the file's tracked functions
     """
-    calls = extract_function_calls(tree)
-    references = extract_function_references(tree)
-    reach = reachable_untracked_helpers(extract_referenced_names(tree), tracked)
+    calls = extract_function_calls(tree, tracked)
+    references = extract_function_references(tree, tracked)
+    reach = reachable_untracked_helpers(extract_referenced_names(tree, tracked), tracked)
 
     def own(name: str, suffix: str) -> Tuple[Tuple[str, Optional[str], str], ...]:
         return (
@@ -620,6 +842,7 @@ def build_call_edges(
     tracked: TrackedIndex,
     include_caller: Callable[[str], bool],
     trees: Optional[Dict[str, ast.Module]] = None,
+    context: Optional[ResolutionContext] = None,
 ) -> CallEdges:
     """
     Effect: Resolve call edges for every tracked Python file accepted by
@@ -631,26 +854,29 @@ def build_call_edges(
     with its calls, the functions it uses as values (resolved through imports
     and same-file definitions only, never a project-wide name guess), and both
     kinds made inside the untracked same-file helpers it reaches. Edges are
-    unique per (source, target); self-edges and ambiguous targets are dropped.
+    unique per (source, target); self-edges and ambiguous targets are dropped
+    (recorded as evidence instead: self_edges, loose_names, value_calls).
 
     trees: already-parsed tracked Python files (path -> module), when the
     caller has them (an audit's CodeIndex); otherwise they are parsed here.
+    context: an already-built resolution_context over the same trees.
     """
-    by_file, by_name, id_to_path, all_paths = tracked
     edges: List[Tuple[Any, ...]] = []
     edge_via: List[str] = []
     seen: Set[Tuple[int, int]] = set()
     reasons: Dict[str, int] = {}
     unresolved: List[str] = []
+    self_edges: Set[int] = set()
+    loose: Dict[int, Set[str]] = {}
+    value_calls: Dict[int, Set[str]] = {}
 
     # Pass 1: parse every tracked Python file and index its import bindings.
     # The whole index must exist before resolution, because following a
     # re-export needs the bindings of a file that may not be analyzed yet —
     # and re-export targets sit outside the caller set more often than not.
-    trees = trees if trees is not None else _effect_parse_python_files(project_root, all_paths)
-    bindings_index = {path: extract_import_bindings(tree, path) for path, tree in trees.items()}
-    origins_index = {path: extract_import_origins(tree) for path, tree in trees.items()}
-    modules = module_suffix_index(tuple(all_paths))
+    trees = trees if trees is not None else _effect_parse_python_files(project_root, tracked[3])
+    context = context or resolution_context(tracked, trees)
+    by_file, id_to_path = context.by_file, context.id_to_path
 
     # Pass 2: resolve dependencies, on the calling side only for accepted files.
     analyzed = 0
@@ -662,6 +888,7 @@ def build_call_edges(
         local_functions = by_file.get(path, {})
         defined_here = frozenset(node.name for node in top_level_function_nodes(tree))
         star_import = has_star_import(tree)
+        bindings = context.bindings_index.get(path, {})
 
         credited = credited_dependencies(tree, frozenset(local_functions))
         for caller, dependencies in credited.items():
@@ -669,17 +896,23 @@ def build_call_edges(
 
             for name, base, via in dependencies:
                 is_call = via.startswith('call')
-                target_id, reason = resolve_target(
-                    name, base, path, bindings_index[path], by_file, by_name, bindings_index,
-                    origins=origins_index[path], origins_index=origins_index,
-                    defined_here=defined_here, allow_unique_name=is_call and star_import,
-                    module_index=modules,
+                if is_call and is_value_receiver(base, bindings):
+                    value_calls.setdefault(source_id, set()).add(name)
+                target_id, reason = resolve_in(
+                    context, path, name, base, defined_here=defined_here,
+                    allow_unique_name=is_call and star_import,
                 )
                 if target_id is None:
+                    if reason in LOOSE_REASONS:
+                        loose.setdefault(source_id, set()).add(name)
                     if reason == 'ambiguous' and is_call:
                         unresolved.append(f"{path}:{caller} -> {name}")
                     continue
-                if target_id == source_id or (source_id, target_id) in seen:
+                if target_id == source_id:
+                    if is_call:
+                        self_edges.add(source_id)
+                    continue
+                if (source_id, target_id) in seen:
                     continue
 
                 seen.add((source_id, target_id))
@@ -701,6 +934,229 @@ def build_call_edges(
         unresolved=tuple(unresolved),
         files_analyzed=analyzed,
         edge_via=tuple(edge_via),
+        self_edges=frozenset(self_edges),
+        loose_names={k: frozenset(v) for k, v in loose.items()},
+        value_calls={k: frozenset(v) for k, v in value_calls.items()},
+    )
+
+
+def module_tables(tree: ast.Module) -> Dict[str, Tuple[Tuple[str, Optional[str]], ...]]:
+    """
+    Pure: Each module-level name bound by assignment, mapped to the (name,
+    base) references inside its value — the functions a dispatch table
+    (``COMMANDS = MappingProxyType({'init': _cmd_init})``, ``RENDERERS =
+    (('a', egress), ...)``) or a record (``ADAPTER = Adapter(checks=(f,))``)
+    holds.
+    """
+    tables: Dict[str, Tuple[Tuple[str, Optional[str]], ...]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets, value = [t.id for t in node.targets if isinstance(t, ast.Name)], node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            targets, value = [node.target.id], node.value
+        else:
+            continue
+        bound = locally_bound_names(value)
+        held = tuple(dict.fromkeys(
+            (inner.id, None) if isinstance(inner, ast.Name) else (inner.attr, receiver_name(inner.value))
+            for inner in ast.walk(value)
+            if (isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Load) and inner.id not in bound)
+            or (isinstance(inner, ast.Attribute) and isinstance(inner.ctx, ast.Load)
+                and receiver_name(inner.value) != NON_NAME_RECEIVER)
+        ))
+        tables.update((target, held) for target in targets)
+    return tables
+
+
+def record_definitions(tree: ast.Module) -> Dict[str, Tuple[str, ...]]:
+    """
+    Pure: Record types the module defines, mapped to their field names in
+    order: a class with annotated fields (NamedTuple, dataclass) or
+    ``namedtuple('X', 'a b')`` / ``NamedTuple('X', [('a', T), ...])``.
+    """
+    def named_fields(spec: ast.expr) -> Tuple[str, ...]:
+        if isinstance(spec, ast.Constant) and isinstance(spec.value, str):
+            return tuple(spec.value.replace(',', ' ').split())
+        if isinstance(spec, (ast.List, ast.Tuple)):
+            return tuple(
+                item.value if isinstance(item, ast.Constant) else item.elts[0].value
+                for item in spec.elts
+                if (isinstance(item, ast.Constant) and isinstance(item.value, str))
+                or (isinstance(item, (ast.Tuple, ast.List)) and item.elts
+                    and isinstance(item.elts[0], ast.Constant) and isinstance(item.elts[0].value, str))
+            )
+        return ()
+
+    records: Dict[str, Tuple[str, ...]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            fields = tuple(s.target.id for s in node.body
+                           if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name))
+            if fields:
+                records[node.name] = fields
+        elif (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+              and len(node.value.args) >= 2):
+            func = node.value.func
+            factory = func.id if isinstance(func, ast.Name) else getattr(func, 'attr', None)
+            if factory in ('namedtuple', 'NamedTuple'):
+                fields = named_fields(node.value.args[1])
+                records.update((t.id, fields) for t in node.targets if isinstance(t, ast.Name) and fields)
+    return records
+
+
+def value_fields_in(
+    tree: ast.Module,
+    record_fields: Callable[[str, Optional[str]], Tuple[str, ...]] = lambda name, base: (),
+) -> Tuple[Tuple[str, str, Optional[str]], ...]:
+    """
+    Pure: (field, name, base) for every function-shaped value stored under a
+    field name: a keyword argument (``Rec(touches=removed_connectors)``), a
+    positional argument of a known record type (``Codec(split, decode)`` with
+    record_fields('Codec', None) == ('split', 'decode')), or a string-keyed
+    dict entry (``{'touches': removed_connectors}``). The field is what a
+    caller later calls through (``c.touches(...)``). A call stored under a
+    field holds its callee (a factory returning a closure) and its positional
+    arguments (``secret_command=partial(secret_command, installed=x)``).
+
+    Args:
+        tree: Parsed module AST
+        record_fields: (callee name, base) -> the record's field names, or ()
+            when the callee is not a known record type
+    """
+    found: List[Tuple[str, str, Optional[str]]] = []
+
+    def held(field_name: str, value: ast.expr) -> None:
+        if isinstance(value, ast.Name):
+            found.append((field_name, value.id, None))
+        elif isinstance(value, ast.Attribute) and receiver_name(value.value) != NON_NAME_RECEIVER:
+            found.append((field_name, value.attr, receiver_name(value.value)))
+        elif isinstance(value, ast.Call):
+            # partial(fn, ...) holds fn; a factory call (touching_files(...))
+            # holds the closure it returns, so the factory itself
+            for part in (value.func, *value.args):
+                if not isinstance(part, ast.Call):
+                    held(field_name, part)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            for keyword in node.keywords:
+                if keyword.arg:
+                    held(keyword.arg, keyword.value)
+            if node.args and isinstance(node.func, (ast.Name, ast.Attribute)):
+                callee = ((node.func.id, None) if isinstance(node.func, ast.Name)
+                          else (node.func.attr, receiver_name(node.func.value)))
+                for field_name, argument in zip(record_fields(*callee), node.args):
+                    if isinstance(argument, ast.Starred):
+                        break   # positions after *args are unknown
+                    held(field_name, argument)
+        elif isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    held(key.value, value)
+    return tuple(dict.fromkeys(found))
+
+
+@dataclass(frozen=True)
+class DispatchEvidence:
+    """Edges the code makes through data rather than by name.
+
+    table_edges: (source, target) where the source reads a module-level table
+    (same file, or imported) that holds the target. value_fields: target id ->
+    the field names it is stored under anywhere in the project.
+    """
+    table_edges: FrozenSet[Tuple[int, int]] = frozenset()
+    value_fields: Dict[int, FrozenSet[str]] = field(default_factory=dict)
+
+
+def dispatch_evidence(
+    context: ResolutionContext,
+    trees: Dict[str, ast.Module],
+    include_caller: Callable[[str], bool],
+    max_depth: int = 3,
+) -> DispatchEvidence:
+    """
+    Pure: Dispatch-table edges for accepted callers, and every function's
+    record fields across all trees.
+
+    A table read is credited like any reference (own body, or an untracked
+    same-file helper it reaches); a table holding another table is followed
+    up to max_depth. Table contents resolve in the table's own file, never by
+    a project-wide name guess. Confirmation only: these are not expected
+    edges, so an audit never asks for one to be added.
+    """
+    tables = {path: module_tables(tree) for path, tree in trees.items()}
+
+    def table_file(path: str, name: str, base: Optional[str]) -> Optional[str]:
+        """The file whose module-level table `name` (read in `path`) is, if any."""
+        bindings = context.bindings_index.get(path, {})
+        if base is None and name in tables.get(path, {}) and name not in bindings:
+            return path
+        module = bindings.get(name) if base is None else (
+            bindings.get(base) if '.' not in base else None)
+        if module is None:
+            return None
+        exact = (module + '.py', os.path.join(module, '__init__.py'))
+        matched = tuple(c for c in exact if c in tables) or context.modules.get(module, ())
+        return matched[0] if len(matched) == 1 and name in tables.get(matched[0], {}) else None
+
+    def held_ids(path: str, name: str, depth: int, seen: Set[Tuple[str, str]]) -> Set[int]:
+        if depth > max_depth or (path, name) in seen:
+            return set()
+        seen.add((path, name))
+        ids: Set[int] = set()
+        for held_name, held_base in tables[path][name]:
+            target_id, _ = resolve_in(context, path, held_name, held_base)
+            if target_id is not None:
+                ids.add(target_id)
+            inner = table_file(path, held_name, held_base)
+            if inner is not None:
+                ids |= held_ids(inner, held_name, depth + 1, seen)
+        return ids
+
+    table_edges: Set[Tuple[int, int]] = set()
+    for path, tree in trees.items():
+        if not include_caller(path):
+            continue
+        local_functions = context.by_file.get(path, {})
+        for caller, dependencies in credited_dependencies(tree, frozenset(local_functions)).items():
+            source_id = local_functions[caller]
+            for name, base, via in dependencies:
+                if not via.startswith('reference'):
+                    continue
+                where = table_file(path, name, base)
+                if where is not None:
+                    table_edges.update((source_id, t) for t in held_ids(where, name, 0, set()) if t != source_id)
+
+    # Record types, resolved like functions (through imports and re-exports)
+    records = {path: record_definitions(tree) for path, tree in trees.items()}
+    record_keys = tuple((path, name) for path, defined in records.items() for name in defined)
+    key_ids = {key: i for i, key in enumerate(record_keys)}
+    record_context = ResolutionContext(
+        by_file={path: {name: key_ids[(path, name)] for name in defined}
+                 for path, defined in records.items() if defined},
+        by_name={},
+        id_to_path={},
+        bindings_index=context.bindings_index,
+        origins_index=context.origins_index,
+        modules=context.modules,
+    )
+
+    def fields_of(path: str) -> Callable[[str, Optional[str]], Tuple[str, ...]]:
+        def lookup(name: str, base: Optional[str]) -> Tuple[str, ...]:
+            found, _ = resolve_in(record_context, path, name, base)
+            return () if found is None else records[record_keys[found][0]][record_keys[found][1]]
+        return lookup
+
+    value_fields: Dict[int, Set[str]] = {}
+    for path, tree in trees.items():
+        for field_name, name, base in value_fields_in(tree, fields_of(path)):
+            target_id, _ = resolve_in(context, path, name, base)
+            if target_id is not None:
+                value_fields.setdefault(target_id, set()).add(field_name)
+
+    return DispatchEvidence(
+        table_edges=frozenset(table_edges),
+        value_fields={k: frozenset(v) for k, v in value_fields.items()},
     )
 
 
