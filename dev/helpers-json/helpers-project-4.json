@@ -205,9 +205,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "WARNING: Verify definition_json and description are populated. Types with null description are incomplete tracking entries — future AI sessions cannot understand the type shape from the DB. If description is null, populate it NOW via update_type(). This is your last chance before the type is considered 'tracked'.",
-        "Do any type-function relationships need to be added in types_functions table?",
-        "If called during project_reserve_finalize: follow project_update_db directive to sync type registrations."
+        "Next: link the functions that create, take or return this type (add_types_functions), or audit_tracking(paths=[<file>]) → apply_audit_fixes(apply=['missing_type_links'])."
       ],
       "implementation_notes": [
         "Returns: {success: true, type_id: int, file_id: int}",
@@ -290,9 +288,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "WARNING: Verify definition_json and description are populated for ALL types. Types with null description are incomplete tracking entries — future AI sessions cannot understand type shapes from the DB. If any description is null, populate it NOW via update_type(). This is your last chance before types are considered 'tracked'.",
-        "Do any type-function relationships need to be added in types_functions table?",
-        "If called during project_reserve_finalize: follow project_update_db directive to sync type registrations."
+        "Next: link the functions that create, take or return these types (add_types_functions), or audit_tracking(paths=[<file>]) → apply_audit_fixes(apply=['missing_type_links'])."
       ],
       "implementation_notes": [
         "Returns: {success: true, finalized_ids: [int, ...]}",

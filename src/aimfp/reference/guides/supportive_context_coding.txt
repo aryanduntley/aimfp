@@ -73,6 +73,8 @@ Load via: get_supportive_context(variant='coding')
   function is stored under are confirmed; shared record fields, callbacks and names passed as strings
   (getattr, registry keys) are unconfirmed (warn). Conceptual edges: mark_indirect_ids.
   Reviewed prose lists (unbaselined_needs_review, stale_descriptions) apply as baselines; exclude rewrites.
+  A call made inside an untracked _private helper is an edge of each tracked function that uses the helper
+  ('via <helper>' in the description); deleting it only brings it back. Track the helper to own the edge.
   Reviewed function/type finding that is not drift: exempt=[{category, function_id|type_id}] (lapses on code change).
   Deleting a function with edges: delete_function(repoint_to=<successor>) or confirm_cascade=true.
 

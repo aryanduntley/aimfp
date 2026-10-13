@@ -258,6 +258,38 @@ def test_watchdog_audit_drift_reminder_replaced_and_cleared(work):
     assert not [r for r in _effect_read_reminders(reminders) if r["type"] == REMINDER_AUDIT_DRIFT]
 
 
+def test_drift_reminder_dropped_after_database_fix(work):
+    """Drift fixed through the database (no file save) stops being reported at the next refresh."""
+    from aimfp.helpers.audit.apply_fixes import apply_audit_fixes
+    from aimfp.watchdog.reconciliation import refresh_audit_drift_reminders
+    root = work["root"]
+    db = os.path.join(root, ".aimfp-project", "project.db")
+    reminders = os.path.join(root, ".aimfp-project", "watchdog", "reminders.json")
+    os.makedirs(os.path.dirname(reminders), exist_ok=True)
+
+    _write(root, "src/app.py", DRIFTED)
+    _effect_process_file_event(_event(root, "src/app.py"), root, root, db, reminders, None, {})
+    assert refresh_audit_drift_reminders(root) == 1                         # still drifted: kept
+
+    report = audit_tracking(paths=["src/app.py"], include=["interactions"], project_root=root).report_path
+    assert apply_audit_fixes("fix", report=report, apply=["missing_interactions", "stale_interactions"],
+                             project_root=root).success
+    assert refresh_audit_drift_reminders(root) == 0
+    assert not [r for r in _effect_read_reminders(reminders) if r["type"] == REMINDER_AUDIT_DRIFT]
+
+
+def test_actionable_watchdog_view_counts_timestamp_syncs():
+    from aimfp.watchdog.reminders import actionable_watchdog_view, reminder_files
+    data = {"status": "ok", "reminders": (
+        {"type": "timestamp_synced", "file": "a.py"}, {"type": "audit_drift", "file": "a.py"},
+        {"type": "timestamp_synced", "file": "b.py"}, {"type": "audit_drift", "file": "a.py"})}
+    view = actionable_watchdog_view(data)
+    assert [r["type"] for r in view["reminders"]] == ["audit_drift", "audit_drift"]
+    assert view["files_synced"] == 2 and view["status"] == "ok"
+    assert "files_synced" not in actionable_watchdog_view({"reminders": ()})
+    assert reminder_files(data["reminders"], "audit_drift") == ("a.py",)
+
+
 def test_watchdog_skips_byte_identical_rewrites(work):
     root = work["root"]
     db = os.path.join(root, ".aimfp-project", "project.db")

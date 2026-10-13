@@ -12,7 +12,12 @@ from ..wrappers.file_ops import (
     _effect_read_json,
     _effect_write_json_atomic,
 )
-from .config import REMINDER_STRUCTURE_GAPS, REMINDER_STRUCTURE_PREFIX, STRUCTURE_GAP_LABELS
+from .config import (
+    REMINDER_STRUCTURE_GAPS,
+    REMINDER_STRUCTURE_PREFIX,
+    REMINDER_TIMESTAMP_SYNCED,
+    STRUCTURE_GAP_LABELS,
+)
 
 
 # ============================================================================
@@ -108,6 +113,30 @@ def replace_file_reminders(
         r for r in existing
         if not (r.get('type') == reminder_type and r.get('file') == file_path)
     ) + new
+
+
+def reminder_files(
+    reminders: Tuple[Dict[str, str], ...],
+    reminder_type: str,
+) -> Tuple[str, ...]:
+    """Pure: Distinct files holding a reminder of one type, in first-seen order."""
+    return tuple(dict.fromkeys(
+        r['file'] for r in reminders if r.get('type') == reminder_type and r.get('file')
+    ))
+
+
+def actionable_watchdog_view(watchdog_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Pure: The watchdog section as the AI sees it. timestamp_synced reminders
+    report a correction the watchdog already made, so they are counted
+    (files_synced) instead of listed. The stored reminders keep them: the
+    checkpoint links those files to the work in progress.
+    """
+    reminders = tuple(watchdog_data.get('reminders') or ())
+    actionable = tuple(r for r in reminders if r.get('type') != REMINDER_TIMESTAMP_SYNCED)
+    synced = len(reminders) - len(actionable)
+    view = {**watchdog_data, 'reminders': actionable}
+    return {**view, 'files_synced': synced} if synced else view
 
 
 # ============================================================================

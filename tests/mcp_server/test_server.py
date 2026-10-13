@@ -189,7 +189,7 @@ def test_handle_call_tool_missing_required_args():
     text = result["content"][0]["text"]
     # Caught by schema validation before the helper runs, naming each field
     assert "Invalid arguments for 'reserve_function'" in text
-    assert "name: required" in text and "file_id: required" in text
+    assert "name: required" in text           # file_id is optional now: file_path may name the file
 
 
 def test_handle_call_tool_get_supportive_context():

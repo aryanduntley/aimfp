@@ -275,3 +275,37 @@ def test_finalize_records_hash_and_warns_on_param_mismatch(root):
                                  "skip_id_naming": True}], project_root=root)
     assert batch.success and batch.warnings == ()
     assert _hash(root, "neg") is not None
+    # NAME/PARAM CHECK guidance ships only with warnings to act on
+    assert any(s.startswith("PARAM CHECK") for s in result.return_statements)
+    assert not any("CHECK" in s or s.startswith("[when:") for s in batch.return_statements)
+
+
+# ============================================================================
+# reserve_function(s) by file_path (CIAMstack: a wrong but existing file_id passed silently)
+# ============================================================================
+
+def test_reserve_by_path_and_echoed_file(root):
+    from aimfp.helpers.project.functions_1 import reserve_functions
+    a = reserve_file("a.py", "src/a.py", "python", flow_ids=None, no_flow_reason="test",
+                     skip_id_naming=True, project_root=root).id
+    b = reserve_file("b.py", "src/b.py", "python", flow_ids=None, no_flow_reason="test",
+                     skip_id_naming=True, project_root=root).id
+
+    one = reserve_function("f", file_path="./src/a.py", skip_id_naming=True, project_root=root)
+    assert one.success and (one.file_id, one.file_path) == (a, "src/a.py")
+    by_id = reserve_function("g", b, skip_id_naming=True, project_root=root)
+    assert (by_id.file_id, by_id.file_path) == (b, "src/b.py")          # the path shows a wrong id at once
+
+    batch = reserve_functions([{"name": "h", "file_path": "src/b.py"}, {"name": "i", "file_id": a}],
+                              project_root=root)
+    assert [(f["name"], f["file_id"], f["file_path"]) for f in batch.functions] == [
+        ("h", b, "src/b.py"), ("i", a, "src/a.py")]
+    assert [f["id"] for f in batch.functions] == list(batch.ids)
+
+    assert "not 'src/a.py'" in reserve_function("x", b, file_path="src/a.py", project_root=root).error
+    assert "No tracked file" in reserve_function("x", file_path="src/nope.py", project_root=root).error
+    assert "file_id or file_path" in reserve_function("x", project_root=root).error
+    refused = reserve_functions([{"name": "ok", "file_id": a}, {"name": "bad", "file_path": "src/zz.py"}],
+                                project_root=root)
+    assert not refused.success and refused.error.startswith("Function 'bad':")
+    assert _q(root, "SELECT COUNT(*) FROM functions WHERE name IN ('ok', 'bad')")[0][0] == 0

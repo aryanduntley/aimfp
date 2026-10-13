@@ -340,7 +340,9 @@ def pair_repoints(
     Pure: Pair outdated edges with missing edges that are the same dependency moved.
 
     An outdated (S -> T) pairs with a missing (S' -> T) when S' lives in S's
-    file (the call moved into another function: repoint the source), else with
+    file and makes the call itself (the call moved into another function:
+    repoint the source; an S' credited through an untracked helper did not
+    take S's call over, so the two stay a separate add and delete), else with
     a missing (S -> T') when T' has T's name (the target moved: repoint the
     target). Each edge pairs at most once, lowest ids first, so applying every
     repoint plus the remaining missing and stale findings reproduces the code's
@@ -365,6 +367,7 @@ def pair_repoints(
             if i not in used
             and m['target_function_id'] == edge['target_function_id']
             and m['source_path'] == edge['source_path']
+            and ' via ' not in m.get('via', '')
         ), None) if source_moves else None
         target_match = None if source_match is not None else next((
             i for i, m in enumerate(missing)

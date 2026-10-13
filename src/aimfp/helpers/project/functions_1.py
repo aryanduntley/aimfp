@@ -21,6 +21,7 @@ from typing import Optional, List, Tuple, Dict, Any
 
 from ..utils import get_return_statements, encode_json_field
 from .note_refs import NoteRef, query_note_refs, note_ref_return_statements
+from ..shared.return_gates import gate_return_statements
 from ..shared.slugs import mint_slug
 from ..shared.fts_query import (
     tokenize_search_terms, build_fts_match_expression, build_like_clause,
@@ -36,6 +37,7 @@ from ._common import (
     function_name_warnings,
     function_signature_warnings,
     record_source_hashes,
+    resolve_file_ref,
     strip_dot_slash,
 )
 
@@ -71,6 +73,8 @@ class ReserveResult:
     is_reserved: Optional[bool] = None
     error: Optional[str] = None
     return_statements: Tuple[str, ...] = ()  # AI guidance for next steps
+    file_id: Optional[int] = None  # the file the function is recorded in
+    file_path: Optional[str] = None  # its path, to catch a wrong file_id at once
 
 
 @dataclass(frozen=True)
@@ -80,6 +84,7 @@ class ReserveBatchResult:
     ids: Tuple[int, ...] = ()
     error: Optional[str] = None
     return_statements: Tuple[str, ...] = ()  # AI guidance for next steps
+    functions: Tuple[Dict[str, Any], ...] = ()  # {id, name, file_id, file_path} per input, in order
 
 
 @dataclass(frozen=True)
@@ -421,12 +426,13 @@ def _get_function_by_name_effect(
 
 def reserve_function(
     name: str,
-    file_id: int,
+    file_id: Optional[int] = None,
     purpose: Optional[str] = None,
     parameters: Optional[List[Dict[str, Any]]] = None,
     returns: Optional[Dict[str, Any]] = None,
     skip_id_naming: bool = False,
-    project_root: Optional[str] = None
+    project_root: Optional[str] = None,
+    file_path: Optional[str] = None,
 ) -> ReserveResult:
     """
     Reserve function ID for naming before creation.
@@ -436,14 +442,16 @@ def reserve_function(
 
     Args:
         name: Preliminary function name (will have _id_xxx appended unless skip_id_naming=True)
-        file_id: File ID where function will be defined
+        file_id: File ID where function will be defined (or give file_path)
         purpose: Function purpose (optional)
         parameters: Function parameters (optional)
         returns: Return value specification (optional)
         skip_id_naming: If True, skip ID embedding (for MCP tools that must have clean names)
+        file_path: Project-relative path of the tracked file, instead of (or
+            checked against) file_id
 
     Returns:
-        ReserveResult with success status and reserved ID
+        ReserveResult with the reserved ID and the file it is recorded in
 
     Example:
         >>> result = reserve_function(
@@ -462,12 +470,9 @@ def reserve_function(
     conn = _open_project_connection(project_root)
 
     try:
-        # Check if file exists
-        if not _check_file_exists(conn, file_id):
-            return ReserveResult(
-                success=False,
-                error=f"File with ID {file_id} not found"
-            )
+        file_id, path, error = resolve_file_ref(conn, file_id, file_path)
+        if error is not None:
+            return ReserveResult(success=False, error=error)
 
         # Pure: serialize parameters and returns
         params_json = serialize_params(parameters)
@@ -491,7 +496,9 @@ def reserve_function(
             success=True,
             id=reserved_id,
             is_reserved=True,
-            return_statements=return_statements
+            return_statements=return_statements,
+            file_id=file_id,
+            file_path=path,
         )
 
     finally:
@@ -509,12 +516,14 @@ def reserve_functions(
     All reservations succeed or all fail (atomic operation).
 
     Args:
-        functions: List of function objects with keys: name, file_id, purpose, parameters, returns, skip_id_naming
+        functions: List of function objects with keys: name, file_id or file_path, purpose,
+                   parameters, returns, skip_id_naming
                    skip_id_naming is optional (defaults to False) and controls per-function ID embedding
 
     Returns:
         ReserveBatchResult with success status and reserved IDs
-        IDs correspond to input indices: functions[0] -> ids[0], functions[1] -> ids[1]
+        IDs correspond to input indices: functions[0] -> ids[0], functions[1] -> ids[1];
+        functions repeats each as {id, name, file_id, file_path}
 
     Example:
         >>> functions = [
@@ -539,25 +548,19 @@ def reserve_functions(
     conn = _open_project_connection(project_root)
 
     try:
-        # Validate all file IDs exist
-        for func in functions:
-            file_id = func.get("file_id")
-            if file_id is None:
-                return ReserveBatchResult(
-                    success=False,
-                    error="All functions must have file_id"
-                )
-            if not _check_file_exists(conn, file_id):
-                return ReserveBatchResult(
-                    success=False,
-                    error=f"File with ID {file_id} not found"
-                )
+        # Resolve every function's file (by id, path, or both) before writing any
+        files = tuple(resolve_file_ref(conn, f.get("file_id"), f.get("file_path")) for f in functions)
+        failed = next(((f, err) for f, (_, _, err) in zip(functions, files) if err is not None), None)
+        if failed is not None:
+            return ReserveBatchResult(
+                success=False,
+                error=f"Function '{failed[0].get('name', '')}': {failed[1]}"
+            )
 
         # Pure: prepare data for batch insert (with per-item skip_id_naming)
         batch_data = []
-        for func in functions:
+        for func, (file_id, _, _) in zip(functions, files):
             name = func.get("name", "")
-            file_id = func.get("file_id")
             purpose = func.get("purpose")
             params_json = serialize_params(func.get("parameters"))
             returns_json = serialize_returns(func.get("returns"))
@@ -574,7 +577,11 @@ def reserve_functions(
         return ReserveBatchResult(
             success=True,
             ids=reserved_ids,
-            return_statements=return_statements
+            return_statements=return_statements,
+            functions=tuple(
+                {'id': fid, 'name': func.get("name", ""), 'file_id': file_id, 'file_path': path}
+                for fid, func, (file_id, path, _) in zip(reserved_ids, functions, files)
+            ),
         )
 
     except Exception as e:
@@ -707,8 +714,9 @@ def finalize_function(
                 error=f"Finalized but timestamp update failed: {timestamp_result.error}"
             )
 
-        # Success - fetch return statements from core database
-        return_statements = get_return_statements("finalize_function")
+        # NAME/PARAM CHECK statements ship only with warnings to act on
+        return_statements = gate_return_statements(
+            get_return_statements("finalize_function"), {'warnings': warnings})
 
         return FinalizeResult(
             success=True,
@@ -870,8 +878,9 @@ def finalize_functions(
                     error=f"Finalized but timestamp update failed for file {file_id}: {timestamp_result.error}"
                 )
 
-        # Success - fetch return statements from core database
-        return_statements = get_return_statements("finalize_functions")
+        # NAME/PARAM CHECK statements ship only with warnings to act on
+        return_statements = gate_return_statements(
+            get_return_statements("finalize_functions"), {'warnings': warnings})
 
         return FinalizeBatchResult(
             success=True,

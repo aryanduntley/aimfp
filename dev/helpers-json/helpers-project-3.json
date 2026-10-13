@@ -14,9 +14,9 @@
         {
           "name": "file_id",
           "type": "integer",
-          "required": true,
+          "required": false,
           "default": null,
-          "description": "File ID where function will be defined"
+          "description": "File ID where the function will be defined (or pass file_path)"
         },
         {
           "name": "purpose",
@@ -65,6 +65,13 @@
           "required": false,
           "default": false,
           "description": "If true, skip ID embedding in name (for MCP tools, private functions excluded). Sets id_in_name=0 in database."
+        },
+        {
+          "name": "file_path",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Project-relative path of the tracked file, instead of file_id (both given must agree)"
         }
       ],
       "purpose": "Reserve a function ID before writing code. Include purpose, parameters, and returns — null fields make functions invisible to future sessions.",
@@ -72,11 +79,10 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Use returned ID for function naming: {name}_id_{id}",
-        "MANDATORY: Include purpose, parameters, and returns fields NOW. These are the AI's primary lookup mechanism across sessions. Null fields make functions invisible to future discovery — the DB becomes just a filename index. If unsure of the signature, plan the function first, then reserve. Example: purpose='Build coin selection entry from raw data', parameters='coin: CoinEntry', returns='CoinSelectionEntry'",
-        "Ensure the parent file (file_id) has been reserved via reserve_file. Files and functions must both be tracked.",
-        "After finalization, ensure interactions are added where needed. See directive project_update_db (Branch 6: update_interactions_table) for interaction tracking workflow.",
-        "Next: write function code with ID in name → finalize_function(function_id, name, file_id)"
+        "Use returned ID for function naming: {name}_id_{id} (skip_id_naming=true for names that must stay fixed).",
+        "Fill purpose, parameters and returns now (finalize refuses nulls); they are how later sessions find this function.",
+        "result.file_path is where the function is recorded: if it is not the file you are writing, fix it now (update_function_file_location). Pass file_path instead of file_id to avoid looking IDs up.",
+        "Next: write the code → finalize_function(function_id, name, file_id)"
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -98,10 +104,11 @@
         }
       ],
       "implementation_notes": [
-        "Returns {success: true, id: reserved_id, is_reserved: true, id_in_name: !skip_id_naming}",
+        "Returns {success: true, id, is_reserved: true, file_id, file_path} - file_path shows where the function is recorded",
         "SQL: INSERT INTO functions (name, file_id, purpose, parameters, returns, is_reserved, id_in_name) VALUES (?, ?, ?, ?, ?, 1, ?) RETURNING id",
         "Function name pattern: {name}_id_{id} (e.g., calculate_sum_id_42) unless skip_id_naming=true",
-        "If skip_id_naming=true: id_in_name=0, name stays as-is (for MCP tools that need clean names)"
+        "If skip_id_naming=true: id_in_name=0, name stays as-is (for MCP tools that need clean names)",
+        "File named by file_id, file_path or both (resolve_file_ref); an unknown path, unknown id or disagreeing pair is refused"
       ]
     },
     {
@@ -113,7 +120,7 @@
           "type": "array",
           "required": true,
           "default": null,
-          "description": "Array of function objects [{name, file_id, purpose, parameters, returns, skip_id_naming?}, ...]",
+          "description": "Array of function objects [{name, file_id | file_path, purpose, parameters, returns, skip_id_naming?}, ...]",
           "items": {
             "type": "object",
             "properties": {
@@ -122,6 +129,9 @@
               },
               "file_id": {
                 "type": "integer"
+              },
+              "file_path": {
+                "type": "string"
               },
               "purpose": {
                 "type": "string"
@@ -157,8 +167,7 @@
               }
             },
             "required": [
-              "name",
-              "file_id"
+              "name"
             ]
           }
         }
@@ -168,20 +177,20 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Use returned IDs for function naming: {name}_id_{id}",
-        "MANDATORY: Include purpose, parameters, and returns fields for EVERY function. These are the AI's primary lookup mechanism across sessions. Null fields make functions invisible to future discovery — the DB becomes just a filename index. If unsure of signatures, plan functions first, then reserve.",
-        "Ensure all parent files (file_ids) have been reserved via reserve_file/reserve_files. Files and functions must both be tracked.",
-        "After finalization, ensure interactions are added where needed. See directive project_update_db (Branch 6: update_interactions_table) for interaction tracking workflow.",
-        "Next: write function code with IDs in names → finalize_functions([{function_id, name, file_id}, ...])"
+        "Use returned IDs for function naming: {name}_id_{id} (skip_id_naming=true for names that must stay fixed).",
+        "Fill purpose, parameters and returns for EVERY function now (finalize refuses nulls); they are how later sessions find these functions.",
+        "result.functions lists each id with its file_path: any function recorded in the wrong file → update_function_file_location now. Pass file_path instead of file_id to avoid looking IDs up.",
+        "Next: write the code → finalize_functions([{function_id, name, file_id}, ...])"
       ],
       "target_database": "project",
       "used_by_directives": [],
       "implementation_notes": [
-        "Returns {success: true, ids: [id1, id2, ...]} in same order as input functions array",
+        "Returns {success: true, ids: [...], functions: [{id, name, file_id, file_path}, ...]} in input order",
         "SQL: Multiple INSERT INTO functions (name, file_id, purpose, parameters, returns, is_reserved, id_in_name) VALUES (?, ?, ?, ?, ?, 1, ?) (in transaction)",
         "IDs correspond to functions array indices: functions[0] gets ids[0], functions[1] gets ids[1], etc.",
         "Each item has its own skip_id_naming flag - allows mixed batch with some functions having IDs, some not",
-        "id_in_name is set to !skip_id_naming for each function individually"
+        "id_in_name is set to !skip_id_naming for each function individually",
+        "Each function's file is resolved from file_id, file_path or both before anything is written; one bad reference refuses the batch"
       ]
     },
     {
@@ -263,13 +272,9 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "WARNING: Verify purpose, parameters, and returns are populated. Functions with null fields are incomplete tracking entries — future AI sessions cannot look them up by signature. If any field is null, populate it NOW via update_function(). This is your last chance before the function is considered 'tracked'.",
-        "Verify parent file has been finalized via finalize_file. Both file and function must be finalized for complete tracking.",
-        "NAME CHECK: if warnings[] is non-empty, a finalized name is not defined in its file's source (checked for Python). Make them match before continuing: rename the tracked function via update_function, or rename it in the code.",
-        "BLOCKED: Do NOT proceed to next task or mark work complete until interactions are added for this function. If this function calls, chains, borrows from, composes with, or pipes to ANY other tracked function, those interactions MUST be recorded via add_interaction or add_interactions. A finalized function that imports from other tracked files with zero recorded interactions = incomplete tracking. Interactions are how the AI understands the dependency graph — without them, refactoring impact analysis is blind.",
-        "TYPES_FUNCTIONS CHECK: Scan this function's parameters and returns for tracked type names. If it consumes or produces a tracked type, add the relationship via add_types_functions. Auto-infer role: returns type only → 'factory'; params AND returns same type → 'transformer'; params with boolean/Result return → 'validator'; params only → 'accessor'. This is how the AI answers 'what functions use TypeX?' without scanning all files.",
-        "If called during project_reserve_finalize: follow project_update_db directive to sync function dependencies.",
-        "PARAM CHECK: warnings[] entries starting 'PARAM CHECK' mean the recorded parameters disagree with the signature (names, order, required vs default). Fix with update_function(parameters=...) or apply_audit_fixes(refresh_signature_function_ids=[...]) — the task-completion audit blocks on parameter drift."
+        "[when:warnings] NAME CHECK warnings: a finalized name is not defined in its file's source. Rename the tracked function (update_function) or the code so they match.",
+        "[when:warnings] PARAM CHECK warnings: recorded parameters disagree with the signature (names, order, required vs default). Fix with update_function(parameters=...) or apply_audit_fixes(refresh_signature_function_ids=[...]); task completion blocks on it.",
+        "Next: record its calls to other tracked functions (add_interactions) and the tracked types it takes or returns (add_types_functions: returns only → factory, in and out → transformer, → bool/Result → validator, params only → accessor). Shortcut: audit_tracking(paths=[<file>]) → apply_audit_fixes(apply=['missing_interactions','missing_type_links']). Task completion blocks on missing edges."
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -374,13 +379,9 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "WARNING: Verify purpose, parameters, and returns are populated for ALL functions. Functions with null fields are incomplete tracking entries — future AI sessions cannot look them up by signature. If any field is null, populate it NOW via update_function(). This is your last chance before functions are considered 'tracked'.",
-        "Verify all parent files have been finalized via finalize_file/finalize_files. Both files and functions must be finalized for complete tracking.",
-        "NAME CHECK: if warnings[] is non-empty, a finalized name is not defined in its file's source (checked for Python). Make them match before continuing: rename the tracked function via update_function, or rename it in the code.",
-        "BLOCKED: Do NOT proceed to next task or mark work complete until interactions are added for ALL finalized functions. For EVERY function that calls, chains, borrows from, composes with, or pipes to ANY other tracked function, those interactions MUST be recorded via add_interaction or add_interactions (batch). Finalized functions that import from other tracked files with zero recorded interactions = incomplete tracking. Do NOT batch-finalize functions and move on without interaction planning — the finalize → interact flow is atomic.",
-        "TYPES_FUNCTIONS CHECK: Scan ALL finalized functions' parameters and returns for tracked type names. For each function that consumes or produces a tracked type, add the relationship via add_types_functions. Auto-infer roles: returns type only → 'factory'; params AND returns same type → 'transformer'; params with boolean/Result return → 'validator'; params only → 'accessor'. This covers 80%+ of cases automatically — correct or add remaining roles manually.",
-        "If called during project_reserve_finalize: follow project_update_db directive to sync function dependencies.",
-        "PARAM CHECK: warnings[] entries starting 'PARAM CHECK' mean recorded parameters disagree with a signature (names, order, required vs default). Fix with update_function(s) or apply_audit_fixes(refresh_signature_function_ids=[...]) — the task-completion audit blocks on parameter drift."
+        "[when:warnings] NAME CHECK warnings: a finalized name is not defined in its file's source. Rename the tracked function (update_function) or the code so they match.",
+        "[when:warnings] PARAM CHECK warnings: recorded parameters disagree with a signature (names, order, required vs default). Fix with update_function(s) or apply_audit_fixes(refresh_signature_function_ids=[...]); task completion blocks on it.",
+        "Next: for EVERY function, record its calls to other tracked functions (add_interactions) and the tracked types it takes or returns (add_types_functions: returns only → factory, in and out → transformer, → bool/Result → validator, params only → accessor). Shortcut: audit_tracking(paths=[<file>]) → apply_audit_fixes(apply=['missing_interactions','missing_type_links']). Task completion blocks on missing edges."
       ],
       "target_database": "project",
       "used_by_directives": [],

@@ -37,6 +37,9 @@ string words; a plural or singular of one counts). Such a name found nowhere
 in the repo (every file under the project root the exclusion stack keeps, any
 language) is the strongest signal: those findings carry priority 'high' with
 parameter and return mismatches, and every review list is sorted high first.
+A name found elsewhere in the repo alone does not send unbaselined prose to
+review (it is usually context: a caller, a sibling module, another tool's API);
+stale descriptions still list it.
 """
 
 import ast
@@ -58,6 +61,7 @@ _MENTION = re.compile(r'(?<![\w.])([A-Za-z_][A-Za-z0-9_]*)\((\)|s\)|es\))?')
 _CODE_SHAPED = re.compile(r'`([A-Za-z_][A-Za-z0-9_]*)`|(?<![\w.])([a-z][a-z0-9]*_[a-z0-9_]*[a-z0-9])(?![\w(])')
 EXCERPT_LINES = 12
 NOWHERE = 'found nowhere in the repo'
+ELSEWHERE = '(found elsewhere in the repo)'
 _CALL_IN_STRING = re.compile(r'(?<![\w.])([A-Za-z_][A-Za-z0-9_]*)\s*\(')
 _WORD = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 STRUCTURAL_REASONS = ('parameters recorded as', 'returns recorded as')
@@ -229,6 +233,16 @@ def text_words(texts: Iterable[str]) -> FrozenSet[str]:
     return frozenset(word for text in texts for word in _WORD.findall(text))
 
 
+def review_reasons(triage: Tuple[str, ...]) -> Tuple[str, ...]:
+    """
+    Pure: The triage reasons that warrant review of unbaselined prose. A name
+    the file never uses but the repo does is usually context (a caller, a
+    sibling module, another tool's API) rather than drift, so on its own it
+    lets the description pass; stale descriptions still list it.
+    """
+    return tuple(r for r in triage if not r.endswith(ELSEWHERE))
+
+
 def triage_priority(triage: Tuple[str, ...]) -> str:
     """Pure: 'high' when the prose names something found nowhere or the signature disagrees, else 'low'."""
     return 'high' if any(r.startswith(STRUCTURAL_REASONS) or r.endswith(NOWHERE) for r in triage) else 'low'
@@ -291,7 +305,7 @@ def description_triage(
     if nowhere:
         reasons.append(f"prose names {', '.join(nowhere)}, {NOWHERE}")
     if elsewhere:
-        reasons.append(f"prose names {', '.join(elsewhere)}, which this file never uses (found elsewhere in the repo)")
+        reasons.append(f"prose names {', '.join(elsewhere)}, which this file never uses {ELSEWHERE}")
     return tuple(reasons)
 
 
@@ -365,7 +379,7 @@ def description_findings(
                 if not unhashed:
                     stale.append({**review_entry(row, ident, triage, node),
                                   'recorded_hash': row['source_hash'], 'current_hash': code.body_hash})
-                elif triage:
+                elif review_reasons(triage):
                     needs_review.append(review_entry(row, ident, triage, node))
                 else:
                     unbaselined.append(ident)

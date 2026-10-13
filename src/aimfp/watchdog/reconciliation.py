@@ -13,6 +13,7 @@ from ..database.connection import _effect_query_one, _open_connection, get_proje
 from ..helpers.project.structure_health import collect_structure_health
 from ..wrappers.file_ops import _effect_read_file
 from .config import (
+    REMINDER_AUDIT_DRIFT,
     get_project_db_path,
     get_preferences_db_path,
     get_reminders_path,
@@ -22,15 +23,20 @@ from .config import (
     project_folder_ignore_patterns,
 )
 from .analyzers import (
+    _effect_file_audit_blocking,
     _effect_get_all_finalized_file_paths,
     _effect_get_all_known_file_paths,
+    build_audit_drift_reminders,
     reconcile_deleted_files,
     reconcile_unregistered_files,
 )
 from .reminders import (
     _effect_append_reminders,
+    _effect_read_reminders,
+    _effect_replace_file_reminders,
     _effect_replace_structure_reminders,
     build_structure_reminders,
+    reminder_files,
 )
 
 
@@ -139,6 +145,32 @@ def refresh_structure_reminders(project_root: str) -> int:
     return len(reminders)
 
 
+def refresh_audit_drift_reminders(project_root: str) -> int:
+    """
+    Effect: Re-audit every file holding an audit_drift reminder and replace
+    that reminder with the file's current drift, dropping it once the file is
+    clean. The watchdog only re-audits a file when it is saved, so drift fixed
+    through the database afterwards (apply_audit_fixes, add_interactions, ...)
+    would otherwise stay reported.
+
+    Runs at session start (run_startup_reconciliation) and at every
+    aimfp_run(is_new_session=False) checkpoint. A file the audit cannot read
+    keeps its reminder.
+
+    Returns the number of audit_drift reminders left.
+    """
+    reminders_path = get_reminders_path(project_root)
+    paths = reminder_files(_effect_read_reminders(reminders_path), REMINDER_AUDIT_DRIFT)
+    for path in paths:
+        blocking = _effect_file_audit_blocking(project_root, path)
+        if blocking is not None:
+            _effect_replace_file_reminders(
+                reminders_path, REMINDER_AUDIT_DRIFT, path,
+                build_audit_drift_reminders(path, blocking),
+            )
+    return len(reminder_files(_effect_read_reminders(reminders_path), REMINDER_AUDIT_DRIFT))
+
+
 # ============================================================================
 # Startup Reconciliation
 # ============================================================================
@@ -151,6 +183,7 @@ def run_startup_reconciliation(project_root: str) -> int:
     1. Files registered in DB but missing from disk (deleted between sessions)
     2. Files on disk but not registered in DB (created outside tracking)
     3. Structural gaps in the modularity layer (refresh_structure_reminders)
+    4. audit_drift reminders fixed since they were written (refresh_audit_drift_reminders)
 
     Returns the number of reminders written.
     """
@@ -159,6 +192,7 @@ def run_startup_reconciliation(project_root: str) -> int:
         return 0
 
     structure_count = refresh_structure_reminders(project_root)
+    refresh_audit_drift_reminders(project_root)
 
     source_directory = _read_infrastructure_value(project_db_path, 'source_directory')
     if not source_directory:

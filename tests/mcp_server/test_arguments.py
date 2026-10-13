@@ -43,7 +43,7 @@ class TestPublishedSchemas:
 
     def test_reserve_functions_item_shape(self, schemas):
         items = schemas["reserve_functions"]["properties"]["functions"]["items"]
-        assert items["required"] == ["name", "file_id"]
+        assert items["required"] == ["name"]           # file_id or file_path
         assert items["properties"]["file_id"] == {"type": "integer"}
         assert items["properties"]["parameters"]["items"]["required"] == ["name"]
 
@@ -126,15 +126,15 @@ class TestValidation:
         _, error = check_tool_arguments(
             "reserve_functions", schemas["reserve_functions"], {"functions": ["print_hi"]}
         )
-        assert "functions[0]: expected {name: string, file_id: integer" in error
+        assert "functions[0]: expected {name: string, file_id?: integer, file_path?: string" in error
         assert "Expected functions: array of {" in error
 
     def test_missing_nested_required(self, schemas):
         _, error = check_tool_arguments(
             "reserve_functions", schemas["reserve_functions"],
-            {"functions": [{"name": "f", "purpose": "p"}]},
+            {"functions": [{"file_id": 1, "purpose": "p"}]},
         )
-        assert "functions[0].file_id: required" in error
+        assert "functions[0].name: required" in error
 
     def test_unknown_and_missing_top_level(self, schemas):
         errors = validate_arguments(schemas["add_item"], {"bogus": 1})

@@ -103,6 +103,21 @@ def test_call_moved_into_sibling_is_one_repoint(project):
     assert r.findings["missing_interactions"]["sample"][0]["target"] == "step"
 
 
+def test_call_reached_through_private_helper_is_not_a_repoint(project):
+    """run stops calling add; tag starts reaching add through _helper: an add and a delete, not a move."""
+    _write(project, "src/app.py", (
+        "from .lib import add\n\n\ndef run(x):\n    return x\n\n\n"
+        "def tag(x):\n    return _helper(x)\n\n\n"
+        "def _helper(x):\n    return add(x, 1)\n"))
+    file_id = _q(project, "SELECT id FROM files WHERE path = 'src/app.py'")[0][0]
+    catalog_functions([{"name": "tag", "file_id": file_id, "purpose": "p",
+                        "parameters": [], "returns": {}}], project_root=project)
+    r = audit_interactions(paths=["src/app.py"], project_root=project)
+    assert r.counts == {"missing_interactions": 1, "stale_interactions": 1}
+    missing = r.findings["missing_interactions"]["sample"][0]
+    assert (missing["source"], missing["target"], missing["via"]) == ("tag", "add", "call via _helper")
+
+
 def test_target_moved_files_is_a_target_repoint(project):
     _write(project, "src/math2.py", "def add(a, b):\n    return a + b\n")
     reconcile_paths(["src/math2.py"], project_root=project)

@@ -423,12 +423,25 @@ def test_review_lists_put_high_priority_first(root):
     _write(root, "notes.md", "elsewhere_word lives in the docs\n")
     reconcile_paths(["src/two.py"], project_root=root)
     _sql(root, "UPDATE functions SET source_hash = NULL")
-    _sql(root, "UPDATE functions SET purpose = 'Returns x, see elsewhere_word' WHERE name = 'first'")
+    _sql(root, "UPDATE functions SET purpose = 'Identity' WHERE name = 'first'")
     _sql(root, "UPDATE functions SET purpose = 'Returns x via missing_word' WHERE name = 'second'")
     r = audit_descriptions(paths=["src/two.py"], project_root=root)
     report, _ = _effect_load_report(root, r.report_path)
     assert [(i["name"], i["priority"]) for i in report["findings"]["unbaselined_needs_review"]] == [
         ("second", "high"), ("first", "low")]
+
+
+def test_names_found_elsewhere_alone_pass_triage(root):
+    """Prose naming another module's function (context, not drift) is baselinable, not review."""
+    from aimfp.helpers.audit.descriptions_audit import audit_descriptions
+    _write(root, "src/two.py", "def first(x) -> int:\n    return x\n")
+    _write(root, "notes.md", "stack_pairs lives in the cloudformation module\n")
+    reconcile_paths(["src/two.py"], project_root=root)
+    _sql(root, "UPDATE functions SET source_hash = NULL, purpose = 'Returns x, the shape cloudformation.stack_pairs expects'")
+    r = audit_descriptions(paths=["src/two.py"], project_root=root)
+    report, _ = _effect_load_report(root, r.report_path)
+    assert [i["name"] for i in report["findings"]["unbaselined_descriptions"]] == ["first"]
+    assert r.counts == {"unbaselined_descriptions": 1}
 
 
 def test_reviewed_triage_and_stale_prose_baseline_by_category_with_exclude(root):

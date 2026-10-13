@@ -47,6 +47,7 @@ from ._common import (
     _discover_project_root,
 )
 
+from ...watchdog.reminders import actionable_watchdog_view
 from .backup import check_and_run_backup
 from .notices import seed_acknowledged_notices
 from .migration import _check_pending_migrations
@@ -810,16 +811,17 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: Optional[bool] = Non
                 )
 
             _refresh_structure_reminders_safe(project_root)
+            _refresh_audit_drift_reminders_safe(project_root)
             watchdog_data = _read_reminders(project_root)
             if not _session_watchdog_enabled:
                 watchdog_data = disabled_watchdog_status(watchdog_data)
-            reminders = watchdog_data.get('reminders', ())
             # Edits to tracked files never pass through a tracking call: link them
             # to the work in progress here, so get_task_context and the
             # completion audit see them
-            _link_changed_files_safe(project_root, reminders)
+            _link_changed_files_safe(project_root, watchdog_data.get('reminders', ()))
 
-            data = {'watchdog': watchdog_data} if reminders else {}
+            watchdog_view = actionable_watchdog_view(watchdog_data)
+            data = {'watchdog': watchdog_view} if watchdog_view['reminders'] else {}
             return Result(
                 success=True,
                 data=data,
@@ -915,7 +917,7 @@ def aimfp_run(is_new_session: bool = False, start_watchdog: Optional[bool] = Non
             'user_settings': user_settings,
             'supportive_context_coding': supportive_context_coding,
             'supportive_context_case2': supportive_context_case2,
-            'watchdog': watchdog_data,
+            'watchdog': actionable_watchdog_view(watchdog_data),
             'case_2_context': case_2_context,
             'backup': backup_data if (backup_data or {}).get('triggered') else None,
             'scheduled_backup': scheduled_backup if (scheduled_backup or {}).get('due') else None,
@@ -1338,6 +1340,19 @@ def _refresh_structure_reminders_safe(project_root: str) -> None:
     try:
         from ...watchdog.reconciliation import refresh_structure_reminders
         refresh_structure_reminders(project_root)
+    except Exception:
+        pass
+
+
+def _refresh_audit_drift_reminders_safe(project_root: str) -> None:
+    """
+    Effect: Re-audit the files holding audit_drift reminders at a checkpoint,
+    so drift fixed through the database since the edit is no longer reported.
+    Never raises.
+    """
+    try:
+        from ...watchdog.reconciliation import refresh_audit_drift_reminders
+        refresh_audit_drift_reminders(project_root)
     except Exception:
         pass
 

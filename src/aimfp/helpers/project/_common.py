@@ -184,6 +184,35 @@ def _effect_defined_function_names(
     return frozenset(fn.name for fn in entities.functions)
 
 
+def resolve_file_ref(
+    conn: sqlite3.Connection,
+    file_id: Optional[int] = None,
+    file_path: Optional[str] = None,
+) -> Tuple[Optional[int], Optional[str], Optional[str]]:
+    """
+    Effect: The tracked file a function or type is being recorded in, named by
+    id, by project-relative path, or both (which must agree).
+
+    Returns:
+        (file_id, path, None) when resolved, else (None, None, error)
+    """
+    if file_path is not None and file_path.strip():
+        wanted = strip_dot_slash(file_path)
+        row = conn.execute("SELECT id FROM files WHERE path = ?", (wanted,)).fetchone()
+        if row is None:
+            return None, None, (f"No tracked file at path '{wanted}' (reserve_file it first if it is new; "
+                                "get_file_by_path checks a path)")
+        if file_id is not None and file_id != row[0]:
+            return None, None, f"file_id {file_id} is not '{wanted}' (that file is id {row[0]}); pass one or make them agree"
+        return row[0], wanted, None
+    if file_id is None:
+        return None, None, "file_id or file_path is required"
+    row = conn.execute("SELECT path FROM files WHERE id = ?", (file_id,)).fetchone()
+    if row is None:
+        return None, None, f"File with ID {file_id} not found"
+    return file_id, row[0], None
+
+
 def _effect_file_paths(conn: sqlite3.Connection, file_ids: Iterable[int]) -> Dict[int, str]:
     """Effect: file id -> recorded path, for the ids that exist and have a path."""
     return {
