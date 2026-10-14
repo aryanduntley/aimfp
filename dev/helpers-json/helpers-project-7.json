@@ -228,7 +228,7 @@
       "is_sub_helper": false,
       "return_statements": [
         "If milestone status changed: call add_note(note_type='task_context', reference_table='milestones', reference_id=<milestone_id>). If scope changed: call add_note(note_type='evolution', directive_name='project_evolution', reference_table='milestones', reference_id=<milestone_id>)",
-        "If status='completed': FLOW REVIEW — get_flows_for_milestone(milestone_id); for each flow, update_flow its description to match what was actually built; split any flow that absorbed several behaviours (add_flow + move_files_to_flow); add flows for behaviour that has none. Then get_structure_health() and fix gaps this milestone introduced.",
+        "If status='completed': FLOW REVIEW — get_flows_for_milestone(milestone_id); for each flow whose behaviour this milestone changed, update_flow to revise its description in place so it describes the current behaviour (replace stale text, don't append what the milestone built; the description is not an evolution log, history goes in the evolution note; no milestone tags, note numbers or function names); a file that gained behaviour may now serve another flow (add_file_flows); split any flow that absorbed several behaviours (add_flow + move_files_to_flow); add flows for behaviour that has none. Then get_structure_health() and fix gaps this milestone introduced.",
         "If status='completed': call get_milestones_by_path(completion_path_id) — if all completed, call update_completion_path(id, status='completed')",
         "Call aimfp_run(is_new_session=false) — returns watchdog info about external file changes detected since your last check."
       ],

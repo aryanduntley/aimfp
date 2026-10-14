@@ -3160,7 +3160,8 @@
             "action": "Flow review before closing the milestone — flows evolve with milestones",
             "steps": [
               "get_flows_for_milestone(milestone_id) — the flows this milestone built or changed",
-              "For each flow: update_flow its description to match what was actually built",
+              "For each flow: if this milestone changed what the flow does, update_flow to rewrite its description so it describes the current behaviour. Revise in place: replace stale statements, don't append a per-milestone account of what was built. The description is not an evolution log (history belongs in the evolution note). Keep milestone tags, decision/note numbers and module/function names out of it. Unchanged behaviour: leave the description alone",
+              "Reminder: a file that gained behaviour this milestone may now serve another flow (add_file_flows)",
               "Split any flow that absorbed several behaviours (structure_health oversized_flows): add_flow per behaviour with theme_ids, move_files_to_flow for its files, add_milestone_flows for this milestone",
               "Behaviour built with no flow: add_flow and link files/milestone",
               "get_structure_health(): fix gaps this milestone introduced (files without flow or module, flows without theme)",

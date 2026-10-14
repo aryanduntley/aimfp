@@ -448,7 +448,7 @@
           "type": "string",
           "required": false,
           "default": null,
-          "description": "New description (NULL = don't update)"
+          "description": "What the flow does now; replaces the old text. Not an evolution log: history goes in add_note(note_type='evolution') (NULL = don't update)"
         },
         {
           "name": "confidence_score",
@@ -463,8 +463,8 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "Call add_note(note_type='evolution', directive_name='project_evolution', reference_table='flows', reference_id=<flow_id>) describing the flow change",
-        "SPLIT, DON'T GROW: if the description now covers more than one behaviour (or exceeds ~1500 chars — structure_health reports it as oversized), split it: add_flow(name, theme_ids, description) for each distinct behaviour, move_files_to_flow(file_ids, from_flow_id, to_flow_id) for their files, add_milestone_flows for the milestone, and trim this description to what remains."
+        "The description is not an evolution log. It states what the flow does now: revise it in place, never append what each task or milestone added. Keep milestone tags, decision/note numbers and module/function names out of it: history goes in evolution notes, code location in the file-flow links. Call add_note(note_type='evolution', directive_name='project_evolution', reference_table='flows', reference_id=<flow_id>) for the change history",
+        "SPLIT, DON'T GROW: if the description now covers more than one behaviour (or exceeds ~1500 chars — structure_health reports it as oversized), split it: add_flow(name, theme_ids, description) for each distinct behaviour, move_files_to_flow(file_ids, from_flow_id, to_flow_id) for their files, add_milestone_flows for the milestone, and trim this description to what remains. Rewording to get back under the limit is not a fix."
       ],
       "implementation_notes": [
         "Returns: {success: true}",
