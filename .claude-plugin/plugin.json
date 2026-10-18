@@ -1,13 +1,13 @@
 {
   "name": "aimfp",
   "description": "AI Modular Functional Procedural — database-driven FP enforcement and project management for AI-assisted development. ~250 MCP tools (approximate, subject to change) over 4 SQLite databases, directive-driven workflows.",
-  "version": "1.66.1",
+  "version": "1.67.0",
   "author": {
     "name": "Aryan Duntley"
   },
   "homepage": "https://github.com/aryanduntley/aimfp",
   "repository": "https://github.com/aryanduntley/aimfp",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "keywords": [
     "functional-programming",
     "project-management",

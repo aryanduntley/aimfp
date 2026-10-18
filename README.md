@@ -1261,11 +1261,19 @@ AIMFP is an **open standard** for AI-optimized programming. Contributions welcom
 3. **Templates** — ADT boilerplate, error handling patterns
 4. **Documentation** — Examples, tutorials, case studies
 
+By submitting a contribution (pull request, patch, or other material), you agree that it may be distributed under the PolyForm Noncommercial License 1.0.0 and under any commercial license the copyright holder grants for AIMFP, and you confirm you have the right to make that grant.
+
 ---
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details.
+AIMFP is licensed under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0). See [LICENSE](LICENSE) for the full terms.
+
+**Free for noncommercial use:** personal study, research, experimentation, hobby projects, and use by charitable organizations, educational institutions, public research organizations, and government institutions.
+
+**Commercial use requires written approval.** This covers any for-profit use, including use by or for a business, use in paid or client work, selling or redistributing AIMFP or a derivative of it, and offering it as part of a paid product or service. To request a commercial license, contact Aryan Duntley at aryanduntley@gmail.com.
+
+Versions up to and including 1.66.1 were released under the MIT License, and copies of those versions remain under MIT. Every later version is licensed only under the PolyForm Noncommercial License 1.0.0.
 
 ---
 

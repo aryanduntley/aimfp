@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **License changed from MIT to PolyForm Noncommercial 1.0.0.** Noncommercial use (personal, research, hobby, charitable/educational/government organizations) remains free; any commercial use now requires a separate written license from the copyright holder (aryanduntley@gmail.com). Versions up to and including 1.66.1 remain under MIT.
+
 ## [0.1.0] - 2026-02-10
 
 ### Added
