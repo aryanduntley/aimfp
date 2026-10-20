@@ -42,6 +42,11 @@ EXPECTED_HOOKS = {
     'trigger_config_grammar',
     'next_fire_time',
     'action_config_grammar',
+    # Task 73: approval is a person's decision, recorded by a host's human
+    # path. These must never be AI-callable.
+    'approve_user_directive',
+    'revoke_user_directive_approval',
+    'get_directive_approval',
 }
 
 

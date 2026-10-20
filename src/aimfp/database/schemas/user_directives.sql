@@ -1,8 +1,14 @@
 -- user_directives.db Schema
--- Version: 1.2
+-- Version: 1.5
 -- Purpose: Store user-defined domain-specific directives (home automation, cloud infrastructure, etc.)
 -- Location: .aimfp-project/user_directives.db
 -- Changelog v1.1: Added notes table for AI record-keeping
+-- Changelog v1.3: Skip visibility and condition latch columns on directive_executions
+-- Changelog v1.4: entry_deletion note type (deletion trail)
+-- Changelog v1.5: approved_by + approval_hash. Approval is written only by
+--   aimfp.hooks.approval (a host's human-facing path, never an MCP tool) and
+--   holds only while approval_hash matches the directive's content. Rows
+--   approved before 1.5 carry no hash and need approving again.
 
 -- ===============================================================
 -- Core Directive Storage
@@ -82,9 +88,14 @@ CREATE TABLE IF NOT EXISTS user_directives (
     validated_at DATETIME,
     validated_by TEXT DEFAULT 'ai',
 
-    -- Approval tracking (user testing and approval)
+    -- Approval tracking (user testing and approval). Written ONLY by
+    -- aimfp.hooks.approval; the generic user_custom write tools refuse these
+    -- columns. Approval holds only while approval_hash still matches the
+    -- directive's content (hooks/approval.py::directive_content_hash).
     approved BOOLEAN DEFAULT 0,                     -- User has tested and approved implementation
     approved_at DATETIME,                           -- When user approved
+    approved_by TEXT,                               -- Who approved, as the host labels them (1.5)
+    approval_hash TEXT,                             -- Content hash at approval time (1.5)
 
     -- Metadata
     priority INTEGER DEFAULT 0,                     -- Higher = more important
@@ -476,4 +487,4 @@ CREATE TABLE IF NOT EXISTS schema_version (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.4');
+INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, '1.5');

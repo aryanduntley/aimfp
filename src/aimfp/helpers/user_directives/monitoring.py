@@ -44,6 +44,12 @@ from ...database.connection import (
     get_cached_project_root,
     get_user_directives_db_path,
 )
+from ...hooks.approval import (
+    APPROVAL_NEEDS_REAPPROVAL,
+    APPROVAL_UNAPPROVED,
+    approval_state,
+    directive_columns,
+)
 from ...hooks.config import load_log_config, resolve_log_path
 from ...hooks.logs import ERROR_LOG_NAME
 from ..utils import get_return_statements
@@ -51,6 +57,8 @@ from ..utils import get_return_statements
 # Health states, ordered most to least actionable. assess_directive_health
 # applies them in exactly this precedence: a directive already in error state
 # is not better news for being on schedule.
+HEALTH_UNAPPROVED = 'unapproved'
+HEALTH_NEEDS_REAPPROVAL = 'needs_reapproval'
 HEALTH_ERROR = 'error'
 HEALTH_OVERDUE = 'overdue'
 HEALTH_SKIPPING = 'skipping'
@@ -59,7 +67,7 @@ HEALTH_NEVER_RUN = 'never_run'
 HEALTH_OK = 'ok'
 
 HEALTH_ORDER = (
-    HEALTH_ERROR, HEALTH_OVERDUE, HEALTH_SKIPPING, HEALTH_DEGRADED,
+    HEALTH_UNAPPROVED, HEALTH_NEEDS_REAPPROVAL, HEALTH_ERROR, HEALTH_OVERDUE, HEALTH_SKIPPING, HEALTH_DEGRADED,
     HEALTH_NEVER_RUN, HEALTH_OK)
 
 # Optional directive_executions columns (user_directives schema 1.3). Read
@@ -98,6 +106,7 @@ class DirectiveHealth:
     consecutive_skip_count: int = 0
     last_skip_time: Optional[str] = None
     last_skip_reason: Optional[str] = None
+    approval: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -216,6 +225,8 @@ def _classify_one(
         threshold=error_rate_threshold,
         last_error_type=row.get('last_error_type'),
         last_error_message=row.get('last_error_message'),
+        approval=row.get('approval_state'),
+        approval_reason=row.get('approval_reason'),
         skipping=_is_skipping(
             consecutive_skips,
             row.get('last_skip_time'),
@@ -245,6 +256,7 @@ def _classify_one(
         consecutive_skip_count=consecutive_skips,
         last_skip_time=row.get('last_skip_time'),
         last_skip_reason=row.get('last_skip_reason'),
+        approval=row.get('approval_state'),
     )
 
 
@@ -286,13 +298,28 @@ def _verdict(
     skipping: bool = False,
     consecutive_skips: int = 0,
     last_skip_reason: Optional[str] = None,
+    approval: Optional[str] = None,
+    approval_reason: Optional[str] = None,
 ) -> Tuple[str, str]:
     """
     Pure: Choose the health state and its one-line explanation.
 
     Precedence is most-actionable-first and deliberate: a directive already in
-    error state is not better news for being on schedule.
+    error state is not better news for being on schedule. Approval comes
+    first of all - dispatch withholds an active directive nobody approved, or
+    one that changed since approval, so its run statistics describe nothing.
+    An unapproved directive that is not active is ordinary pre-approval
+    lifecycle and is not flagged.
     """
+    if status == 'active' and approval == APPROVAL_UNAPPROVED:
+        return HEALTH_UNAPPROVED, (
+            "active but never approved by a person - dispatch withholds it; "
+            "run user_directive_approve")
+    if approval == APPROVAL_NEEDS_REAPPROVAL:
+        return HEALTH_NEEDS_REAPPROVAL, (
+            f"{approval_reason or 'approval no longer matches its content'} - "
+            f"dispatch and activation refuse it until a person approves it again")
+
     if status == HEALTH_ERROR:
         message = last_error_message or 'no message recorded'
         return HEALTH_ERROR, f"directive status is error ({message})"
@@ -513,9 +540,13 @@ def check_directive_health(
         return HealthResult(success=False, error=_NO_DATABASE)
 
     try:
-        rows = _effect_read_stats(db_path, directive_id=None)
+        stats = _effect_read_stats(db_path, directive_id=None)
+        approvals = _effect_read_approvals(db_path, root)
     except sqlite3.Error as exc:
         return HealthResult(success=False, error=str(exc))
+
+    rows = tuple(
+        {**row, **approvals.get(row['id'], {})} for row in stats)
 
     verdicts = assess_directive_health(
         rows, _now_iso(), error_rate_threshold, skip_threshold)
@@ -579,6 +610,38 @@ def _effect_read_stats(
     finally:
         if conn is not None:
             _close_connection(conn)
+
+
+def _effect_read_approvals(
+    db_path: str,
+    project_root: str,
+) -> Dict[int, Dict[str, str]]:
+    """
+    Effect: {directive_id: {approval_state, approval_reason}} for every directive.
+
+    The same check dispatch and activation use (hooks/approval.py), so health
+    reports exactly what get_due_directives will withhold. Reads each
+    directive's implementation file to hash it.
+    """
+    conn = None
+    try:
+        conn = _open_connection(db_path)
+        optional = ', approval_hash' if 'approval_hash' in directive_columns(conn) else ''
+        rows = conn.execute(
+            f"""
+            SELECT id, name, trigger_type, trigger_config, action_type,
+                   action_config, implementation_file_path, approved{optional}
+            FROM user_directives
+            """
+        ).fetchall()
+    finally:
+        if conn is not None:
+            _close_connection(conn)
+    return {
+        row['id']: dict(zip(('approval_state', 'approval_reason'),
+                            approval_state(project_root, row)))
+        for row in rows
+    }
 
 
 def _effect_read_error_log(log_path: str) -> Tuple[list, int]:

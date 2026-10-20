@@ -410,9 +410,10 @@ This directive applies when:
    ```sql
    UPDATE user_directives
    SET implementation_status = 'implemented',
-       implemented_at = CURRENT_TIMESTAMP,
-       approved = false  -- Requires user testing and approval
+       implemented_at = CURRENT_TIMESTAMP
    WHERE id = ?;
+   -- Never write approved: it starts false, only the user's approval through
+   -- the host sets it (user_directive_approve), and the generic tools refuse it.
 
    -- Status stays 'in_progress' until user approves
    -- Do NOT change project.user_directives_status yet

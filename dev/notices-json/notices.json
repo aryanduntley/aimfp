@@ -79,6 +79,16 @@
       "applies_to_db": "project",
       "applies_from_version": "1.16",
       "introduced_in": "1.64.0"
+    },
+    {
+      "notice_key": "user_directive_approval_integrity",
+      "title": "User-directive approval is now human-only and bound to content; earlier approvals need approving again",
+      "message": "Approving a user directive is now something only the user can do. The generic write tools (update_user_custom_entry, add_user_custom_entry) refuse approved, approved_at, approved_by, approval_hash and status='active'. The user approves in their own terminal with `aimfp directives approve <name>` (it shows the directive and asks them to type its name back, and refuses a non-interactive stdin); an application embedding AIMFP calls aimfp.hooks.approval.approve_user_directive from its own approve command. Approval stores a hash of the trigger, action and implementation file, and any later change voids it.\n\nget_due_directives now returns only approved, unchanged directives; the rest are listed in its withheld field. Approvals recorded before user_directives schema 1.5 have no hash, so they read as needs_reapproval: those directives stop dispatching until the user approves them again.\n\nTELL THE USER this, run check_directive_health, and list every directive reported 'unapproved' or 'needs_reapproval' with the command to approve each (`aimfp directives approve <name>`). Never record an approval for them.",
+      "severity": "warning",
+      "action_required": true,
+      "applies_to_db": "user_directives",
+      "applies_from_version": "1.5",
+      "introduced_in": "1.68.0"
     }
   ]
 }

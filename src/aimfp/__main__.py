@@ -12,6 +12,10 @@ Usage:
     python -m aimfp audit [...]      Audit tracking against the source (CI / pre-commit);
                                      exit 0 clean, 1 blocking findings, 2 error.
                                      `aimfp audit --help` lists the options.
+    python -m aimfp directives list|approve|revoke [...]
+                                     List user directives, or approve / revoke one.
+                                     approve is interactive (a person types the
+                                     name back) and refuses a non-terminal stdin.
     python -m aimfp --project-dir <rel>
                                      Keep this folder's project databases at
                                      <cwd>/<rel> instead of <cwd>/.aimfp-project.
@@ -50,10 +54,14 @@ def _apply_server_flags(argv: tuple) -> None:
 
 
 def main() -> None:
-    """Start the AIMFP MCP server, run `aimfp audit`, or print the system prompt."""
+    """Start the AIMFP MCP server, run `aimfp audit` / `aimfp directives`, or print the system prompt."""
     if len(sys.argv) > 1 and sys.argv[1] == "audit":
         from .helpers.audit.cli import main_audit
         sys.exit(main_audit(sys.argv[2:]))
+
+    if len(sys.argv) > 1 and sys.argv[1] == "directives":
+        from .helpers.user_directives.cli import main_directives
+        sys.exit(main_directives(sys.argv[2:]))
 
     if "--system-prompt" in sys.argv:
         prompt_path = Path(__file__).parent / "reference" / "system_prompt.txt"

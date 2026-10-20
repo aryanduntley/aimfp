@@ -14,7 +14,7 @@ Helpers in this file:
 
 import sqlite3
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from ..utils import get_return_statements, _parse_check_constraint
 
@@ -30,6 +30,9 @@ from ...hooks.actions import action_config_grammar
 from ...hooks.actions import validate_action_config as _hook_validate_action_config
 from ...hooks.triggers import trigger_config_grammar
 from ...hooks.triggers import validate_trigger_config as _hook_validate_trigger_config
+
+# Same direction for approval: hooks/approval.py owns which columns record it.
+from ...hooks.approval import APPROVAL_COLUMNS
 
 
 # ============================================================================
@@ -275,6 +278,75 @@ def _reject_invalid_action_config(
         f"action_config does not carry the envelope AIMFP requires for "
         f"action_type '{action_type}': " + '; '.join(validation.errors)
     )
+
+
+# Approval is a human decision recorded by aimfp.hooks.approval, which a host
+# calls from its own human-facing path. These generic write tools are the AI's
+# reach into user_directives.db, so they may never write it.
+_APPROVAL_REFUSAL = (
+    "{what} cannot be written through the generic user_custom tools: approval "
+    "is a person's decision. Present the directive to the user and ask; the "
+    "host application records the answer with "
+    "aimfp.hooks.approval.approve_user_directive, which is not an MCP tool. "
+    "Once approved, activate with activate_user_directive."
+)
+
+
+def _reject_unknown_columns(
+    columns: frozenset,
+    table: str,
+    data: Dict[str, Any],
+) -> Optional[str]:
+    """
+    Pure: Return a rejection for any key that is not a column, else None.
+
+    Keys are spliced into the SQL as column names, so a key must BE a column
+    (compared without case, as SQLite does). This is what makes the protected
+    column check below sound: '"approved"' or 'APPROVED' cannot slip past it.
+
+    Args:
+        columns: The table's column names (PRAGMA table_info)
+        table: Table name, for the message
+        data: Field-value pairs being written
+
+    Returns:
+        A message naming the unknown keys, or None
+    """
+    known = {name.lower() for name in columns}
+    unknown = sorted(key for key in data if not isinstance(key, str) or key.lower() not in known)
+    if not unknown:
+        return None
+    return f"Unknown column(s) for {table}: {', '.join(map(str, unknown))}"
+
+
+def _reject_approval_writes(table: str, data: Dict[str, Any]) -> Optional[str]:
+    """
+    Pure: Return a rejection for a write that would grant approval, else None.
+
+    On user_directives: the approval columns are never writable here, and
+    neither is status 'active', which activate_user_directive sets only for an
+    approved directive. Call after _reject_unknown_columns.
+
+    Args:
+        table: Table being written
+        data: Field-value pairs being written
+
+    Returns:
+        A message that names the human approval path, or None
+    """
+    if table != 'user_directives':
+        return None
+    protected = sorted(key for key in data if key.lower() in APPROVAL_COLUMNS)
+    if protected:
+        return _APPROVAL_REFUSAL.format(what=', '.join(protected))
+    status = next((value for key, value in data.items() if key.lower() == 'status'), None)
+    if isinstance(status, str) and status.strip().lower() == 'active':
+        return (
+            "status 'active' cannot be written through the generic user_custom "
+            "tools. Use activate_user_directive, which activates only a directive "
+            "a person approved and that is unchanged since."
+        )
+    return None
 
 
 def validate_trigger_config(

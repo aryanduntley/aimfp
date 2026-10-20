@@ -44,6 +44,7 @@ from aimfp.hooks.directives import (
     set_condition_state,
 )
 from aimfp.hooks.logs import build_skip_record
+from aimfp.hooks.approval import approve_user_directive
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCHEMA_PATH = os.path.join(
@@ -113,6 +114,10 @@ def _add_directive(root: str, name: str = "d", trigger_type: str = "time") -> in
     conn.commit()
     directive_id = cur.lastrowid
     conn.close()
+    # Active directives dispatch only when a person approved them. A fixture
+    # built on a pre-1.5 schema cannot record approval; those tests only
+    # migrate, they never dispatch.
+    approve_user_directive(directive_id, "test", root)
     return directive_id
 
 
@@ -302,6 +307,7 @@ def test_skip_record_builder_shape():
 
 def test_health_order_places_skipping_after_overdue_before_degraded():
     assert HEALTH_ORDER == (
+        'unapproved', 'needs_reapproval',
         'error', 'overdue', 'skipping', 'degraded', 'never_run', 'ok')
 
 
@@ -594,7 +600,7 @@ def test_schema_1_2_database_migrates_with_rows_intact():
     assert len(migrated) == 1
     entry = migrated[0]
     assert entry['old_version'] == '1.2'
-    assert entry['new_version'] == '1.4'
+    assert entry['new_version'] == '1.5'
     assert all(v['match'] for v in entry['verification'].values())
 
     conn = sqlite3.connect(entry['original_db_path'])

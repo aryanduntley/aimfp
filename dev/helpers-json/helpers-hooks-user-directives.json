@@ -39,7 +39,7 @@
           "description": "ISO timestamp to evaluate due-ness against. Defaults to the current time; a parameter so schedules are testable without moving the system clock."
         }
       ],
-      "purpose": "HOOK. Return the active directives the caller's runner may execute now. Time triggers are filtered by next_scheduled_time against `now`; event, condition and manual triggers are returned unfiltered because only the caller can judge them. Each DueDirective carries trigger_config, action_type, action_config and implementation_file_path, so the runner dispatches without a second query. Each DueDirective also carries condition_latched and last_condition_eval_time, the persisted edge-trigger state for condition directives (False/None on a database not yet migrated to schema 1.3).",
+      "purpose": "HOOK. Return the active directives the caller's runner may execute now. Time triggers are filtered by next_scheduled_time against `now`; event, condition and manual triggers are returned unfiltered because only the caller can judge them. Each DueDirective carries trigger_config, action_type, action_config and implementation_file_path, so the runner dispatches without a second query. Each DueDirective also carries condition_latched and last_condition_eval_time, the persisted edge-trigger state for condition directives (False/None on a database not yet migrated to schema 1.3). Only APPROVED directives are returned: approved by a person through hooks/approval.py and unchanged since. An active directive that is unapproved or changed since approval is listed in DueDirectivesResult.withheld (directive_id, name, state, reason) instead; status 'active' alone is never authority to run.",
       "error_handling": "Returns DueDirectivesResult(success=False) with an explanatory error when user_directives.db is absent \u2014 a Use Case 1 project must be askable without guarding. Never raises.",
       "is_tool": false,
       "is_sub_helper": false,
@@ -387,6 +387,101 @@
       ],
       "purpose": "HOOK. Return the envelope every action_config must satisfy - required and optional keys per action_type, one conforming example each, and for function_call and command a note saying what the caller must still check. Single source for the validator's rules, the MCP tool's failure response and the directive documentation, so the documented spec cannot drift from the enforced one.",
       "error_handling": "Never raises. An unrecognised action_type yields an empty dict.",
+      "is_tool": false,
+      "is_sub_helper": false,
+      "is_hook": true,
+      "return_statements": [],
+      "target_database": "user_directives"
+    },
+    {
+      "name": "approve_user_directive",
+      "file_path": "hooks/approval.py",
+      "parameters": [
+        {
+          "name": "directive_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "Directive being approved"
+        },
+        {
+          "name": "approved_by",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Who approved, as the host labels them (e.g. 'user', a username)"
+        },
+        {
+          "name": "project_root",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Absolute path to the project root"
+        }
+      ],
+      "purpose": "HOOK. Record a PERSON's approval of a directive as it is right now. Call it only from a human-facing path: a host's approve command or button, or the `aimfp directives approve` CLI. Never an MCP tool: if the AI could call it, approval would be something the model grants itself. Sets approved, approved_at, approved_by and approval_hash (sha256 over name, trigger, action, implementation_file_path and the implementation file's bytes) and writes a lifecycle note, in one transaction. Any later change to that content voids the approval: get_due_directives withholds the directive, activate_user_directive refuses it, check_directive_health reports needs_reapproval. Activation still goes through activate_user_directive.",
+      "error_handling": "Returns HookMutationResult(success=False) when user_directives.db is absent, when it predates schema 1.5 (run migrate_databases), when the directive is missing, or when approved_by is blank. Never raises.",
+      "is_tool": false,
+      "is_sub_helper": false,
+      "is_hook": true,
+      "return_statements": [],
+      "target_database": "user_directives"
+    },
+    {
+      "name": "revoke_user_directive_approval",
+      "file_path": "hooks/approval.py",
+      "parameters": [
+        {
+          "name": "directive_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "Directive whose approval is withdrawn"
+        },
+        {
+          "name": "project_root",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Absolute path to the project root"
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "description": "Why, recorded in the lifecycle note"
+        }
+      ],
+      "purpose": "HOOK. Withdraw a directive's approval from a human-facing path: clears approved, approved_at, approved_by and approval_hash, pauses the directive if it is active, and writes a lifecycle note.",
+      "error_handling": "Returns HookMutationResult(success=False) when user_directives.db is absent, predates schema 1.5, or the directive is missing. Never raises.",
+      "is_tool": false,
+      "is_sub_helper": false,
+      "is_hook": true,
+      "return_statements": [],
+      "target_database": "user_directives"
+    },
+    {
+      "name": "get_directive_approval",
+      "file_path": "hooks/approval.py",
+      "parameters": [
+        {
+          "name": "directive_id",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "description": "Directive to check"
+        },
+        {
+          "name": "project_root",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Absolute path to the project root"
+        }
+      ],
+      "purpose": "HOOK. Report a directive's approval state, so a host can show it before asking a person to approve: 'approved' (approved and unchanged since), 'unapproved', or 'needs_reapproval' (approved, but the content hash no longer matches, or it was approved before schema 1.5). The same check dispatch, activation and health use.",
+      "error_handling": "Returns ApprovalState(success=False) with an error when user_directives.db is absent or the directive is missing. Never raises.",
       "is_tool": false,
       "is_sub_helper": false,
       "is_hook": true,

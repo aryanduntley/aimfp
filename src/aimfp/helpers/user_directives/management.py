@@ -30,12 +30,14 @@ from ._common import (
     get_user_directives_db_path,
     _open_directives_connection,
     _directive_exists_by_id,
-    _directive_is_approved,
     _validate_note_type,
     _validate_severity,
     VALID_NOTE_TYPES,
     VALID_SEVERITY_LEVELS
 )
+
+# One approval check for activation, dispatch and health (hooks/approval.py).
+from ...hooks.approval import APPROVAL_APPROVED, approval_state
 
 
 # ============================================================================
@@ -240,7 +242,9 @@ def activate_user_directive(
         MutationResult with success/error
 
     Note:
-        Requires directive to be approved (approved=true).
+        Requires the directive to be approved by a person and unchanged since
+        (hooks/approval.py::approval_state): approved alone is not enough if
+        the trigger, action or implementation file changed after approval.
         Only updates DB status. Actual deployment is AI's responsibility
         via the user_directive_activate directive workflow.
     """
@@ -256,12 +260,22 @@ def activate_user_directive(
                 error=f"Directive with id {directive_id} not found"
             )
 
-        # Check if directive is approved
-        if not _directive_is_approved(conn, directive_id):
+        # Approved by a person, and unchanged since?
+        row = conn.execute(
+            "SELECT * FROM user_directives WHERE id = ?", (directive_id,)
+        ).fetchone()
+        state, reason = approval_state(project_root, row)
+        if state != APPROVAL_APPROVED:
             conn.close()
             return MutationResult(
                 success=False,
-                error=f"Directive {directive_id} is not approved. Run user_directive_approve first."
+                error=(
+                    f"Directive {directive_id} cannot be activated: {reason}. "
+                    f"Follow user_directive_approve: present the directive to the "
+                    f"user and ask. Approval is recorded by the host application "
+                    f"(aimfp.hooks.approval.approve_user_directive), not by an "
+                    f"MCP tool."
+                )
             )
 
         # Update status to active

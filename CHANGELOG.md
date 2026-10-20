@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **User-directive approval is human-only and bound to content** (user_directives schema 1.5). Before this, an AI could approve and activate its own automation: `update_user_custom_entry` / `add_user_custom_entry` accepted `approved=1`, and `status='active'` on an *unapproved* row was dispatched by `get_due_directives`, which never read `approved`.
+  - The generic write tools now refuse `approved`, `approved_at`, `approved_by`, `approval_hash` and `status='active'` on `user_directives`. Every key must also be a real column, so a case or quoting variant cannot slip past.
+  - New library-only hooks (never MCP tools) in `aimfp.hooks.approval`: `approve_user_directive`, `revoke_user_directive_approval`, `get_directive_approval`. Approval stores a sha256 over the trigger, the action, the implementation file path and the implementation file's bytes. Any later change voids it.
+  - `get_due_directives` returns only approved, unchanged directives and lists the rest in a new `withheld` field. `activate_user_directive` refuses them. `check_directive_health` reports the new `unapproved` and `needs_reapproval` states.
+  - New `aimfp directives list|approve|revoke` command: the human approval path when AIMFP runs as a plain MCP server. `approve` shows the directive and has the person type its name back, and it refuses a non-interactive stdin.
+  - **Migration:** approvals recorded before 1.5 have no hash and read as `needs_reapproval`, so those directives stop dispatching until the user approves them again. A one-time release notice tells the AI to walk the user through it.
+  - The `user_directive_approve` / `activate` / `update` / `implement` directives are rewritten: the AI presents the directive and the user approves. Broken SQL in the approve workflow (a nonexistent `approved_by` column, wrong notes columns, and a nonexistent `'approval'` note type) is gone.
+  - **Embedders:** write approval with `approve_user_directive` / `revoke_user_directive_approval` instead of `update_user_custom_entry({"approved": ...})`, which is now refused.
+
 ### Changed
 - **License changed from MIT to PolyForm Noncommercial 1.0.0.** Noncommercial use (personal, research, hobby, charitable/educational/government organizations) remains free; any commercial use now requires a separate written license from the copyright holder (aryanduntley@gmail.com). Versions up to and including 1.66.1 remain under MIT.
 

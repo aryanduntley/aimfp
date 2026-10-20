@@ -286,22 +286,3 @@ def _directive_exists_by_id(conn: sqlite3.Connection, directive_id: int) -> bool
         (directive_id,)
     )
     return cursor.fetchone() is not None
-
-
-def _directive_is_approved(conn: sqlite3.Connection, directive_id: int) -> bool:
-    """
-    Effect: Check if directive is approved.
-
-    Args:
-        conn: Database connection
-        directive_id: Directive ID
-
-    Returns:
-        True if approved=1, False otherwise (including if not found)
-    """
-    cursor = conn.execute(
-        "SELECT approved FROM user_directives WHERE id = ?",
-        (directive_id,)
-    )
-    row = cursor.fetchone()
-    return bool(row['approved']) if row else False

@@ -131,7 +131,7 @@
           "description": "Consecutive skipped occurrences at or above which a directive is reported skipping"
         }
       ],
-      "purpose": "Assess every user directive and report which need attention. The health states, in the order they are checked: 'error' (the directive's own status is error); 'overdue' (next_scheduled_time is in the past, meaning the runner said when it would next fire and did not); 'skipping' (consecutive_skip_count is at or above skip_threshold with no run since the last skip, meaning the runner is alive but keeps skipping occurrences, usually because the host is down at the scheduled time); 'degraded' (error rate at or above the threshold); 'never_run' (active but never executed; when dispatch errors exist, the detail says the runner is running but refusing or failing to dispatch, otherwise that the runner may not be deployed); or 'ok'. Returns a verdict per directive with a one-line explanation and the skip fields, plus a count per state, designed to render as a single sentence at session start.",
+      "purpose": "Assess every user directive and report which need attention. The health states, in the order they are checked: 'unapproved' (status is active but no person approved it, so dispatch withholds it); 'needs_reapproval' (approved, but the trigger, action or implementation file changed since, or it was approved before schema 1.5 without a content hash; dispatch and activation refuse it until the user approves again); 'error' (the directive's own status is error); 'overdue' (next_scheduled_time is in the past, meaning the runner said when it would next fire and did not); 'skipping' (consecutive_skip_count is at or above skip_threshold with no run since the last skip, meaning the runner is alive but keeps skipping occurrences, usually because the host is down at the scheduled time); 'degraded' (error rate at or above the threshold); 'never_run' (active but never executed; when dispatch errors exist, the detail says the runner is running but refusing or failing to dispatch, otherwise that the runner may not be deployed); or 'ok'. Returns a verdict per directive with a one-line explanation and the skip fields, plus a count per state, designed to render as a single sentence at session start.",
       "error_handling": "Returns success=False with an explanatory error when user_directives.db is absent. Classification itself is a pure function of the rows, the current time, and the threshold.",
       "is_tool": true,
       "is_sub_helper": false,
@@ -141,7 +141,8 @@
         "'overdue' is the dead-runner signal: the directive's own scheduler declared a next run time and that moment has passed. Check that the generated runner is still deployed and running.",
         "'skipping' means the runner is alive but keeps skipping scheduled occurrences (see last_skip_reason). Missed occurrences are never caught up, so a skipping directive is not running at all - check whether the host is up at the scheduled time, or move the schedule.",
         "'never_run' with zero errors usually means implementation completed but the runner was never deployed or its scheduler was never registered. With dispatch errors, the runner IS deployed and is refusing or failing before execution (denied, unmappable, misconfigured) - call get_recent_directive_errors.",
-        "A directive with no next_scheduled_time can never be reported overdue. If its runner does not call set_next_scheduled_time when scheduling, silence is indistinguishable from health."
+        "A directive with no next_scheduled_time can never be reported overdue. If its runner does not call set_next_scheduled_time when scheduling, silence is indistinguishable from health.",
+        "'unapproved' or 'needs_reapproval'? Only the user can fix it: follow user_directive_approve and ask them to run `aimfp directives approve <name>` (or their host's approve command). Never write approval yourself."
       ],
       "target_database": "user_directives",
       "used_by_directives": [
@@ -156,6 +157,14 @@
           "execution_context": "query_directive_statistics",
           "sequence_order": 2,
           "is_required": false
+        },
+        {
+          "directive_name": "user_directive_approve",
+          "execution_context": "request_user_approval",
+          "sequence_order": 3,
+          "is_required": true,
+          "parameters_mapping": {},
+          "description": "Verify the user's approval landed: no 'unapproved' / 'needs_reapproval' verdict for the directive"
         }
       ],
       "annotations": {

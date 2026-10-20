@@ -28,6 +28,7 @@ from aimfp.hooks.directives import (
     set_next_scheduled_time,
 )
 from aimfp.hooks.schedule import next_fire_time
+from aimfp.hooks.approval import approve_user_directive
 
 SCHEMA_PATH = os.path.join(
     os.path.dirname(__file__), "..", "src", "aimfp", "database", "schemas",
@@ -75,6 +76,8 @@ def _add_directive(root: str, trigger_type: str, trigger_config: str) -> int:
     conn.commit()
     directive_id = cursor.lastrowid
     conn.close()
+    # Active directives dispatch only when a person approved them.
+    assert approve_user_directive(directive_id, "test", root).success
     return directive_id
 
 

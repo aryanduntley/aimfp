@@ -16,6 +16,13 @@ Load via: get_supportive_context(variant='case2')
   user_directive_approve → user_directive_activate → status='active'
   user_directive_monitor | user_directive_update (changes trigger full re-pipeline)
 
+  APPROVAL IS THE USER'S, NEVER YOURS. Present the directive and ask; the user runs
+  `aimfp directives approve <name>` in their terminal (or their host app's approve).
+  The write tools refuse approved/approved_at/approved_by/approval_hash and
+  status='active'; activate only with activate_user_directive. Approval is bound to
+  a content hash: any change to trigger, action or implementation file voids it
+  (health: needs_reapproval; get_due_directives withholds it).
+
 3. CONFIG GRAMMAR (enforced — a bad config cannot be stored)
 
   trigger_config and action_config have a grammar. add_user_custom_entry and

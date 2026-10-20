@@ -343,8 +343,8 @@
           "description": "Field-value pairs to insert"
         }
       ],
-      "purpose": "Add entry to user_directives.db table. Returns inserted record with ID.",
-      "error_handling": "Return error if table does not exist, required fields missing, or UNIQUE constraint violated",
+      "purpose": "Add entry to user_directives.db table. Returns inserted record with ID. Every key must be a column of the table; on user_directives the approval columns and status='active' are refused, so a new directive always starts unapproved.",
+      "error_handling": "Return error if table does not exist, a key is not a column, required fields missing, UNIQUE constraint violated, an approval column or status='active' is written on user_directives, or a trigger_config/action_config does not conform",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
@@ -406,13 +406,13 @@
           "description": "Field-value pairs to update"
         }
       ],
-      "purpose": "Update entry in user_directives.db table",
-      "error_handling": "Return error if table does not exist, ID not found, or invalid fields",
+      "purpose": "Update entry in user_directives.db table. Every key must be a column of the table (compared without case). On user_directives the approval columns (approved, approved_at, approved_by, approval_hash) and status='active' are refused: approval is a person's decision, recorded by the user's own path (`aimfp directives approve`, or a host calling aimfp.hooks.approval), and activation goes through activate_user_directive.",
+      "error_handling": "Return error if table does not exist, ID not found, a key is not a column, an approval column or status='active' is written on user_directives, or a trigger_config/action_config does not conform",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "If called during user_directive_implement: all code generated → proceed to user_directive_approve for user testing and approval.",
-        "If called during user_directive_approve: user approved → proceed to user_directive_activate to deploy."
+        "If called during user_directive_implement: all code generated → proceed to user_directive_approve: present the directive and ask the user to approve it themselves (aimfp directives approve <name>).",
+        "Refused for an approval column or status='active'? Do not work around it. Approval is the user's to record; activation is activate_user_directive."
       ],
       "target_database": "user_directives",
       "used_by_directives": [
@@ -439,26 +439,15 @@
           "description": "Update directive with implementation details after code generation"
         },
         {
-          "directive_name": "user_directive_approve",
-          "execution_context": "mark_approved",
-          "sequence_order": 1,
-          "is_required": true,
-          "parameters_mapping": {
-            "table": "user_directives",
-            "fields": "approved=true, approved_at=current_timestamp"
-          },
-          "description": "Mark directive as approved after user testing confirmation"
-        },
-        {
           "directive_name": "user_directive_update",
           "execution_context": "handle_changes",
           "sequence_order": 4,
           "is_required": true,
           "parameters_mapping": {
             "table": "user_directives",
-            "fields": "approved=false, status=pending_validation"
+            "fields": "status=pending_validation"
           },
-          "description": "Reset approval status when directive modified - requires re-validation and re-approval"
+          "description": "Return the modified directive to validation. Approval lapses on its own (content hash); never write approval columns."
         }
       ],
       "implementation_notes": [
@@ -698,13 +687,14 @@
           "description": "ID of the directive to activate"
         }
       ],
-      "purpose": "Set directive status to 'active' and record activated_at timestamp. Does NOT deploy services - AI handles deployment via directive workflow.",
-      "error_handling": "Returns error if directive not found or approved != true",
+      "purpose": "Set directive status to 'active' and record activated_at timestamp, only for a directive a person approved and that is unchanged since (approval content hash). Does NOT deploy services - AI handles deployment via directive workflow.",
+      "error_handling": "Returns error if directive not found, not approved, or changed since approval (needs_reapproval); the message names the user's approval path",
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
         "Directive activated. Consider initializing execution tracking in directive_executions table via add_user_custom_entry.",
-        "Check if project.user_directives_status needs updating to 'active' if this is the first activation."
+        "Check if project.user_directives_status needs updating to 'active' if this is the first activation.",
+        "Refused as not approved or changed since approval? Follow user_directive_approve: present the directive and ask the user to approve it (aimfp directives approve <name>). Never write approval yourself."
       ],
       "target_database": "user_directives",
       "used_by_directives": [

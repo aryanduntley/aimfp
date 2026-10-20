@@ -20,6 +20,14 @@ directive loader, or the MCP server from here.
 Design recorded in project note 34.
 """
 
+from .approval import (
+    APPROVAL_APPROVED,
+    APPROVAL_NEEDS_REAPPROVAL,
+    APPROVAL_UNAPPROVED,
+    approve_user_directive,
+    get_directive_approval,
+    revoke_user_directive_approval,
+)
 from .config import hooks_available, load_log_config
 from .directives import (
     get_due_directives,
@@ -38,6 +46,7 @@ from .actions import (
 )
 from .results import (
     ActionConfigValidation,
+    ApprovalState,
     DueDirective,
     DueDirectivesResult,
     ExecutionResult,
@@ -47,6 +56,7 @@ from .results import (
     NextFireResult,
     RotationPlan,
     TriggerConfigValidation,
+    WithheldDirective,
 )
 from .schedule import next_fire_time
 from .triggers import (
@@ -69,6 +79,13 @@ __all__ = [
     'record_directive_skip',
     'set_next_scheduled_time',
     'set_condition_state',
+    # Approval (human-facing hosts only)
+    'approve_user_directive',
+    'revoke_user_directive_approval',
+    'get_directive_approval',
+    'APPROVAL_APPROVED',
+    'APPROVAL_UNAPPROVED',
+    'APPROVAL_NEEDS_REAPPROVAL',
     # Availability and configuration
     'hooks_available',
     'load_log_config',
@@ -95,4 +112,6 @@ __all__ = [
     'TriggerConfigValidation',
     'NextFireResult',
     'ActionConfigValidation',
+    'ApprovalState',
+    'WithheldDirective',
 ]

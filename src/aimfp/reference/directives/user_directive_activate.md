@@ -11,10 +11,10 @@
 
 Deploy and activate approved user directives for real-time execution. This directive transforms tested, approved implementation code into running automation services.
 
-**Critical**: This directive ONLY runs after `user_directive_approve` sets `approved = true`. Cannot activate unapproved directives.
+**Critical**: This directive ONLY runs after the user has approved the directive (`user_directive_approve`; the host application records it) and the directive is unchanged since. Cannot activate unapproved or changed-since-approval directives.
 
 **Responsibilities**:
-1. Verify approval status (gate: approved must be true)
+1. Verify approval status (gate: approved by a person AND unchanged since - enforced by activate_user_directive)
 2. Deploy implementation (schedulers, services, event handlers)
 3. Initialize execution tracking and logging
 4. Change project status from 'in_progress' to 'active'
@@ -31,7 +31,7 @@ This directive applies when:
 - User says: "Activate all directives"
 - Detected trigger: Approved directive exists with status != 'active'
 
-**Critical requirement**: `approved = true` in user_directives table
+**Critical requirement**: approved by a person and unchanged since approval (the stored approval hash matches). `activate_user_directive` checks both; `get_due_directives` withholds anything that fails.
 
 ---
 
@@ -46,10 +46,12 @@ This directive applies when:
 
 **Alternative**: Direct SQL queries are acceptable for user_directives.db if helpers are insufficient, but helpers should be preferred for efficiency.
 
-2. **Gate check**:
+2. **Gate check** (activate_user_directive enforces the approval half and refuses with the reason):
    ```python
-   if not directive.approved:
-       return Error("Cannot activate unapproved directive. Please approve first.")
+   # approval: approved by a person AND content hash still matches.
+   # 'needs_reapproval' means it changed after approval - ask the user again.
+   if approval_state != 'approved':
+       return Error("Cannot activate: not approved, or changed since approval.")
 
    if directive.implementation_status != 'implemented':
        return Error("Cannot activate directive without implementation.")
@@ -278,9 +280,9 @@ if trigger_type == 'condition':
 **Alternative**: Direct SQL queries are acceptable for user_directives.db if helpers are insufficient, but helpers should be preferred for efficiency.
 
 **Update directive status**:
-**Use helper functions** for database operations. Query available helpers for user_directives.db.
-
-**Alternative**: Direct SQL queries are acceptable for user_directives.db if helpers are insufficient, but helpers should be preferred for efficiency.
+Call `activate_user_directive(directive_id)`. Never set status = 'active' through
+update_user_custom_entry or SQL: the generic tools refuse it, and dispatch
+ignores status for any directive that is not approved and unchanged.
 
 #### Step 7: Confirmation and Monitoring
 
@@ -692,8 +694,8 @@ Verify: Each has independent deployment and tracking
 ## Common Mistakes
 
 ### ❌ Mistake 1: Activating Without Approval Check
-**Wrong**: Skip checking approved = true
-**Right**: Always verify approval gate
+**Wrong**: Skip the approval gate, or set status = 'active' directly
+**Right**: Activate only through activate_user_directive, which checks approval and the content hash
 
 ### ❌ Mistake 2: Not Initializing Logging
 **Wrong**: Activate without setting up log files
@@ -723,7 +725,7 @@ Verify: Each has independent deployment and tracking
 
 ## Notes
 
-**Critical Gate**: Only activates if approved = true. This ensures user has tested and confirmed implementation.
+**Critical Gate**: Only activates a directive a person approved and that is unchanged since (content hash). This ensures the user tested and confirmed exactly what runs.
 
 **Project Status Change**: First activation changes project.user_directives_status from 'in_progress' to 'active'. This is a significant milestone.
 

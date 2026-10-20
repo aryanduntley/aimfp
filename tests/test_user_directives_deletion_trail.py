@@ -47,8 +47,11 @@ def _schema_1_3() -> str:
     sql = _schema()
     start = sql.index("        -- Deletion trail, written by delete_user_custom_entry")
     end = sql.index("    )),", start)
-    return (sql[:start].replace("'obsolete',        --", "'obsolete'         --")
-            + sql[end:]).replace("VALUES (1, '1.4')", "VALUES (1, '1.3')")
+    sql = (sql[:start].replace("'obsolete',        --", "'obsolete'         --")
+           + sql[end:]).replace("VALUES (1, '1.5')", "VALUES (1, '1.3')")
+    # ...and without the 1.5 approval columns.
+    return "\n".join(line for line in sql.split("\n")
+                     if not line.lstrip().startswith(("approved_by ", "approval_hash ")))
 
 
 @pytest.fixture(autouse=True)
@@ -284,7 +287,7 @@ def test_schema_1_3_database_still_deletes_and_says_to_migrate():
     conn.close()
 
 
-def test_schema_1_3_database_migrates_to_1_4_with_notes_intact():
+def test_schema_1_3_database_migrates_to_current_with_notes_intact():
     from aimfp.helpers.orchestrators.migration import migrate_databases
 
     root = _project(_schema_1_3())
@@ -300,7 +303,7 @@ def test_schema_1_3_database_migrates_to_1_4_with_notes_intact():
     migrated = [m for m in result.data["migrated"] if m["db_name"] == "user_directives"]
     assert len(migrated) == 1
     entry = migrated[0]
-    assert (entry["old_version"], entry["new_version"]) == ("1.3", "1.4")
+    assert (entry["old_version"], entry["new_version"]) == ("1.3", "1.5")
     conn = sqlite3.connect(entry["original_db_path"])
     kept = conn.execute("SELECT content FROM notes").fetchall()
     conn.execute(

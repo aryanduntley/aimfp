@@ -55,6 +55,20 @@ class DueDirective:
 
 
 @dataclass(frozen=True)
+class WithheldDirective:
+    """
+    An active directive get_due_directives refused to hand back, and why.
+
+    state is an approval state from hooks/approval.py ('unapproved' or
+    'needs_reapproval'). A runner should log these, not run them.
+    """
+    directive_id: int
+    name: str
+    state: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class DueDirectivesResult:
     """
     Return of get_due_directives.
@@ -62,10 +76,32 @@ class DueDirectivesResult:
     A missing user_directives.db is a clean success=False with an error set,
     never an exception - Use Case 1 projects have no such database and the
     caller must be able to ask without guarding.
+
+    withheld lists active directives that are not approved, or changed since
+    approval. They are never in directives, whether due or not.
     """
     success: bool
     directives: Tuple[DueDirective, ...] = ()
     total_count: int = 0
+    error: Optional[str] = None
+    withheld: Tuple[WithheldDirective, ...] = ()
+
+
+@dataclass(frozen=True)
+class ApprovalState:
+    """
+    Return of get_directive_approval.
+
+    state is one of hooks/approval.py's APPROVAL_* values; only 'approved'
+    dispatches or activates.
+    """
+    success: bool
+    directive_id: int
+    name: Optional[str] = None
+    state: Optional[str] = None
+    reason: Optional[str] = None
+    approved_at: Optional[str] = None
+    approved_by: Optional[str] = None
     error: Optional[str] = None
 
 

@@ -422,7 +422,7 @@
       "level": 2,
       "parent_directive": "user_directive_implement",
       "md_file_path": "directives/user_directive_approve.md",
-      "description": "User approves tested implementation, transitioning project from 'in_progress' to 'active' status. Called after user has tested the implementation and confirmed it meets their requirements.",
+      "description": "Gate between implementation and activation. The AI presents the tested directive and asks; the USER records approval through a human path the AI cannot drive (`aimfp directives approve <name>` in their terminal, or a host app calling aimfp.hooks.approval.approve_user_directive). The AI never writes approval: the generic write tools refuse the approval columns and status=active. Approval is bound to a content hash, so any later change needs approving again.",
       "workflow": {
         "trunk": "approve_implementation",
         "branches": [
@@ -458,17 +458,19 @@
             ]
           },
           {
-            "step": "mark_approved",
+            "step": "request_user_approval",
             "actions": [
               {
-                "update": "user_directives (approved=true, approved_at=current_timestamp)"
+                "present": "trigger, action and implementation file exactly as they will be approved; say that any later change needs approval again"
               },
               {
-                "insert": "notes table (content='User approved directive implementation', note_type='decision', source='user')"
+                "prompt": "To approve, run in your terminal: aimfp directives approve <name> (in an app embedding AIMFP, use its approve command)"
               },
               {
-                "log": "User approved implementation",
-                "to": ".aimfp-project/logs/user-directives.log"
+                "never": "write approved/approved_at/approved_by/approval_hash or status=active yourself (CRUD tool, SQL or file edit)"
+              },
+              {
+                "verify": "re-read the directive (get_from_user_custom) or check_directive_health: approved=1 and no needs_reapproval verdict"
               }
             ]
           },
@@ -502,7 +504,7 @@
       ],
       "confidence_threshold": 0.7,
       "outputs": {
-        "success": "ApprovalResult with approved=true, ready for activation",
+        "success": "User recorded approval through their own path (approved=1, approval_hash set); ready for activation",
         "failure": "Feedback collected, returns to implementation phase"
       }
     },
@@ -520,10 +522,10 @@
             "step": "verify_approval",
             "actions": [
               {
-                "check": "user_directives.approved == true"
+                "check": "approved by the user AND unchanged since approval (activate_user_directive enforces both and refuses with the reason)"
               },
               {
-                "if_not_approved": "prompt user: 'Directive not yet approved. Run user_directive_approve first.'"
+                "if_not_approved": "prompt user: 'Directive not approved, or changed since approval. Run user_directive_approve.'"
               },
               {
                 "if_not_approved": "abort activation"
@@ -584,7 +586,7 @@
                 "calculate": "next_scheduled_time for time-based triggers"
               },
               {
-                "update": "user_directives (status=active, activated_at=current_timestamp)"
+                "call": "activate_user_directive(directive_id) - never set status=active through update_user_custom_entry or SQL"
               }
             ]
           },
@@ -797,7 +799,7 @@
                     "if_active": "call user_directive_deactivate first"
                   },
                   {
-                    "update": "user_directives (approved=false, status=pending_validation)"
+                    "update": "user_directives (status=pending_validation); approval lapses on its own because the content hash changes - never write approval columns"
                   },
                   {
                     "update": "project.user_directives_status='in_progress'"

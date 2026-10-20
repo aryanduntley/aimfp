@@ -34,6 +34,7 @@ from aimfp.hooks.directives import (
 )
 from aimfp.hooks.logs import plan_rotation
 from aimfp.hooks.results import LogConfig
+from aimfp.hooks.approval import approve_user_directive
 
 SCHEMA_PATH = os.path.join(
     os.path.dirname(__file__), "..", "src", "aimfp", "database", "schemas",
@@ -96,6 +97,9 @@ def _add_directive(
     conn.commit()
     directive_id = cursor.lastrowid
     conn.close()
+    if status == "active":
+        # Active directives dispatch only when a person approved them.
+        assert approve_user_directive(directive_id, "test", root).success
     return directive_id
 
 

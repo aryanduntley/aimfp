@@ -59,6 +59,7 @@ from ..database.connection import (
     database_exists,
     get_user_directives_db_path,
 )
+from .approval import APPROVAL_APPROVED, approval_state, directive_columns
 from .config import load_log_config
 from .schedule import next_fire_time
 from .logs import (
@@ -74,6 +75,7 @@ from .results import (
     ExecutionResult,
     ExecutionToken,
     HookMutationResult,
+    WithheldDirective,
 )
 
 # Triggers AIMFP cannot evaluate - only the caller knows whether the event
@@ -254,6 +256,12 @@ def get_due_directives(
 
     Return the active directives the caller's runner may execute now.
 
+    Only APPROVED directives are handed back: approved by a person through
+    hooks.approval and unchanged since (hooks/approval.py::approval_state).
+    An active directive that is unapproved, or whose trigger, action or
+    implementation file changed after approval, is listed in `withheld`
+    instead - status 'active' alone is never authority to run.
+
     now is a parameter so due-detection is testable without manipulating the
     system clock; it defaults to the current time.
 
@@ -263,7 +271,8 @@ def get_due_directives(
 
     Returns:
         DueDirectivesResult. A missing user_directives.db is a clean
-        success=False, never an exception.
+        success=False, never an exception. total_count counts every active
+        directive, withheld ones included.
     """
     db_path = get_user_directives_db_path(project_root)
     if not database_exists(db_path):
@@ -275,10 +284,13 @@ def get_due_directives(
         conn = _open_connection(db_path)
         condition_state = _optional_select(
             _effect_execution_columns(conn), _CONDITION_COLUMNS, 'de')
+        approval_hash = _optional_select(
+            directive_columns(conn), frozenset({'approval_hash'}), 'ud')
         rows = conn.execute(
             f"""
             SELECT ud.id, ud.name, ud.trigger_type, ud.trigger_config,
                    ud.action_type, ud.action_config, ud.implementation_file_path,
+                   ud.approved{approval_hash},
                    de.next_scheduled_time, de.last_execution_time{condition_state}
             FROM user_directives ud
             LEFT JOIN directive_executions de ON de.directive_id = ud.id
@@ -292,14 +304,23 @@ def get_due_directives(
         if conn is not None:
             _close_connection(conn)
 
+    verdicts = tuple((row, approval_state(project_root, row)) for row in rows)
     due = tuple(
-        _row_to_due_directive(row) for row in rows
-        if is_due(row['trigger_type'], row['next_scheduled_time'], evaluated_at)
+        _row_to_due_directive(row) for row, (state, _) in verdicts
+        if state == APPROVAL_APPROVED
+        and is_due(row['trigger_type'], row['next_scheduled_time'], evaluated_at)
+    )
+    withheld = tuple(
+        WithheldDirective(
+            directive_id=row['id'], name=row['name'], state=state, reason=reason)
+        for row, (state, reason) in verdicts
+        if state != APPROVAL_APPROVED
     )
     return DueDirectivesResult(
         success=True,
         directives=due,
         total_count=len(rows),
+        withheld=withheld,
     )
 
 

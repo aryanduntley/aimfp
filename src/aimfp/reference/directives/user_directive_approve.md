@@ -13,11 +13,19 @@ Manage the user testing and approval workflow for implemented directives. This d
 
 **Critical principle**: User directives must be tested and explicitly approved by the user before activation. Implementation can take days or weeks of testing before the user feels confident to approve.
 
+**The AI never approves.** Your role is to *present* the directive and *ask*. The approval itself is recorded by a human-facing path the AI cannot drive:
+- **AIMFP as a plain MCP server**: the user runs `aimfp directives approve <name>` in their own terminal. It shows the directive and asks them to type its name back, and refuses a non-interactive stdin (your shell tool).
+- **A host application embedding AIMFP** (e.g. svamanas): the host's own approve command or button, which calls `aimfp.hooks.approval.approve_user_directive`.
+
+The generic write tools (`update_user_custom_entry`, `add_user_custom_entry`) refuse `approved`, `approved_at`, `approved_by`, `approval_hash` and `status = 'active'`. Do not try to work around them with SQL or file edits: that is the exact failure this gate exists to prevent.
+
+**Approval is bound to content.** It stores a hash of the trigger, action, implementation file path and the implementation file's bytes. Any later change voids it: dispatch (`get_due_directives`) withholds the directive, `activate_user_directive` refuses it, and `check_directive_health` reports `needs_reapproval`. The user then approves again.
+
 **Responsibilities**:
 1. Prompt user for testing completion status
 2. Collect testing feedback
 3. Handle approval, rejection, or modification requests
-4. Update directive status and project state
+4. Hand the approval to the user's human path (CLI or host), then verify it landed
 5. Gate activation (directives cannot activate without approval)
 
 ---
@@ -101,12 +109,13 @@ This directive applies when:
 
    **a) Works perfectly**:
    ```
-   AI: "Excellent! I'll mark it as approved.
-        Activate now or later?"
+   AI: "Excellent! Approval is yours to record, not mine.
+        Run this in your terminal:  aimfp directives approve {name}
+        (or use your application's approve command). Tell me when it's done."
 
    Actions:
-   - Set approved = true
-   - Log approval to notes
+   - Ask the user to approve through their human path (never set it yourself)
+   - Verify with check_directive_health / get_from_user_custom that approved = 1
    - Prompt for activation
    ```
 
@@ -152,47 +161,29 @@ This directive applies when:
 
 #### Step 4: Approval Confirmation
 
-1. **Final confirmation** (if user approved):
+1. **Present what will be approved** (if user is ready):
    ```
-   AI: "Confirm approval of '{directive_name}'?
+   AI: "Here is exactly what you'd be approving for '{directive_name}':
+        Trigger: {trigger_type} {trigger_config}
+        Action:  {action_type} {action_config}
+        Code:    {implementation_file_path}
 
-   This will:
-   ✓ Mark directive as approved
-   ✓ Allow activation for real-time execution
-   ✓ Lock configuration (changes require re-approval)
+   Approving locks this content: any later change to the trigger, action
+   or code needs your approval again.
 
-   Confirm approval? (yes/no)"
-   ```
-
-2. **On "yes"**:
-   ```sql
-   UPDATE user_directives
-   SET approved = true,
-       approved_at = CURRENT_TIMESTAMP,
-       approved_by = 'user'  -- Could be username if tracked
-   WHERE id = ?;
+   To approve, run in your terminal:  aimfp directives approve {directive_name}
+   (in an app that embeds AIMFP, use its approve command instead)"
    ```
 
-3. **Log approval**:
-   ```sql
-   INSERT INTO notes (
-       content,
-       note_type,
-       reference_table,
-       reference_id,
-       source,
-       directive_name,
-       severity
-   ) VALUES (
-       'User approved directive after testing',
-       'approval',
-       'user_directives',
-       ?,
-       'user',
-       'user_directive_approve',
-       'info'
-   );
-   ```
+2. **The user approves through their own path.** Nothing for the AI to write:
+   `approve_user_directive` sets approved, approved_at, approved_by and
+   approval_hash, and writes a 'lifecycle' note to user_directives.db in the
+   same transaction.
+
+3. **Verify it landed**: re-read the directive (get_from_user_custom) or run
+   `check_directive_health`. approved = 1 and no `needs_reapproval` verdict
+   means you can move on. If the user says they approved but it did not land,
+   help them run the command again; never record it for them.
 
 #### Step 5: Activation Prompt
 
@@ -249,7 +240,7 @@ This directive applies when:
   2. Re-validate with new requirements
   3. Re-implement
   4. Return to testing phase
-  5. Set approved = false
+  5. Approval lapses on its own when the content changes (no write needed)
 
 #### Branch 5: If User Cancels Directive
 - **Condition**: User doesn't want this directive anymore
@@ -264,8 +255,8 @@ This directive applies when:
 ### Fallback
 
 If approval process interrupted:
-1. Keep status as 'in_progress'
-2. Keep approved = false
+1. Leave the directive's status unchanged
+2. Leave approval alone (only the user's path writes it)
 3. Log interruption
 4. User can return later with "approve directive {name}"
 
@@ -298,18 +289,16 @@ d) Rework needed"
 
 User: "a"
 
-AI: "Excellent! Confirm approval of 'turn_off_lights_5pm'?
+AI: "Excellent! Here is what you'd approve:
+     Trigger: time {"kind": "daily", "time": "17:00", ...}
+     Action:  api_call {...}
+     Code:    src/handlers/lights.py
+     Run in your terminal:  aimfp directives approve turn_off_lights_5pm"
 
-This will:
-✓ Mark as approved
-✓ Allow activation
-✓ Lock configuration
+User: "done"
 
-Confirm? (yes/no)"
-
-User: "yes"
-
-AI: "✅ Directive approved!
+AI: [Re-reads the directive: approved = 1, health has no needs_reapproval]
+    "✅ Approval recorded.
 
 Would you like to activate now? (yes/no)"
 
@@ -440,7 +429,7 @@ User: "S3 bucket: my-backups/database/"
   - Detect file change (checksum)
   - Warn: "Source file changed - implementation outdated"
   - Offer to re-parse and re-implement
-  - Reset approved = false if changes detected
+  - Approval lapses automatically once the trigger, action or code changes (content hash)
 
 ### 3. **Multiple Directives to Approve**
 - **Scenario**: User has 5 directives all in testing
@@ -453,7 +442,7 @@ User: "S3 bucket: my-backups/database/"
 - **Scenario**: User tries to approve without testing
 - **Handling**:
   - Warn: "Are you sure? Testing is recommended"
-  - Require explicit confirmation: "approve without testing"
+  - The user still approves through their own path; the AI only records the warning
   - Log decision
 
 ### 5. **Directive Already Active**
@@ -468,8 +457,8 @@ User: "S3 bucket: my-backups/database/"
 ### 6. **Approval by Different User**
 - **Scenario**: Multi-user project, different user approves
 - **Handling**:
-  - Track who approved (if user tracking enabled)
-  - Log approver identity
+  - approved_by records who approved (the CLI uses the login name, or --by)
+  - The approval's lifecycle note records it too
   - No restriction (any user can approve)
 
 ---
@@ -494,7 +483,7 @@ user_directive_activate
 
 ### Triggers After Completion
 - **user_directive_activate**: If user chooses to activate after approval
-  - Only possible after approved = true
+  - Only possible once the user approved and the directive is unchanged since
 
 ### Depends On
 - **user_directive_implement**: Must run first to create implementation
@@ -509,7 +498,7 @@ user_directive_activate
 - **User confirmation**: Cannot auto-approve without explicit user consent
 
 ### Blocks
-- **user_directive_activate**: Activation blocked if approved = false
+- **user_directive_activate**: Activation blocked unless approved by the user and unchanged since
 
 ---
 
@@ -534,9 +523,11 @@ Load directive by name to check: id, name, implementation_status, approved, stat
 ### Tables Updated
 
 #### user_directives
-**Use helpers** to update approval status.
-- On approval: Set approved=true, approved_at (timestamp), approved_by (optional)
-- On rejection/rework: Set approved=false, feedback_json
+**Not by the AI.** approved, approved_at, approved_by and approval_hash are
+written only by the user's approval path (`aimfp directives approve`, or a
+host calling `aimfp.hooks.approval.approve_user_directive`), and cleared by
+`revoke`. The generic write tools refuse them.
+- On rejection/rework: record feedback (feedback_json via update_user_custom_entry is fine); approval lapses on its own once the content changes
 
 #### notes (optional AI record-keeping)
 **Use helpers for notes operations** - query available note helpers for user_directives.db.
@@ -556,7 +547,7 @@ Load directive by name to check: id, name, implementation_status, approved, stat
 1. Directive implemented
 2. User tested
 3. User approves
-4. Status: approved = true
+4. Status: approved = 1, approval_hash set (written by the user's CLI/host)
 5. Prompt for activation
 ```
 
@@ -565,8 +556,8 @@ Load directive by name to check: id, name, implementation_status, approved, stat
 1. User reports issues
 2. AI fixes implementation
 3. User retests
-4. User approves on second attempt
-5. Status: approved = true
+4. User approves on second attempt (the changed code needs a fresh approval)
+5. Status: approved = 1 with the new content hash
 ```
 
 ### Test 3: Minor Adjustments
@@ -582,7 +573,7 @@ Load directive by name to check: id, name, implementation_status, approved, stat
 1. User tries to approve immediately
 2. AI warns about testing
 3. User confirms skip testing
-4. AI approves with warning logged
+4. AI logs the warning; the user approves through their own path
 ```
 
 ### Test 5: Cancellation During Approval
@@ -598,8 +589,8 @@ Load directive by name to check: id, name, implementation_status, approved, stat
 ## Common Mistakes
 
 ### ❌ Mistake 1: Auto-Approving Without User Confirmation
-**Wrong**: Set approved = true after implementation
-**Right**: Wait for explicit user approval
+**Wrong**: Set approved = true yourself (CRUD tool, SQL, or file edit) after implementation
+**Right**: Present the directive; the user approves via `aimfp directives approve` or their host
 
 ### ❌ Mistake 2: Skipping Testing Prompt
 **Wrong**: Assume user tested
@@ -610,8 +601,8 @@ Load directive by name to check: id, name, implementation_status, approved, stat
 **Right**: Handle adjustments, issues, rework requests
 
 ### ❌ Mistake 4: Activating Without Approval
-**Wrong**: Allow activation with approved = false
-**Right**: Block activation until approved = true
+**Wrong**: Set status = 'active' directly, or activate an unapproved/changed directive
+**Right**: activate_user_directive only, which checks approval and the content hash
 
 ### ❌ Mistake 5: Forcing Quick Approval
 **Wrong**: Pressure user to approve quickly

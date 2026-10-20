@@ -23,7 +23,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict, Any, List
 
-from ..utils import get_return_statements, rows_to_tuple
+from ..utils import _get_table_info, get_return_statements, rows_to_tuple
 
 # Import common user_directives utilities (DRY principle)
 from ._common import (
@@ -41,8 +41,10 @@ from ._common import (
 # fails SILENTLY - a schedule that never fires writes no log line and records
 # no error - so it is checked before it is stored rather than at dispatch.
 from .validation import (
+    _reject_approval_writes,
     _reject_invalid_action_config,
     _reject_invalid_trigger_config,
+    _reject_unknown_columns,
 )
 
 
@@ -262,6 +264,10 @@ def add_user_custom_entry(
     """
     Add entry to user_directives database table.
 
+    Every key must be a column of the table. On user_directives the approval
+    columns (approved, approved_at, approved_by, approval_hash) and status
+    'active' are refused: a new directive always starts unapproved.
+
     Args:
         table: Table name in user_directives.db
         data: Field-value pairs to insert
@@ -293,6 +299,12 @@ def add_user_custom_entry(
                 success=False,
                 error=f"Table {table} not found"
             )
+
+        # Gate: keys must be real columns, and approval is never written here.
+        rejection = _reject_column_writes(conn, table, data)
+        if rejection is not None:
+            conn.close()
+            return MutationResult(success=False, error=rejection)
 
         # Gate: a non-conforming trigger_config must never reach the column.
         if table == 'user_directives':
@@ -342,6 +354,23 @@ def add_user_custom_entry(
         )
 
 
+def _reject_column_writes(
+    conn: sqlite3.Connection,
+    table: str,
+    data: Dict[str, Any]
+) -> Optional[str]:
+    """
+    Effect: Rejection for keys that are not columns or that grant approval.
+
+    Keys become column names in the SQL, so each must be a real column of the
+    table; then the approval columns and status 'active' are refused on
+    user_directives (validation._reject_approval_writes).
+    """
+    columns = frozenset(column['name'] for column in _get_table_info(conn, table))
+    return (_reject_unknown_columns(columns, table, data)
+            or _reject_approval_writes(table, data))
+
+
 def _resolved_type(
     conn: sqlite3.Connection,
     data: Dict[str, Any],
@@ -371,6 +400,11 @@ def update_user_custom_entry(
 ) -> MutationResult:
     """
     Update entry in user_directives database table.
+
+    Every key must be a column of the table. On user_directives the approval
+    columns and status 'active' are refused; approval is recorded by
+    aimfp.hooks.approval (a host's human path), activation by
+    activate_user_directive.
 
     Args:
         table: Table name in user_directives.db
@@ -412,6 +446,12 @@ def update_user_custom_entry(
                 success=False,
                 error=f"Record with id {record_id} not found in {table}"
             )
+
+        # Gate: keys must be real columns, and approval is never written here.
+        rejection = _reject_column_writes(conn, table, data)
+        if rejection is not None:
+            conn.close()
+            return MutationResult(success=False, error=rejection)
 
         # Same gate on update: turning a conforming config into a broken one
         # is the same silent failure as writing one. A partial update that

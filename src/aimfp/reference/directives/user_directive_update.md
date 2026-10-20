@@ -17,7 +17,7 @@ Detect and handle changes to user directive source files, re-processing modified
 1. Detect source file changes (checksum monitoring)
 2. Determine what changed (trigger, action, conditions)
 3. Deactivate directive if currently active
-4. Reset approval status (approved = false)
+4. Approval lapses on its own: approval is bound to a hash of the trigger, action and implementation file, so any change makes the directive need re-approval (the AI never writes `approved`)
 5. Loop back through appropriate pipeline stages
 6. Require user re-approval before reactivation
 
@@ -116,12 +116,17 @@ Do you want to proceed with update? (yes/no)"
        # Stops scheduler/service, updates status
    ```
 
-#### Step 4: Reset Approval Status
+#### Step 4: Return the Directive to Validation
+
+Approval needs no reset. It is bound to a content hash (hooks/approval.py),
+so changing the trigger, action or implementation file voids it: dispatch,
+activation and health all report the directive as `needs_reapproval`. The
+generic write tools refuse the approval columns, and so does this step.
 
 ```sql
+-- via update_user_custom_entry('user_directives', id, {...})
 UPDATE user_directives
-SET approved = false,
-    status = 'in_progress',
+SET status = 'pending_validation',
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
@@ -230,7 +235,7 @@ INSERT INTO notes (
 - **Condition**: Trigger time, action parameters, conditions changed
 - **Action**:
   1. Deactivate if active
-  2. Reset approved = false
+  2. Approval lapses automatically (content hash changes)
   3. Re-validate with Q&A
   4. Re-implement
   5. Require re-approval
@@ -239,7 +244,7 @@ INSERT INTO notes (
 - **Condition**: Trigger type or action type changed completely
 - **Action**:
   1. Deactivate if active
-  2. Reset approved = false
+  2. Approval lapses automatically (content hash changes)
   3. Full re-parse, re-validate, re-implement
   4. Essentially treat as new directive
 
@@ -518,7 +523,7 @@ Fields: checksum, last_modified_at (timestamp), last_parsed_at (timestamp)
 
 #### user_directives
 **Use helpers** to reset directive for update.
-Fields: approved=false, status='in_progress', updated_at (timestamp), version (increment)
+Fields: status='pending_validation', updated_at (timestamp), version (increment). Never the approval columns: approval lapses by itself when content changes.
 
 #### directive_updates (tracking history)
 **Use helpers** to insert update history.
@@ -564,9 +569,9 @@ Verify: If was active, stays active (fallback)
 **Wrong**: Update while directive running
 **Right**: Deactivate first, then update
 
-### ❌ Mistake 2: Not Resetting Approval
-**Wrong**: Keep approved = true after changes
-**Right**: Reset to false, require re-approval
+### ❌ Mistake 2: Writing Approval Yourself
+**Wrong**: Set approved = false (or true) through update_user_custom_entry - the tool refuses it
+**Right**: Change the directive; its approval lapses on its own, and the user approves again through the host (user_directive_approve)
 
 ### ❌ Mistake 3: Auto-Reactivating After Update
 **Wrong**: Automatically reactivate after re-implementation
@@ -593,7 +598,7 @@ Verify: If was active, stays active (fallback)
 
 **Critical Loop**: This directive creates the update loop that allows iterative directive development.
 
-**Approval Reset**: Always reset approved = false when config changes. User must retest.
+**Approval Reset**: Automatic. Approval is bound to the directive's content, so any change requires the user to approve again. The AI never writes approval.
 
 **Status Management**: If last active directive updated, project.user_directives_status returns to 'in_progress'.
 
