@@ -437,7 +437,7 @@
       "return_statements": [
         "State updated. If task completed: check if all tasks in milestone are complete, consider marking milestone complete.",
         "If task blocked: create sidequest to resolve blocker, then unblock and resume.",
-        "If task started (action=start_task): BEFORE CODING — check get_all_flows() and get_task_flows(task_id) for relevant workflow descriptions. Use DB lookups (get_function_by_name, get_type_by_name, get_functions_by_file) to understand existing code BEFORE reading source files.",
+        "If task started (action=start_task): BEFORE CODING — read the task's flows: get_task_flows(task_id) for their IDs, then get_all_flows(flow_ids=[...], detail_level='full') for their descriptions. Use DB lookups (get_function_by_name, get_type_by_name, get_functions_by_file) to understand existing code BEFORE reading source files.",
         "If a complete_* action was REFUSED by the tracking audit: the error lists the blocking categories, the report path and the exact fix calls — run them and retry, or pass data={'audit_override_reason': '<why>'} (recorded as a warning note). data.audit, when present, carries warnings, would_block (audit_gate='warn') or overridden=true."
       ],
       "implementation_notes": [

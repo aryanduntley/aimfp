@@ -32,6 +32,7 @@ from ..project.task_files import WorkItemRef, query_current_focus_row, query_tas
 from ..shared.detail_level import DETAIL_FULL, DETAIL_LEAN, normalize_detail_level, pick_fields
 from ..shared.return_gates import gate_return_statements
 from ..project.note_refs import query_note_refs
+from ..project.functions_1 import normalize_function_row
 
 
 # ============================================================================
@@ -962,7 +963,7 @@ def _get_functions_for_files(
     cursor = conn.execute(
         f"SELECT * FROM functions WHERE file_id IN ({placeholders})", file_ids
     )
-    return rows_to_tuple(cursor.fetchall())
+    return tuple(normalize_function_row(row) for row in rows_to_tuple(cursor.fetchall()))
 
 
 def _get_modules_for_files(

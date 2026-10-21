@@ -29,7 +29,7 @@ import sqlite3
 import json
 import dataclasses
 from dataclasses import dataclass
-from typing import Optional, List, Tuple, Dict, Any
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..utils import get_return_statements
 from .structure_links import MILESTONE_FLOWS, insert_links_effect, query_linked_rows, unique_ids, validate_link_targets
@@ -53,6 +53,10 @@ from ._common import (
 )
 
 
+# Task statuses in the order task_counts reports them
+TASK_COUNT_STATUSES: Tuple[str, ...] = ('pending', 'in_progress', 'blocked', 'completed')
+
+
 # ============================================================================
 # Data Structures (Immutable)
 # ============================================================================
@@ -68,6 +72,7 @@ class MilestoneRecord:
     created_at: str
     updated_at: str
     slug: Optional[str] = None  # stable cross-clone identity (see helpers/shared/slugs.py)
+    task_counts: Optional[Dict[str, int]] = None  # {status: n, ..., 'total': n} when requested
 
 
 @dataclass(frozen=True)
@@ -289,6 +294,31 @@ def _query_incomplete_milestones(
         )
         for row in rows
     )
+
+
+def _query_milestone_task_counts(
+    conn: sqlite3.Connection,
+    milestone_ids: Tuple[int, ...]
+) -> Tuple[Tuple[int, str, int], ...]:
+    """
+    Effect: (milestone_id, status, count) for the tasks of the given milestones.
+
+    Args:
+        conn: Database connection
+        milestone_ids: Milestones to count tasks for
+
+    Returns:
+        One row per milestone and task status present
+    """
+    if not milestone_ids:
+        return ()
+    placeholders = ', '.join('?' for _ in milestone_ids)
+    cursor = conn.execute(
+        f"SELECT milestone_id, status, COUNT(*) AS n FROM tasks "
+        f"WHERE milestone_id IN ({placeholders}) GROUP BY milestone_id, status",
+        milestone_ids
+    )
+    return tuple((row['milestone_id'], row['status'], row['n']) for row in cursor.fetchall())
 
 
 def _update_milestone_fields(
@@ -761,49 +791,140 @@ def add_milestone(
         )
 
 
+def task_counts_by_milestone(
+    rows: Tuple[Tuple[int, str, int], ...]
+) -> Dict[int, Dict[str, int]]:
+    """
+    Pure: {milestone_id: {status: n, ..., 'total': n}} from count rows.
+
+    Every status in TASK_COUNT_STATUSES is present (0 when none), so the shape
+    is the same for every milestone.
+    """
+    grouped = {
+        milestone_id: {status: n for row_id, status, n in rows if row_id == milestone_id}
+        for milestone_id in dict.fromkeys(row[0] for row in rows)
+    }
+    return {
+        milestone_id: {
+            **{status: by_status.get(status, 0) for status in TASK_COUNT_STATUSES},
+            'total': sum(by_status.values()),
+        }
+        for milestone_id, by_status in grouped.items()
+    }
+
+
+def shape_milestone_records(
+    milestones: Tuple[MilestoneRecord, ...],
+    level: str,
+    counts: Optional[Dict[int, Dict[str, int]]] = None,
+) -> Tuple[MilestoneRecord, ...]:
+    """
+    Pure: Milestone records for a detail level, with task counts attached.
+
+    Args:
+        milestones: Records as queried
+        level: 'lean' blanks descriptions; 'full' keeps them
+        counts: task_counts_by_milestone output, or None to leave task_counts unset
+
+    Returns:
+        Shaped records (milestones without tasks get all-zero counts)
+    """
+    empty = {**{status: 0 for status in TASK_COUNT_STATUSES}, 'total': 0}
+    return tuple(
+        dataclasses.replace(
+            m,
+            description=None if level == DETAIL_LEAN else m.description,
+            task_counts=None if counts is None else counts.get(m.id, empty),
+        )
+        for m in milestones
+    )
+
+
+def _effect_milestone_query(
+    statements: Tuple[str, ...],
+    query: Callable[[sqlite3.Connection], Tuple[MilestoneRecord, ...]],
+    detail_level: str,
+    include_task_counts: bool,
+    project_root: Optional[str],
+) -> MilestoneQueryResult:
+    """
+    Effect: Run one milestone query and shape it (detail level, task counts).
+
+    Shared by the three milestone getters, so they validate and shape alike.
+
+    Args:
+        statements: The calling tool's return statements
+        query: Runs the milestone query on a connection
+        detail_level: 'lean' or 'full'
+        include_task_counts: Attach task_counts to each milestone
+        project_root: Explicit root, or None for the session root
+    """
+    level, level_error = normalize_detail_level(detail_level)
+    if level_error:
+        return MilestoneQueryResult(success=False, error=level_error)
+
+    project_root = project_root or get_cached_project_root()
+    conn = _open_project_connection(project_root)
+
+    try:
+        milestones = query(conn)
+        counts = (
+            task_counts_by_milestone(_query_milestone_task_counts(conn, tuple(m.id for m in milestones)))
+            if include_task_counts else None
+        )
+        return MilestoneQueryResult(
+            success=True,
+            milestones=shape_milestone_records(milestones, level, counts),
+            return_statements=statements
+        )
+
+    except Exception as e:
+        return MilestoneQueryResult(
+            success=False,
+            error=f"Database error: {str(e)}"
+        )
+
+    finally:
+        conn.close()
+
+
 def get_milestones_by_path(
     completion_path_id: int,
-    project_root: Optional[str] = None
+    project_root: Optional[str] = None,
+    detail_level: str = DETAIL_LEAN,
+    include_task_counts: bool = False,
 ) -> MilestoneQueryResult:
     """
     Get all milestones for a completion path.
 
     Args:
         completion_path_id: Completion path ID
+        detail_level: 'lean' (default) blanks descriptions; 'full' keeps them
+        include_task_counts: Attach task_counts ({status: n, 'total': n}) to each milestone
 
     Returns:
         MilestoneQueryResult with milestones
     """
-    project_root = project_root or get_cached_project_root()
-    conn = _open_project_connection(project_root)
-
-    try:
-        milestones = _query_milestones_by_path(conn, completion_path_id)
-        conn.close()
-
-        return MilestoneQueryResult(
-            success=True,
-            milestones=milestones,
-            return_statements=get_return_statements("get_milestones_by_path")
-        )
-
-    except Exception as e:
-        conn.close()
-        return MilestoneQueryResult(
-            success=False,
-            error=f"Database error: {str(e)}"
-        )
+    return _effect_milestone_query(
+        get_return_statements("get_milestones_by_path"),
+        lambda conn: _query_milestones_by_path(conn, completion_path_id),
+        detail_level, include_task_counts, project_root,
+    )
 
 
 def get_milestones_by_status(
     status: str,
-    project_root: Optional[str] = None
+    project_root: Optional[str] = None,
+    detail_level: str = DETAIL_LEAN,
+    include_task_counts: bool = False,
 ) -> MilestoneQueryResult:
     """
     Get milestones filtered by status.
 
     Args:
         status: Milestone status ('pending', 'in_progress', 'completed', 'blocked')
+        detail_level: 'lean' (default) blanks descriptions; 'full' keeps them
+        include_task_counts: Attach task_counts ({status: n, 'total': n}) to each milestone
 
     Returns:
         MilestoneQueryResult with filtered milestones
@@ -815,53 +936,33 @@ def get_milestones_by_status(
             error=f"Invalid status: {status}. Must be one of: {', '.join(VALID_MILESTONE_STATUSES)}"
         )
 
-    project_root = project_root or get_cached_project_root()
-    conn = _open_project_connection(project_root)
-
-    try:
-        milestones = _query_milestones_by_status(conn, status)
-        conn.close()
-
-        return MilestoneQueryResult(
-            success=True,
-            milestones=milestones,
-            return_statements=get_return_statements("get_milestones_by_status")
-        )
-
-    except Exception as e:
-        conn.close()
-        return MilestoneQueryResult(
-            success=False,
-            error=f"Database error: {str(e)}"
-        )
+    return _effect_milestone_query(
+        get_return_statements("get_milestones_by_status"),
+        lambda conn: _query_milestones_by_status(conn, status),
+        detail_level, include_task_counts, project_root,
+    )
 
 
-def get_incomplete_milestones(project_root: Optional[str] = None) -> MilestoneQueryResult:
+def get_incomplete_milestones(
+    project_root: Optional[str] = None,
+    detail_level: str = DETAIL_LEAN,
+    include_task_counts: bool = False,
+) -> MilestoneQueryResult:
     """
     Get all non-completed milestones.
+
+    Args:
+        detail_level: 'lean' (default) blanks descriptions; 'full' keeps them
+        include_task_counts: Attach task_counts ({status: n, 'total': n}) to each milestone
 
     Returns:
         MilestoneQueryResult with incomplete milestones
     """
-    project_root = project_root or get_cached_project_root()
-    conn = _open_project_connection(project_root)
-
-    try:
-        milestones = _query_incomplete_milestones(conn)
-        conn.close()
-
-        return MilestoneQueryResult(
-            success=True,
-            milestones=milestones,
-            return_statements=get_return_statements("get_incomplete_milestones")
-        )
-
-    except Exception as e:
-        conn.close()
-        return MilestoneQueryResult(
-            success=False,
-            error=f"Database error: {str(e)}"
-        )
+    return _effect_milestone_query(
+        get_return_statements("get_incomplete_milestones"),
+        _query_incomplete_milestones,
+        detail_level, include_task_counts, project_root,
+    )
 
 
 def update_milestone(
@@ -1176,36 +1277,53 @@ def get_incomplete_tasks(
 
 def get_tasks_by_milestone(
     milestone_id: int,
-    project_root: Optional[str] = None
+    project_root: Optional[str] = None,
+    detail_level: str = DETAIL_LEAN,
+    status: Optional[str] = None,
 ) -> TaskQueryResult:
     """
-    Get all tasks for a milestone (any status).
+    Get the tasks of a milestone (any status unless status is given).
 
     Args:
         milestone_id: Milestone ID
+        detail_level: 'lean' (default) blanks descriptions; 'full' keeps them
+        status: Only tasks with this status ('pending', 'in_progress', 'completed', 'blocked')
 
     Returns:
-        TaskQueryResult with all tasks for milestone
+        TaskQueryResult with the milestone's tasks
     """
+    level, level_error = normalize_detail_level(detail_level)
+    if level_error:
+        return TaskQueryResult(success=False, error=level_error)
+    if status is not None and not _validate_status(status, VALID_TASK_STATUSES):
+        return TaskQueryResult(
+            success=False,
+            error=f"Invalid status: {status}. Must be one of: {', '.join(sorted(VALID_TASK_STATUSES))}"
+        )
+
     project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
-        tasks = _query_tasks_by_milestone(conn, milestone_id)
-        conn.close()
+        tasks = tuple(
+            t for t in _query_tasks_by_milestone(conn, milestone_id)
+            if status is None or t.status == status
+        )
 
         return TaskQueryResult(
             success=True,
-            tasks=tasks,
+            tasks=lean_task_records(tasks) if level == DETAIL_LEAN else tasks,
             return_statements=get_return_statements("get_tasks_by_milestone")
         )
 
     except Exception as e:
-        conn.close()
         return TaskQueryResult(
             success=False,
             error=f"Database error: {str(e)}"
         )
+
+    finally:
+        conn.close()
 
 
 def get_tasks_comprehensive(

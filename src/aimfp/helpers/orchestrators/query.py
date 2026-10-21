@@ -25,6 +25,7 @@ from ._common import (
     VALID_QUERY_ENTITIES,
     JOIN_MAPPINGS,
 )
+from ..project.functions_1 import normalize_function_row
 
 
 # ============================================================================
@@ -247,7 +248,7 @@ def get_files_by_flow_context(
                     "SELECT * FROM functions WHERE file_id = ?",
                     (file_dict['id'],)
                 )
-                file_dict['functions'] = rows_to_tuple(cursor.fetchall())
+                file_dict['functions'] = tuple(normalize_function_row(row) for row in rows_to_tuple(cursor.fetchall()))
 
             return Result(
                 success=True,

@@ -474,7 +474,8 @@
         "Returns array of function objects with file data (multiple functions can share same name across files)",
         "SQL: SELECT f.*, fi.name AS file_name, fi.path AS file_path FROM functions f LEFT JOIN files fi ON f.file_id = fi.id WHERE f.name = ?",
         "Returns: {success, functions: [{id, name, file_id, file_name, file_path, purpose, parameters, returns, is_reserved, id_in_name, created_at, updated_at}, ...]}",
-        "Returns FunctionQueryResult with functions tuple (not single function)"
+        "Returns FunctionQueryResult with functions tuple (not single function)",
+        "parameters is always a parsed list of {name, type, required, default, description, kind} whatever shape it was stored in (required null = the record does not say; legacy 'name: type = value' strings and JSON wrapped in JSON are normalized); returns is parsed JSON"
       ]
     },
     {
@@ -548,7 +549,8 @@
       "implementation_notes": [
         "Returns array of function objects with file data",
         "SQL: SELECT f.*, fi.name AS file_name, fi.path AS file_path FROM functions f LEFT JOIN files fi ON f.file_id = fi.id WHERE f.file_id = ? ORDER BY f.created_at",
-        "Returns empty array if file has no functions"
+        "Returns empty array if file has no functions",
+        "parameters is always a parsed list of {name, type, required, default, description, kind} whatever shape it was stored in (required null = the record does not say; legacy 'name: type = value' strings and JSON wrapped in JSON are normalized); returns is parsed JSON"
       ]
     },
     {
@@ -935,7 +937,8 @@
         "Terms built by helpers/shared/fts_query.py: tokenize_search_terms -> build_fts_match_expression ('\"disk\"* OR \"space\"*')",
         "Ranked by bm25(functions_fts, 5.0, 1.0) — name matches weigh more than purpose matches",
         "Fallback: build_like_clause per term when functions_fts is missing (pre-migration databases)",
-        "Returns: {functions[], total_count} — total_count is the match count before limit"
+        "Returns: {functions[], total_count} — total_count is the match count before limit",
+        "parameters is always a parsed list of {name, type, required, default, description, kind} whatever shape it was stored in (required null = the record does not say; legacy 'name: type = value' strings and JSON wrapped in JSON are normalized); returns is parsed JSON"
       ]
     }
   ],

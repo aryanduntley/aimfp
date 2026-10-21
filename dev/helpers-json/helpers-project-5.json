@@ -114,15 +114,39 @@
     {
       "name": "get_all_flows",
       "file_path": "helpers/project/themes_flows_1.py",
-      "parameters": [],
-      "purpose": "Get all project flows (architectural groupings describing intended behavior). Check BEFORE starting any task to understand the architecture.",
+      "parameters": [
+        {
+          "name": "flow_ids",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "required": false,
+          "default": null,
+          "description": "Only these flows, ordered by ID. IDs with no flow are named in return_statements. Omit for every flow."
+        },
+        {
+          "name": "detail_level",
+          "type": "string",
+          "required": false,
+          "default": "lean",
+          "enum": [
+            "lean",
+            "full"
+          ],
+          "description": "'lean' (default): descriptions are null. 'full': descriptions included."
+        }
+      ],
+      "purpose": "Get project flows (architectural groupings describing intended behavior): all of them, or the ones in flow_ids. Lean by default (descriptions null); detail_level='full' for descriptions. Check BEFORE starting any task to understand the architecture.",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "Descriptions are null at detail_level='lean' (default): get_all_flows(flow_ids=[...], detail_level='full') for the flows you need."
+      ],
       "implementation_notes": [
-        "Returns: Array of flow objects [{id, name, description, theme_id}, ...]",
-        "Queries SELECT * FROM flows"
+        "Returns: Array of flow objects [{id, name, description, ai_generated, confidence_score, created_at, updated_at}, ...] (description null when lean)",
+        "Queries SELECT * FROM flows (WHERE id IN (...) with flow_ids)"
       ],
       "target_database": "project",
       "used_by_directives": [
@@ -132,7 +156,7 @@
           "sequence_order": 4,
           "is_required": false,
           "parameters_mapping": {},
-          "description": "Query all flows when blueprint missing - retrieves flow list from database for fallback"
+          "description": "Query all flows when blueprint missing - retrieves flow list from database for fallback (detail_level='full': descriptions are needed)"
         },
         {
           "directive_name": "project_evolution",
@@ -140,7 +164,7 @@
           "sequence_order": 3,
           "is_required": true,
           "parameters_mapping": {},
-          "description": "Read current flows for evolution tracking - compares against blueprint to detect flow changes"
+          "description": "Read current flows for evolution tracking - compares against blueprint to detect flow changes (detail_level='full': descriptions are needed)"
         },
         {
           "directive_name": "aimfp_status",

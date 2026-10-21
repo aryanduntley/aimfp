@@ -27,6 +27,7 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
+from ...database.connection import decode_json_layers
 from ...watchdog.config import get_function_pattern
 
 
@@ -368,6 +369,7 @@ def recorded_parameter_facts(recorded: Any) -> Optional[Tuple[Tuple[str, Optiona
     directly. A dict with 'kind' is a catalog record, where a null 'default'
     means no default. Any other dict with a 'default' key has a default (null
     meaning None). A string 'name: type = value' has a default when it has '='.
+    A '*' / '**' parameter is never required.
 
     Args:
         recorded: Decoded functions.parameters value
@@ -394,10 +396,66 @@ def recorded_parameter_facts(recorded: Any) -> Optional[Tuple[Tuple[str, Optiona
             facts.append((name, required))
         elif isinstance(item, str) and item.strip():
             head = item.split('=', 1)[0].split(':', 1)[0]
-            facts.append((bare_parameter_name(head), False if '=' in item else None))
+            facts.append((bare_parameter_name(head), False if '=' in item or head.lstrip().startswith('*') else None))
         else:
             return None
     return tuple(facts)
+
+
+def parameter_kind_of(name: Any, kind: Any = None) -> Optional[str]:
+    """Pure: The recorded kind, else 'var_positional' / 'var_keyword' read off a '*' / '**' name."""
+    if kind:
+        return str(kind)
+    text = str(name).strip()
+    if text.startswith('**'):
+        return 'var_keyword'
+    if text.startswith('*'):
+        return 'var_positional'
+    return None
+
+
+def parse_parameter_text(text: str) -> Dict[str, Any]:
+    """Pure: {name, type, default} from a 'name: type = value' string (missing parts None)."""
+    head, has_default, default = text.partition('=')
+    name, _, type_text = head.partition(':')
+    return {'name': name, 'type': type_text.strip() or None,
+            'default': default.strip() if has_default else None}
+
+
+def normalize_recorded_parameters(recorded: Any) -> Any:
+    """
+    Pure: Recorded parameters in one shape, whatever shape they were stored in.
+
+    Every parameter becomes {name, type, required, default, description, kind}:
+    name without '*' (kind says var_positional / var_keyword), required as
+    recorded_parameter_facts reads it (None when the record does not say),
+    default as recorded (a 'name: type = value' string gives 'value'), other
+    fields None when absent. JSON wrapped in JSON strings is decoded first.
+
+    Args:
+        recorded: Raw functions.parameters value (JSON text, any layers deep, or decoded)
+
+    Returns:
+        List of parameter dicts; None for no record; the decoded value
+        unchanged when it is not a list of parameters (nothing is dropped)
+    """
+    decoded = decode_json_layers(recorded)
+    facts = recorded_parameter_facts(decoded)
+    if facts is None:
+        return decoded
+
+    return [
+        {
+            'name': name,
+            'type': fields.get('type'),
+            'required': required,
+            'default': fields.get('default'),
+            'description': fields.get('description'),
+            'kind': parameter_kind_of(fields.get('name'), fields.get('kind')),
+        }
+        for fields, (name, required) in zip(
+            (item if isinstance(item, dict) else parse_parameter_text(item) for item in decoded), facts)
+    ]
 
 
 def source_parameter_facts(parameters: Tuple[Dict[str, Any], ...]) -> Tuple[Tuple[str, bool], ...]:

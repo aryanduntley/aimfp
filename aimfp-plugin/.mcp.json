@@ -2,7 +2,7 @@
   "mcpServers": {
     "aimfp": {
       "command": "uvx",
-      "args": ["aimfp==1.68.0"]
+      "args": ["aimfp==1.69.0"]
     }
   }
 }

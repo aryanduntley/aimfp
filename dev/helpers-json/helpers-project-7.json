@@ -77,13 +77,33 @@
           "required": true,
           "default": null,
           "description": "Completion path ID"
+        },
+        {
+          "name": "detail_level",
+          "type": "string",
+          "required": false,
+          "default": "lean",
+          "enum": [
+            "lean",
+            "full"
+          ],
+          "description": "'lean' (default): descriptions are null. 'full': descriptions included."
+        },
+        {
+          "name": "include_task_counts",
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "description": "Attach task_counts to each milestone: {pending, in_progress, blocked, completed, total} (zeros included), from one grouped query."
         }
       ],
       "purpose": "Get all milestones for a completion path",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "Descriptions are null at detail_level='lean' (default); pass detail_level='full' for them. For an overview of open work, include_task_counts=true adds task_counts {pending, in_progress, blocked, completed, total} to each milestone in the same call."
+      ],
       "target_database": "project",
       "used_by_directives": [
         {
@@ -96,7 +116,7 @@
         }
       ],
       "implementation_notes": [
-        "Returns: Array of milestone objects",
+        "Returns: Array of milestone objects (description null when lean; task_counts when include_task_counts)",
         "SQL: SELECT * FROM milestones WHERE completion_path_id=?"
       ]
     },
@@ -110,13 +130,33 @@
           "required": true,
           "default": null,
           "description": "'pending', 'in_progress', 'completed', 'blocked'"
+        },
+        {
+          "name": "detail_level",
+          "type": "string",
+          "required": false,
+          "default": "lean",
+          "enum": [
+            "lean",
+            "full"
+          ],
+          "description": "'lean' (default): descriptions are null. 'full': descriptions included."
+        },
+        {
+          "name": "include_task_counts",
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "description": "Attach task_counts to each milestone: {pending, in_progress, blocked, completed, total} (zeros included), from one grouped query."
         }
       ],
       "purpose": "Get milestones filtered by status",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "Descriptions are null at detail_level='lean' (default); pass detail_level='full' for them. For an overview of open work, include_task_counts=true adds task_counts {pending, in_progress, blocked, completed, total} to each milestone in the same call."
+      ],
       "target_database": "project",
       "used_by_directives": [
         {
@@ -125,7 +165,7 @@
           "sequence_order": 8,
           "is_required": false,
           "parameters_mapping": {},
-          "description": "Query milestones by status for detailed status report - filters completed vs in-progress milestones"
+          "description": "Query milestones by status for detailed status report - filters completed vs in-progress milestones (include_task_counts=true gives per-milestone task counts in the same call)"
         },
         {
           "directive_name": "project_metrics",
@@ -133,23 +173,44 @@
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
-          "description": "Count milestones by status for project metrics - calculates completion percentages"
+          "description": "Count milestones by status for project metrics - calculates completion percentages (include_task_counts=true gives per-milestone task counts in the same call)"
         }
       ],
       "implementation_notes": [
-        "Returns: Array of milestone objects",
+        "Returns: Array of milestone objects (description null when lean; task_counts when include_task_counts)",
         "SQL: SELECT * FROM milestones WHERE status=?"
       ]
     },
     {
       "name": "get_incomplete_milestones",
       "file_path": "helpers/project/tasks.py",
-      "parameters": [],
+      "parameters": [
+        {
+          "name": "detail_level",
+          "type": "string",
+          "required": false,
+          "default": "lean",
+          "enum": [
+            "lean",
+            "full"
+          ],
+          "description": "'lean' (default): descriptions are null. 'full': descriptions included."
+        },
+        {
+          "name": "include_task_counts",
+          "type": "boolean",
+          "required": false,
+          "default": false,
+          "description": "Attach task_counts to each milestone: {pending, in_progress, blocked, completed, total} (zeros included), from one grouped query."
+        }
+      ],
       "purpose": "Get all non-completed milestones",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "Descriptions are null at detail_level='lean' (default); pass detail_level='full' for them. For an overview of open work, include_task_counts=true adds task_counts {pending, in_progress, blocked, completed, total} to each milestone in the same call."
+      ],
       "target_database": "project",
       "used_by_directives": [
         {
@@ -158,7 +219,7 @@
           "sequence_order": 9,
           "is_required": true,
           "parameters_mapping": {},
-          "description": "Query incomplete milestones for status report - shows remaining milestone work"
+          "description": "Query incomplete milestones for status report - shows remaining milestone work (include_task_counts=true gives per-milestone task counts in the same call)"
         },
         {
           "directive_name": "project_auto_resume",
@@ -174,11 +235,11 @@
           "sequence_order": 1,
           "is_required": true,
           "parameters_mapping": {},
-          "description": "Check incomplete milestones for completion validation - verifies project completion status"
+          "description": "Check incomplete milestones for completion validation - verifies project completion status (include_task_counts=true gives per-milestone task counts in the same call)"
         }
       ],
       "implementation_notes": [
-        "Returns: Array of milestone objects",
+        "Returns: Array of milestone objects (description null when lean; task_counts when include_task_counts)",
         "SQL: SELECT * FROM milestones WHERE status != 'completed'"
       ]
     },
@@ -557,13 +618,39 @@
           "required": true,
           "default": null,
           "description": "Milestone ID"
+        },
+        {
+          "name": "detail_level",
+          "type": "string",
+          "required": false,
+          "default": "lean",
+          "enum": [
+            "lean",
+            "full"
+          ],
+          "description": "'lean' (default): descriptions are null. 'full': descriptions included."
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": false,
+          "default": null,
+          "enum": [
+            "pending",
+            "in_progress",
+            "completed",
+            "blocked"
+          ],
+          "description": "Only tasks with this status. Omit for every status."
         }
       ],
-      "purpose": "Get all tasks for a milestone (any status)",
+      "purpose": "Get the tasks of a milestone (any status, or one status with status=...). Lean by default: descriptions null.",
       "error_handling": "",
       "is_tool": true,
       "is_sub_helper": false,
-      "return_statements": [],
+      "return_statements": [
+        "Descriptions are null at detail_level='lean' (default): get_task_context(task_id) for one task, or detail_level='full'. get_open_work returns open tasks with their open items and subtasks in one call."
+      ],
       "target_database": "project",
       "used_by_directives": [
         {
@@ -578,7 +665,7 @@
         }
       ],
       "implementation_notes": [
-        "Returns: Array of task objects (all statuses)",
+        "Returns: Array of task objects (all statuses unless status is given; description null when lean)",
         "SQL: SELECT * FROM tasks WHERE milestone_id=?",
         "Used for duplicate checking and milestone overview"
       ]
@@ -809,7 +896,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "If status='in_progress': BEFORE STARTING WORK — (1) search_notes(search_string=<task-relevant keywords>, exclude_note_types=['completed','obsolete']) for prior decisions or deferred work affecting this task. Review hits, mark handled notes as 'completed'/'obsolete'. (2) Check get_all_flows() and get_task_flows(task_id) for relevant workflow descriptions. (3) Use DB lookups (get_function_by_name, get_type_by_name, get_functions_by_file) to understand existing code BEFORE reading source files.",
+        "If status='in_progress': BEFORE STARTING WORK — (1) search_notes(search_string=<task-relevant keywords>, exclude_note_types=['completed','obsolete']) for prior decisions or deferred work affecting this task. Review hits, mark handled notes as 'completed'/'obsolete'. (2) Read the task's flows: get_task_flows(task_id) for their IDs, then get_all_flows(flow_ids=[...], detail_level='full') for their descriptions. (3) Use DB lookups (get_function_by_name, get_type_by_name, get_functions_by_file) to understand existing code BEFORE reading source files.",
         "If status='in_progress': files you now reserve, finalize, catalog, or update (or whose functions/types you do) auto-link to this task — unless a subtask or sidequest is also in_progress, which takes precedence. Keep only the item you are actually working on in_progress.",
         "If task status changed: call add_note(note_type='task_context', reference_table='tasks', reference_id=<task_id>) describing the status change",
         "If status='completed': call get_incomplete_tasks_by_milestone(milestone_id, skip_pending=false) — if empty, call update_milestone(id, status='completed')",

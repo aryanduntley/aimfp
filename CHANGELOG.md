@@ -17,7 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The `user_directive_approve` / `activate` / `update` / `implement` directives are rewritten: the AI presents the directive and the user approves. Broken SQL in the approve workflow (a nonexistent `approved_by` column, wrong notes columns, and a nonexistent `'approval'` note type) is gone.
   - **Embedders:** write approval with `approve_user_directive` / `revoke_user_directive_approval` instead of `update_user_custom_entry({"approved": ...})`, which is now refused.
 
+### Added
+- **Lean read tools, so an overview never needs direct SQL.**
+  - `get_incomplete_milestones`, `get_milestones_by_status` and `get_milestones_by_path` take `detail_level` (`'lean'` default, `'full'`) and `include_task_counts`. With counts, each milestone carries `task_counts` = `{pending, in_progress, blocked, completed, total}`, read with one grouped query.
+  - `get_all_flows` takes `flow_ids` (only those flows, ordered by ID; unknown IDs are named in `return_statements`) and `detail_level`.
+  - `get_tasks_by_milestone` takes `detail_level` and a `status` filter.
+  - `audit_tracking` takes `sample_limit` (findings shown inline per category, default 5, `0` = counts only) and `full=[categories]` (those categories inline in full). Unknown category names are an error.
+
 ### Changed
+- **Lean by default:** the three milestone getters, `get_all_flows` and `get_tasks_by_milestone` now return `description: null` unless `detail_level='full'`. This follows the convention `get_incomplete_tasks` already uses.
+- **Function `parameters` come back in one shape:** a parsed list of `{name, type, required, default, description, kind}`, whatever shape they were stored in. This covers catalog records, hand-written dicts, legacy `"name: type = value"` strings and JSON wrapped in JSON. `required` is `null` when the record does not say, and a value that is not a parameter list is returned decoded, not dropped. `returns` is parsed JSON. This applies to `get_function_by_name`, `get_functions_by_file`, `search_functions`, `get_task_context(detail_level='full')` and `get_files_by_flow_context`. The two copies of `row_to_function_record` / `FunctionRecord` are merged into one in `functions_1.py`.
+- A `*args` / `**kwargs` parameter recorded as a string is no longer treated as possibly required by the parameter-drift check.
 - **License changed from MIT to PolyForm Noncommercial 1.0.0.** Noncommercial use (personal, research, hobby, charitable/educational/government organizations) remains free; any commercial use now requires a separate written license from the copyright holder (aryanduntley@gmail.com). Versions up to and including 1.66.1 remain under MIT.
 
 ## [0.1.0] - 2026-02-10

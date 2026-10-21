@@ -20,7 +20,7 @@ from .code_index import CodeIndex, ScopeRequest, build_code_index, build_scope_r
 from .descriptions_audit import run_description_audit
 from .functions_audit import audit_function_findings, reconcile_targets
 from .interactions_audit import run_interaction_audit
-from .reports import AuditResult, finish_audit
+from .reports import SAMPLE_SIZE, AuditResult, finish_audit, validate_sample_options
 
 
 AUDITS: Tuple[str, ...] = ('functions', 'interactions', 'descriptions', 'structure')
@@ -110,6 +110,8 @@ def tracking_audit_result(
     tool: str,
     statements: Tuple[str, ...],
     write_report: bool = True,
+    sample_size: int = SAMPLE_SIZE,
+    full_categories: Tuple[str, ...] = (),
 ) -> AuditResult:
     """Effect: Run the combined audit and finish it (report + compact result)."""
     findings = run_tracking_audit(index, audits)
@@ -118,6 +120,8 @@ def tracking_audit_result(
         statements=statements,
         extra={'reconcile_paths': list(reconcile_targets(findings))},
         write_report=write_report,
+        sample_size=sample_size,
+        full_categories=full_categories,
     )
 
 
@@ -182,6 +186,8 @@ def audit_tracking(
     module_path: Optional[str] = None,
     include: Optional[List[str]] = None,
     project_root: Optional[str] = None,
+    sample_limit: int = SAMPLE_SIZE,
+    full: Optional[List[str]] = None,
 ) -> AuditResult:
     """
     Run every tracking audit over one scope and write one report. Read-only.
@@ -198,6 +204,8 @@ def audit_tracking(
         include: Audits to run: 'functions', 'interactions', 'descriptions',
             'structure' (default all)
         project_root: Explicit root for embedding hosts (defaults to the session root)
+        sample_limit: Findings shown inline per category (0 = counts only)
+        full: Finding categories to return inline in full (e.g. ['stale_descriptions'])
 
     Returns:
         AuditResult: counts, samples, block/warn verdict, report_path
@@ -207,12 +215,18 @@ def audit_tracking(
     if unknown:
         return AuditResult(success=False, error=(
             f"Unknown audit(s): {', '.join(unknown)}. Use any of: {', '.join(AUDITS)}."))
+    full_categories = tuple(full or ())
+    sample_error = validate_sample_options(sample_limit, full_categories)
+    if sample_error:
+        return AuditResult(success=False, error=sample_error)
     try:
         index, error = build_code_index(root, build_scope_request(
             file_ids, paths, since_commit, task_id, task_type, module_path))
         if index is None:
             return AuditResult(success=False, error=error)
         return tracking_audit_result(root, index, audits, 'audit_tracking',
-                                     get_return_statements("audit_tracking"))
+                                     get_return_statements("audit_tracking"),
+                                     sample_size=sample_limit,
+                                     full_categories=full_categories)
     except Exception as exc:
         return AuditResult(success=False, error=f"Tracking audit failed: {exc}")

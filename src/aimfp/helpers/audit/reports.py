@@ -105,6 +105,7 @@ def report_file_name(tool: str, now: datetime) -> str:
 def summarize_findings(
     findings: Dict[str, Tuple[Any, ...]],
     sample_size: int = SAMPLE_SIZE,
+    full_categories: Tuple[str, ...] = (),
 ) -> Dict[str, Dict[str, Any]]:
     """
     Pure: {category: {count, sample}} for the categories that have findings.
@@ -112,12 +113,36 @@ def summarize_findings(
     Args:
         findings: category -> every finding in it
         sample_size: How many findings per category to show inline
+        full_categories: Categories whose sample is every finding, whatever sample_size says
     """
     return {
-        category: {'count': len(items), 'sample': list(items[:sample_size])}
+        category: {
+            'count': len(items),
+            'sample': list(items) if category in full_categories else list(items[:sample_size]),
+        }
         for category, items in findings.items()
         if items
     }
+
+
+def validate_sample_options(
+    sample_limit: Any,
+    full: Optional[Tuple[str, ...]],
+) -> Optional[str]:
+    """
+    Pure: Error message for bad sample options, or None.
+
+    Args:
+        sample_limit: Findings shown inline per category; a non-negative integer
+        full: Categories to return in full; each must be a known finding category
+    """
+    if isinstance(sample_limit, bool) or not isinstance(sample_limit, int) or sample_limit < 0:
+        return f"sample_limit must be a non-negative integer, got {sample_limit!r}"
+    unknown = tuple(c for c in (full or ()) if c not in CATEGORY_LEVELS)
+    if unknown:
+        return (f"Unknown finding category in full: {', '.join(unknown)}. "
+                f"Known: {', '.join(sorted(CATEGORY_LEVELS))}")
+    return None
 
 
 def build_report(
@@ -257,6 +282,8 @@ def finish_audit(
     statements: Tuple[str, ...] = (),
     extra: Optional[Dict[str, Any]] = None,
     write_report: bool = True,
+    sample_size: int = SAMPLE_SIZE,
+    full_categories: Tuple[str, ...] = (),
 ) -> AuditResult:
     """
     Effect: Write the full report (unless write_report is False) and build the
@@ -272,6 +299,8 @@ def finish_audit(
             so custom statements attached to it are included); gated here
         extra: More top-level report fields (e.g. reconcile_paths arguments)
         write_report: False for in-process callers (gates) that need no file
+        sample_size: Findings shown inline per category
+        full_categories: Categories shown inline in full (see summarize_findings)
     """
     counts = {category: len(items) for category, items in findings.items() if items}
     report_path = (
@@ -291,7 +320,7 @@ def finish_audit(
         success=True,
         scope=scope,
         counts=counts,
-        findings=summarize_findings(findings),
+        findings=summarize_findings(findings, sample_size, full_categories),
         blocking=blocking,
         warnings=payload['warnings'],
         clean=payload['clean'],

@@ -739,6 +739,23 @@
           "required": false,
           "default": null,
           "description": "Audits to run (default all): functions (files, functions, types, parameters, JSON, type links), interactions (missing/stale/repoint edges), descriptions (stale prose, dangling mentions), structure (modularity gaps, project-wide)."
+        },
+        {
+          "name": "sample_limit",
+          "type": "integer",
+          "required": false,
+          "default": 5,
+          "description": "Findings shown inline per category (default 5; 0 = counts only). The report file always has every finding."
+        },
+        {
+          "name": "full",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "required": false,
+          "default": null,
+          "description": "Finding categories to return inline in full, whatever sample_limit says (e.g. ['stale_descriptions']). Unknown category names are an error."
         }
       ],
       "purpose": "Run EVERY tracking audit over one scope with one code index and one report: files, functions, types, parameters, JSON encoding, type links (audit_functions), interactions with repoints (audit_interactions), stale prose and dangling mentions (audit_descriptions), plus modularity gaps (structure_gaps). Read-only. The same audit gates task/subtask/sidequest completion (over the item's linked files), runs in aimfp_end over uncommitted work, runs per changed file in the watchdog, and runs in CI as `aimfp audit`. Scope selectors combine as a union; with none, the whole project (tracked files plus untracked source files) is audited. Writes the full report to <project folder>/audit/ and returns counts + samples + block/warn verdict + report_path.",
@@ -746,7 +763,7 @@
       "is_tool": true,
       "is_sub_helper": false,
       "return_statements": [
-        "[when:report_path] The FULL findings are in report_path (JSON: findings.<category> lists every row with IDs). The result shows counts and up to 5 samples per category — read the file for the rest instead of re-running the audit; delete it when done (or apply_audit_fixes(cleanup=true)).",
+        "[when:report_path] The FULL findings are in report_path (JSON: findings.<category> lists every row with IDs). The result shows counts and up to sample_limit (default 5) samples per category; to see a category whole, re-run with full=['<category>'] or read the file — never page through with repeated audits; delete it when done (or apply_audit_fixes(cleanup=true)).",
         "[when:clean=true] No blocking or warning findings in this scope.",
         "[when:scope.schema_1_15=false] This database predates schema 1.15 (no is_indirect / source_hash): run migrate_databases first; indirect marks and description hashes are unavailable until then.",
         "[when:counts.unchecked_files] unchecked_files lists in-scope files no full-fidelity check covered (names_only / none extraction, or untracked). Verify those by reading them; never treat their absence of findings as clean.",

@@ -25,30 +25,13 @@ from ..utils import get_return_statements
 
 # Import update_file_timestamp from files_2
 from .files_2 import update_file_timestamp
-from .functions_1 import serialize_params, serialize_returns
+from .functions_1 import FunctionRecord, row_to_function_record, serialize_params, serialize_returns
 from ._common import _open_connection, _check_file_exists, _check_function_exists, _create_deletion_note, get_cached_project_root, _open_project_connection, record_source_hashes
 
 
 # ============================================================================
 # Data Structures (Immutable)
 # ============================================================================
-
-@dataclass(frozen=True)
-class FunctionRecord:
-    """Immutable function record from database."""
-    id: int
-    name: str
-    file_id: int
-    purpose: Optional[str]
-    parameters: Optional[str]  # JSON string
-    returns: Optional[str]  # JSON string
-    is_reserved: bool
-    id_in_name: bool
-    file_name: Optional[str]  # From JOIN with files table
-    file_path: Optional[str]  # From JOIN with files table
-    created_at: str
-    updated_at: str
-
 
 @dataclass(frozen=True)
 class FunctionsQueryResult:
@@ -179,59 +162,6 @@ def build_update_query(
     params_list.append(function_id)
 
     return (sql, tuple(params_list))
-
-
-def row_to_function_record(
-    row: sqlite3.Row,
-    include_details: bool = True,
-    details_only: bool = False
-) -> FunctionRecord:
-    """
-    Convert database row to immutable FunctionRecord.
-
-    Pure function - deterministic mapping. Handles optional file_name/file_path
-    fields that are present when query includes JOIN with files table.
-
-    Args:
-        row: SQLite row object
-        include_details: If False, omit purpose/parameters/returns (lightweight listing)
-        details_only: If True, return only id/name + purpose/parameters/returns
-
-    Returns:
-        Immutable FunctionRecord
-    """
-    keys = row.keys()
-
-    if details_only:
-        return FunctionRecord(
-            id=row["id"],
-            name=row["name"],
-            file_id=row["file_id"],
-            purpose=row["purpose"],
-            parameters=row["parameters"],
-            returns=row["returns"],
-            is_reserved=False,
-            id_in_name=False,
-            file_name=None,
-            file_path=None,
-            created_at="",
-            updated_at=""
-        )
-
-    return FunctionRecord(
-        id=row["id"],
-        name=row["name"],
-        file_id=row["file_id"],
-        purpose=row["purpose"] if include_details else None,
-        parameters=row["parameters"] if include_details else None,
-        returns=row["returns"] if include_details else None,
-        is_reserved=bool(row["is_reserved"]),
-        id_in_name=bool(row["id_in_name"]),
-        file_name=row["file_name"] if "file_name" in keys else None,
-        file_path=row["file_path"] if "file_path" in keys else None,
-        created_at=row["created_at"],
-        updated_at=row["updated_at"]
-    )
 
 
 # ============================================================================

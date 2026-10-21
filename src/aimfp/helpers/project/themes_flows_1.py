@@ -23,11 +23,13 @@ Helpers in this file:
 
 import sqlite3
 import json
+import dataclasses
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
 from ..utils import get_return_statements
 from .note_refs import NoteRef, query_note_refs, note_ref_return_statements
+from ..shared.detail_level import DETAIL_LEAN, normalize_detail_level
 from .structure_links import (
     FLOW_THEMES,
     MILESTONE_FLOWS,
@@ -383,18 +385,28 @@ def _get_all_themes_effect(conn: sqlite3.Connection) -> List[sqlite3.Row]:
     return cursor.fetchall()
 
 
-def _get_all_flows_effect(conn: sqlite3.Connection) -> List[sqlite3.Row]:
+def _get_all_flows_effect(
+    conn: sqlite3.Connection,
+    flow_ids: Optional[Tuple[int, ...]] = None
+) -> List[sqlite3.Row]:
     """
-    Effect: Query all flows.
+    Effect: Query all flows, or only the given IDs.
 
     Args:
         conn: Database connection
+        flow_ids: Only these flows (None = all)
 
     Returns:
         List of row objects
     """
-    cursor = conn.execute("SELECT * FROM flows")
-    return cursor.fetchall()
+    if flow_ids is None:
+        return conn.execute("SELECT * FROM flows").fetchall()
+    if not flow_ids:
+        return []
+    placeholders = ', '.join('?' for _ in flow_ids)
+    return conn.execute(
+        f"SELECT * FROM flows WHERE id IN ({placeholders}) ORDER BY id", flow_ids
+    ).fetchall()
 
 
 def _add_theme_effect(
@@ -810,33 +822,51 @@ def get_all_themes(project_root: Optional[str] = None) -> ThemesQueryResult:
         conn.close()
 
 
-def get_all_flows(project_root: Optional[str] = None) -> FlowsQueryResult:
-    """
-    Get all project flows.
+def lean_flow_records(flows: Tuple[FlowRecord, ...]) -> Tuple[FlowRecord, ...]:
+    """Pure: Flow records with descriptions blanked (detail_level='lean')."""
+    return tuple(dataclasses.replace(f, description=None) for f in flows)
 
-    Queries all records from flows table.
+
+def get_all_flows(
+    project_root: Optional[str] = None,
+    flow_ids: Optional[List[int]] = None,
+    detail_level: str = DETAIL_LEAN,
+) -> FlowsQueryResult:
+    """
+    Get project flows: all of them, or the ones named by flow_ids.
+
+    Args:
+        flow_ids: Only these flows, ordered by ID; IDs with no flow are named in
+            return_statements rather than silently dropped
+        detail_level: 'lean' (default) blanks descriptions; 'full' keeps them
 
     Returns:
         FlowsQueryResult with tuple of flow records
 
     Example:
-        >>> result = get_all_flows()
-        >>> result.success
-        True
-        >>> len(result.flows)
-        15
+        >>> result = get_all_flows(flow_ids=[3, 7], detail_level='full')
+        >>> [f.id for f in result.flows]
+        [3, 7]
     """
+    level, level_error = normalize_detail_level(detail_level)
+    if level_error:
+        return FlowsQueryResult(success=False, error=level_error)
+
     project_root = project_root or get_cached_project_root()
     conn = _open_project_connection(project_root)
 
     try:
-        rows = _get_all_flows_effect(conn)
+        wanted = unique_ids(flow_ids) if flow_ids is not None else None
+        rows = _get_all_flows_effect(conn, wanted)
         flow_records = tuple(row_to_flow_record(row) for row in rows)
+        missing = tuple(i for i in (wanted or ()) if i not in {f.id for f in flow_records})
 
         return FlowsQueryResult(
             success=True,
-            flows=flow_records,
-            return_statements=get_return_statements("get_all_flows")
+            flows=lean_flow_records(flow_records) if level == DETAIL_LEAN else flow_records,
+            return_statements=(
+                (f"No flow with ID(s): {', '.join(str(i) for i in missing)}.",) if missing else ()
+            ) + get_return_statements("get_all_flows")
         )
 
     except Exception as e:

@@ -19,7 +19,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict, Any
 
-from ..utils import get_return_statements, encode_json_field
+from ..utils import get_return_statements, encode_json_field, decode_json_layers
 from .note_refs import NoteRef, query_note_refs, note_ref_return_statements
 from ..shared.return_gates import gate_return_statements
 from ..shared.slugs import mint_slug
@@ -55,8 +55,8 @@ class FunctionRecord:
     name: str
     file_id: int
     purpose: Optional[str]
-    parameters: Optional[str]  # JSON string
-    returns: Optional[str]  # JSON string
+    parameters: Any  # list of {name, type, required, default, description, kind} (normalize_recorded_parameters)
+    returns: Any  # decoded JSON
     is_reserved: bool
     id_in_name: bool
     file_name: Optional[str]  # From JOIN with files table
@@ -175,6 +175,28 @@ def serialize_returns(returns: Optional[Dict[str, Any]]) -> Optional[str]:
     """
     return encode_json_field(returns)
 
+def decoded_function_fields(parameters: Any, returns: Any) -> Tuple[Any, Any]:
+    """
+    Pure: (parameters, returns) of a functions row as parsed JSON in one shape.
+
+    Parameters go through normalize_recorded_parameters, so every caller sees
+    a list of {name, type, required, default, description, kind} whatever
+    shape was stored; returns are decoded (JSON wrapped in JSON included).
+    """
+    from ..catalog.extract import normalize_recorded_parameters  # catalog imports project: no top-level import
+    return (normalize_recorded_parameters(parameters), decode_json_layers(returns))
+
+
+def normalize_function_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Pure: A functions row dict with parameters/returns decoded (decoded_function_fields)."""
+    if 'parameters' not in row and 'returns' not in row:
+        return row
+    parameters, returns = decoded_function_fields(row.get('parameters'), row.get('returns'))
+    return {**row,
+            **({'parameters': parameters} if 'parameters' in row else {}),
+            **({'returns': returns} if 'returns' in row else {})}
+
+
 def row_to_function_record(
     row: sqlite3.Row,
     include_details: bool = True,
@@ -185,6 +207,7 @@ def row_to_function_record(
 
     Pure function - deterministic mapping. Handles optional file_name/file_path
     fields that are present when query includes JOIN with files table.
+    parameters and returns come back parsed (decoded_function_fields).
 
     Args:
         row: SQLite row object
@@ -195,6 +218,7 @@ def row_to_function_record(
         Immutable FunctionRecord
     """
     keys = row.keys()
+    parameters, returns = decoded_function_fields(row["parameters"], row["returns"])
 
     if details_only:
         return FunctionRecord(
@@ -202,8 +226,8 @@ def row_to_function_record(
             name=row["name"],
             file_id=row["file_id"],
             purpose=row["purpose"],
-            parameters=row["parameters"],
-            returns=row["returns"],
+            parameters=parameters,
+            returns=returns,
             is_reserved=False,
             id_in_name=False,
             file_name=None,
@@ -217,8 +241,8 @@ def row_to_function_record(
         name=row["name"],
         file_id=row["file_id"],
         purpose=row["purpose"] if include_details else None,
-        parameters=row["parameters"] if include_details else None,
-        returns=row["returns"] if include_details else None,
+        parameters=parameters if include_details else None,
+        returns=returns if include_details else None,
         is_reserved=bool(row["is_reserved"]),
         id_in_name=bool(row["id_in_name"]),
         file_name=row["file_name"] if "file_name" in keys else None,
